@@ -12,52 +12,52 @@ How Context0 fits into an AI agent ecosystem.
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                          EXTERNAL WORLD                                      │
 │                                                                              │
-│   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │
-│   │  Claude     │  │  LangChain  │  │  CrewAI     │  │  Custom     │      │
-│   │  Code       │  │  Agent      │  │  Crew       │  │  Agent      │      │
-│   │             │  │             │  │             │  │             │      │
-│   └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘      │
-│          │                │                │                │              │
-│          │    REST API    │    REST API     │   REST API     │              │
-│          │  (external)    │  (external)     │  (external)    │              │
-└──────────┼────────────────┼────────────────┼────────────────┼──────────────┘
+│   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│   │  Claude     │  │  LangChain  │  │  CrewAI     │  │  Custom     │         │
+│   │  Code       │  │  Agent      │  │  Crew       │  │  Agent      │         │
+│   │             │  │             │  │             │  │             │         │
+│   └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘         │
+│          │                │                │                │                │
+│          │    REST API    │    REST API     │   REST API     │               │
+│          │  (external)    │  (external)     │  (external)    │               │
+└──────────┼────────────────┼────────────────┼────────────────┼────────────────┘
            │                │                │                │
            ▼                ▼                ▼                ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                                                                              │
 │    ┌─────────────────────────────────────────────────────────┐               │
-│    │              Ingress / API Gateway                       │               │
-│    │         (TLS termination, rate limiting)                 │               │
+│    │              Ingress / API Gateway                       │              │
+│    │         (TLS termination, rate limiting)                 │              │
 │    └────────────────────────┬────────────────────────────────┘               │
 │                             │                                                │
-│  ═══════════════════════════╪════════════════════════════════════════════     │
+│  ═══════════════════════════╪════════════════════════════════════════════    │
 │   KUBERNETES CLUSTER        │                                                │
-│  ═══════════════════════════╪════════════════════════════════════════════     │
+│  ═══════════════════════════╪════════════════════════════════════════════    │
 │                             │                                                │
 │    ┌────────────┐     ┌─────▼──────────────────────────────────────────┐     │
 │    │ Agent Pod  │     │                                                │     │
 │    │ (in-cluster│────▶│             CONTEXT0 ENGINE                    │     │
 │    │  via gRPC) │     │                                                │     │
-│    └────────────┘     │   ┌─────────┐  ┌──────────┐  ┌────────────┐  │     │
-│                       │   │  API    │  │  Query   │  │  Ingest    │  │     │
-│    ┌────────────┐     │   │  Server │  │  Engine  │  │  Pipeline  │  │     │
-│    │ Agent Pod  │────▶│   │         │  │          │  │            │  │     │
-│    │ (sidecar   │     │   └────┬────┘  └────┬─────┘  └─────┬──────┘  │     │
-│    │  cache)    │     │        │             │              │         │     │
-│    └────────────┘     │        └─────────────┼──────────────┘         │     │
-│                       │                      │                        │     │
-│                       │                ┌─────▼──────┐                 │     │
-│                       │                │ PostgreSQL │                 │     │
-│                       │                │ + AGE      │                 │     │
-│                       │                └────────────┘                 │     │
+│    └────────────┘     │   ┌─────────┐  ┌──────────┐  ┌────────────┐    │     │
+│                       │   │  API    │  │  Query   │  │  Ingest    │    │     │
+│    ┌────────────┐     │   │  Server │  │  Engine  │  │  Pipeline  │    │     │
+│    │ Agent Pod  │────▶│   │         │  │          │  │            │    │     │
+│    │ (sidecar   │     │   └────┬────┘  └────┬─────┘  └─────┬──────┘    │     │
+│    │  cache)    │     │        │             │              │          │     │
+│    └────────────┘     │        └─────────────┼──────────────┘          │     │
+│                       │                      │                         │     │
+│                       │                ┌─────▼──────┐                  │     │
+│                       │                │ PostgreSQL │                  │     │
+│                       │                │ + AGE      │                  │     │
+│                       │                └────────────┘                  │     │
 │                       │                                                │     │
 │                       └────────────────────────────────────────────────┘     │
 │                                                                              │
-│    ┌──────────────────┐    ┌────────────────┐    ┌─────────────────┐        │
-│    │ Context0 Operator│    │  Consolidation │    │  Prometheus     │        │
-│    │ (manages CRDs,   │    │  CronJob       │    │  ServiceMonitor │        │
-│    │  lifecycle)      │    │  (sleep cycle)  │    │  + Grafana      │        │
-│    └──────────────────┘    └────────────────┘    └─────────────────┘        │
+│    ┌──────────────────┐    ┌────────────────┐    ┌─────────────────┐         │
+│    │ Context0 Operator│    │  Consolidation │    │  Prometheus     │         │
+│    │ (manages CRDs,   │    │  CronJob       │    │  ServiceMonitor │         │
+│    │  lifecycle)      │    │  (sleep cycle) │    │  + Grafana      │         │
+│    └──────────────────┘    └────────────────┘    └─────────────────┘         │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -69,47 +69,47 @@ How Context0 fits into an AI agent ecosystem.
 Every component, what it does, and how they connect.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────────────┐
 │                        CONTEXT0 ENGINE                                   │
 │                                                                          │
 │  ┌────────────────────────────────────────────────────────────────────┐  │
 │  │                      API LAYER                                     │  │
 │  │                                                                    │  │
-│  │  ┌──────────────────┐          ┌──────────────────┐               │  │
-│  │  │   gRPC Server    │          │   REST Gateway   │               │  │
+│  │  ┌──────────────────┐          ┌──────────────────┐                │  │
+│  │  │   gRPC Server    │          │   REST Gateway   │                │  │
 │  │  │                  │          │  (grpc-gateway)   │               │  │
 │  │  │  • Store()       │◀────────▶│                   │               │  │
 │  │  │  • Retrieve()    │          │  • POST /memories │               │  │
 │  │  │  • Delete()      │          │  • GET  /query    │               │  │
 │  │  │  • Query()       │          │  • GET  /graph    │               │  │
-│  │  │  • Connect()     │          │  • DELETE /memories│               │  │
+│  │  │  • Connect()     │          │  • DELETE /memories│              │  │
 │  │  │  • StreamWatch() │          │  • GET  /health   │               │  │
-│  │  └────────┬─────────┘          └──────────────────┘               │  │
+│  │  └────────┬─────────┘          └──────────────────┘                │  │
 │  │           │                                                        │  │
 │  └───────────┼────────────────────────────────────────────────────────┘  │
 │              │                                                           │
 │  ┌───────────▼────────────────────────────────────────────────────────┐  │
-│  │                    CORE SERVICES                                    │  │
+│  │                    CORE SERVICES                                   │  │
 │  │                                                                    │  │
-│  │  ┌─────────────────┐  ┌─────────────────┐  ┌───────────────────┐  │  │
-│  │  │  Ingest Service │  │  Query Service  │  │  Graph Service    │  │  │
-│  │  │                 │  │                 │  │                   │  │  │
-│  │  │ • Validate      │  │ • Parse query   │  │ • Traverse        │  │  │
-│  │  │ • Classify type │  │ • Plan traversal│  │ • Subgraph extract│  │  │
-│  │  │   (episodic/    │  │ • Execute graph │  │ • Path finding    │  │  │
-│  │  │    semantic/    │  │   query         │  │ • Neighborhood    │  │  │
-│  │  │    procedural)  │  │ • Rank results  │  │   expansion       │  │  │
-│  │  │ • Extract       │  │ • Apply decay   │  │ • Edge weighting  │  │  │
-│  │  │   relationships │  │   + recency     │  │                   │  │  │
-│  │  │ • Generate      │  │ • Return top-K  │  │                   │  │  │
-│  │  │   embeddings    │  │                 │  │                   │  │  │
-│  │  │   (optional)    │  │                 │  │                   │  │  │
-│  │  └────────┬────────┘  └────────┬────────┘  └─────────┬─────────┘  │  │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌───────────────────┐   │  │
+│  │  │  Ingest Service │  │  Query Service  │  │  Graph Service    │   │  │
+│  │  │                 │  │                 │  │                   │   │  │
+│  │  │ • Validate      │  │ • Parse query   │  │ • Traverse        │   │  │
+│  │  │ • Classify type │  │ • Plan traversal│  │ • Subgraph extract│   │  │
+│  │  │   (episodic/    │  │ • Execute graph │  │ • Path finding    │   │  │
+│  │  │    semantic/    │  │   query         │  │ • Neighborhood    │   │  │
+│  │  │    procedural)  │  │ • Rank results  │  │   expansion       │   │  │
+│  │  │ • Extract       │  │ • Apply decay   │  │ • Edge weighting  │   │  │
+│  │  │   relationships │  │   + recency     │  │                   │   │  │
+│  │  │ • Generate      │  │ • Return top-K  │  │                   │   │  │
+│  │  │   embeddings    │  │                 │  │                   │   │  │
+│  │  │   (optional)    │  │                 │  │                   │   │  │
+│  │  └────────┬────────┘  └────────┬────────┘  └─────────┬─────────┘   │  │
 │  │           │                    │                      │            │  │
 │  └───────────┼────────────────────┼──────────────────────┼────────────┘  │
 │              │                    │                      │               │
 │  ┌───────────▼────────────────────▼──────────────────────▼────────────┐  │
-│  │                    MEMORY LAYER                                     │  │
+│  │                    MEMORY LAYER                                    │  │
 │  │                                                                    │  │
 │  │  ┌──────────────────────────────────────────────────────────────┐  │  │
 │  │  │                    Graph Repository                          │  │  │
@@ -128,8 +128,8 @@ Every component, what it does, and how they connect.
 │                                │                                         │
 │                                ▼                                         │
 │  ┌──────────────────────────────────────────────────────────────────┐    │
-│  │                     GRAPH DATABASE                                │    │
-│  │                  (StatefulSet + PersistentVolume)                  │    │
+│  │                     GRAPH DATABASE                               │    │
+│  │                  (StatefulSet + PersistentVolume)                │    │
 │  └──────────────────────────────────────────────────────────────────┘    │
 │                                                                          │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -143,7 +143,7 @@ The node types, edge types, and their relationships in the memory graph.
 
 ```
                             ┌─────────────────────┐
-                            │      TENANT          │
+                            │      TENANT         │
                             │                     │
                             │  id: "acme-corp"    │
                             │  plan: "pro"        │
@@ -159,14 +159,14 @@ The node types, edge types, and their relationships in the memory graph.
                          │                              │
             ┌────────────┼───────────────┐              │ prefers
             │            │               │              ▼
-            ▼            ▼               ▼       ┌──────────────┐
+            ▼            ▼               ▼      ┌──────────────┐
      ┌────────────┐ ┌──────────┐ ┌────────────┐ │  PREFERENCE  │
      │  SESSION   │ │  FACT    │ │  PATTERN   │ │              │
      │ (episodic) │ │(semantic)│ │(procedural)│ │ "uses vim"   │
      │            │ │          │ │            │ │ "concise     │
      │ 2024-03-28 │ │ "uses    │ │ "always    │ │  responses"  │
      │ 14:00-16:00│ │  Postgres│ │  run tests │ └──────────────┘
-     └──┬───┬─────┘ │  15.x"  │ │  before    │
+     └──┬───┬─────┘ │  15.x"   │ │  before    │
         │   │       └────┬─────┘ │  commit"   │
         │   │            │       └────────────┘
         │   │            │
@@ -184,61 +184,61 @@ The node types, edge types, and their relationships in the memory graph.
         │   ▼
         │  ┌──────────────────┐    caused_by     ┌──────────────────┐
         │  │    DECISION      │─────────────────▶│   CONSTRAINT     │
-        │  │                  │                   │                  │
-        │  │ "chose Next.js   │                   │ "team knows      │
-        │  │  for frontend"   │                   │  React already"  │
-        │  └──────────────────┘                   └──────────────────┘
+        │  │                  │                  │                  │
+        │  │ "chose Next.js   │                  │ "team knows      │
+        │  │  for frontend"   │                  │  React already"  │
+        │  └──────────────────┘                  └──────────────────┘
         │
         │ contains
         ▼
      ┌──────────────────┐   validated_by    ┌──────────────────┐
      │   CORRECTION     │──────────────────▶│    OUTCOME       │
-     │                  │                    │                  │
-     │ "don't mock DB   │                    │ "tests caught    │
-     │  in integration  │                    │  migration bug   │
-     │  tests"          │                    │  in staging"     │
-     └──────────────────┘                    └──────────────────┘
+     │                  │                   │                  │
+     │ "don't mock DB   │                   │ "tests caught    │
+     │  in integration  │                   │  migration bug   │
+     │  tests"          │                   │  in staging"     │
+     └──────────────────┘                   └──────────────────┘
 ```
 
 ### Node Types
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                          NODE TYPES                                      │
-│                                                                          │
+│                          NODE TYPES                                     │
+│                                                                         │
 │  ┌─────────────┐  Structural nodes — define scope and ownership         │
 │  │  Tenant     │  Properties: id, name, plan, created_at                │
 │  │  Project    │  Properties: id, name, tenant_id, created_at           │
 │  │  User       │  Properties: id, name, role, created_at                │
 │  │  Agent      │  Properties: id, framework, version, created_at        │
 │  │  Session    │  Properties: id, started_at, ended_at, agent_id        │
-│  └─────────────┘                                                         │
-│                                                                          │
+│  └─────────────┘                                                        │
+│                                                                         │
 │  ┌─────────────┐  Memory nodes — the actual memories                    │
 │  │  Episodic   │  What happened. Properties: content, timestamp,        │
-│  │             │  session_id, confidence, access_count, decay_score      │
+│  │             │  session_id, confidence, access_count, decay_score     │
 │  │  Semantic   │  What is true. Properties: content, confidence,        │
-│  │             │  source, last_validated, access_count, decay_score      │
+│  │             │  source, last_validated, access_count, decay_score     │
 │  │  Procedural │  How to do things. Properties: content, trigger,       │
-│  │             │  success_rate, times_applied, decay_score               │
+│  │             │  success_rate, times_applied, decay_score              │
 │  │  Preference │  What the user/agent prefers. Properties: content,     │
-│  │             │  strength, context, last_confirmed                      │
-│  └─────────────┘                                                         │
-│                                                                          │
-│  ┌─────────────┐  Meta nodes — decisions, corrections, outcomes          │
+│  │             │  strength, context, last_confirmed                     │
+│  └─────────────┘                                                        │
+│                                                                         │
+│  ┌─────────────┐  Meta nodes — decisions, corrections, outcomes         │
 │  │  Decision   │  Properties: content, rationale, decided_at, decided_by│
 │  │  Correction │  Properties: wrong_behavior, right_behavior, severity  │
 │  │  Constraint │  Properties: content, source, active                   │
 │  │  Outcome    │  Properties: content, success, measured_at             │
-│  └─────────────┘                                                         │
-│                                                                          │
+│  └─────────────┘                                                        │
+│                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Edge Types
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────────────┐
 │                          EDGE TYPES                                      │
 │                                                                          │
 │  Structural Edges:                                                       │
@@ -263,10 +263,10 @@ The node types, edge types, and their relationships in the memory graph.
 │                                                                          │
 │  Knowledge Edges:                                                        │
 │  ────────────────                                                        │
-│  supersedes      Semantic ──▶ Semantic (newer fact replaces older)        │
+│  supersedes      Semantic ──▶ Semantic (newer fact replaces older)       │
 │  contradicts     Semantic ──▶ Semantic (conflicting facts)               │
 │  relates_to      Any ──▶ Any (general association)                       │
-│  derived_from    Semantic ──▶ Episodic (fact extracted from event)        │
+│  derived_from    Semantic ──▶ Episodic (fact extracted from event)       │
 │  generalizes     Procedural ──▶ Episodic[] (pattern from episodes)       │
 │                                                                          │
 │  Consolidation Edges:                                                    │
@@ -281,7 +281,7 @@ The node types, edge types, and their relationships in the memory graph.
 │  • access_count (int) — how often this edge is traversed                 │
 │  • confidence (float) — how certain we are about this relationship       │
 │                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -425,59 +425,59 @@ What happens when an agent queries for memories.
 Background process that keeps the memory graph clean and efficient.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────────────┐
 │                   CONSOLIDATION PIPELINE (CronJob)                       │
 │                                                                          │
-│   Triggered by: K8s CronJob (every 6h) OR event hook (session end)      │
+│   Triggered by: K8s CronJob (every 6h) OR event hook (session end)       │
 │                                                                          │
-│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
 │   │  PHASE 1: SCAN                                                   │   │
 │   │                                                                  │   │
 │   │  • Find episodic memories with high similarity                   │   │
 │   │  • Find semantic nodes with low confidence + low access_count    │   │
 │   │  • Find contradicting facts (contradicts edges)                  │   │
 │   │  • Find orphan nodes (no incoming edges, old)                    │   │
-│   └──────────────────────────┬──────────────────────────────────────┘   │
+│   └──────────────────────────┬───────────────────────────────────────┘   │
 │                              ▼                                           │
-│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
 │   │  PHASE 2: MERGE                                                  │   │
 │   │                                                                  │   │
 │   │  Multiple episodic memories about the same topic:                │   │
 │   │                                                                  │   │
-│   │  ┌──────────┐ ┌──────────┐ ┌──────────┐                        │   │
-│   │  │"discussed│ │"changed  │ │"finalized│                        │   │
-│   │  │ DB choice│ │ DB to    │ │ Postgres │                        │   │
-│   │  │ in standup│ │ Postgres"│ │ 15.x"   │                        │   │
-│   │  └────┬─────┘ └────┬─────┘ └────┬─────┘                        │   │
+│   │  ┌──────────┐ ┌──────────┐ ┌──────────┐                          │   │
+│   │  │"discussed│ │"changed  │ │"finalized│                          │   │
+│   │  │ DB choice│ │ DB to    │ │ Postgres │                          │   │
+│   │  │ in standup│ │ Postgres"│ │ 15.x"   │                          │   │
+│   │  └────┬─────┘ └────┬─────┘ └────┬─────┘                          │   │
 │   │       │             │            │                               │   │
 │   │       └─────────────┼────────────┘                               │   │
-│   │                     │  merged_into                                │   │
-│   │                     ▼                                             │   │
-│   │              ┌──────────────┐                                     │   │
-│   │              │   SEMANTIC   │                                     │   │
-│   │              │  "project    │                                     │   │
-│   │              │   uses       │                                     │   │
-│   │              │   Postgres   │                                     │   │
-│   │              │   15.x"      │                                     │   │
-│   │              │  conf: 0.95  │                                     │   │
-│   │              └──────────────┘                                     │   │
-│   └──────────────────────────┬──────────────────────────────────────┘   │
+│   │                     │  merged_into                               │   │
+│   │                     ▼                                            │   │
+│   │              ┌──────────────┐                                    │   │
+│   │              │   SEMANTIC   │                                    │   │
+│   │              │  "project    │                                    │   │
+│   │              │   uses       │                                    │   │
+│   │              │   Postgres   │                                    │   │
+│   │              │   15.x"      │                                    │   │
+│   │              │  conf: 0.95  │                                    │   │
+│   │              └──────────────┘                                    │   │
+│   └──────────────────────────┬───────────────────────────────────────┘   │
 │                              ▼                                           │
-│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
 │   │  PHASE 3: PROMOTE                                                │   │
 │   │                                                                  │   │
 │   │  Repeated corrections/patterns elevated to procedural memory:    │   │
 │   │                                                                  │   │
-│   │  ┌──────────┐ ┌──────────┐ ┌──────────┐                        │   │
-│   │  │"user said│ │"user said│ │"user said│                        │   │
-│   │  │ don't    │ │ use real │ │ no mocks │   (3 similar           │   │
-│   │  │ mock DB" │ │ DB in    │ │ for DB"  │    corrections)        │   │
-│   │  │ Session 1│ │ tests"   │ │ Session 5│                        │   │
-│   │  └────┬─────┘ │ Session 3│ └────┬─────┘                        │   │
-│   │       │       └────┬─────┘      │                               │   │
-│   │       └────────────┼────────────┘                               │   │
-│   │                    │  promoted_to                                 │   │
-│   │                    ▼                                              │   │
+│   │  ┌──────────┐ ┌──────────┐ ┌──────────┐                          │   │
+│   │  │"user said│ │"user said│ │"user said│                          │   │
+│   │  │ don't    │ │ use real │ │ no mocks │   (3 similar             │   │
+│   │  │ mock DB" │ │ DB in    │ │ for DB"  │    corrections)          │   │
+│   │  │ Session 1│ │ tests"   │ │ Session 5│                          │   │
+│   │  └────┬─────┘ │ Session 3│ └────┬─────┘                          │   │
+│   │       │       └────┬─────┘      │                                │   │
+│   │       └────────────┼────────────┘                                │   │
+│   │                    │  promoted_to                                │   │
+│   │                    ▼                                             │   │
 │   │             ┌──────────────┐                                     │   │
 │   │             │  PROCEDURAL  │                                     │   │
 │   │             │ "always use  │                                     │   │
@@ -486,10 +486,10 @@ Background process that keeps the memory graph clean and efficient.
 │   │             │  tests"      │                                     │   │
 │   │             │ success: 100%│                                     │   │
 │   │             └──────────────┘                                     │   │
-│   └──────────────────────────┬──────────────────────────────────────┘   │
+│   └──────────────────────────┬───────────────────────────────────────┘   │
 │                              ▼                                           │
-│   ┌─────────────────────────────────────────────────────────────────┐   │
-│   │  PHASE 4: DECAY + PRUNE                                         │   │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
+│   │  PHASE 4: DECAY + PRUNE                                          │   │
 │   │                                                                  │   │
 │   │  For each node, recalculate decay_score:                         │   │
 │   │                                                                  │   │
@@ -506,7 +506,7 @@ Background process that keeps the memory graph clean and efficient.
 │   │  Orphan nodes (no edges, never accessed):                        │   │
 │   │    → Delete immediately                                          │   │
 │   │                                                                  │   │
-│   └─────────────────────────────────────────────────────────────────┘   │
+│   └──────────────────────────────────────────────────────────────────┘   │
 │                                                                          │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
