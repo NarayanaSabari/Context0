@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pb "github.com/context0/context0/api/gen/context0/v1"
+	"github.com/context0/context0/internal/embedding"
 	"github.com/context0/context0/internal/graph"
 	"github.com/context0/context0/internal/metrics"
 	"github.com/context0/context0/internal/ranking"
@@ -21,12 +22,13 @@ import (
 // MemoryService implements the Context0 gRPC service.
 type MemoryService struct {
 	pb.UnimplementedContext0Server
-	repo graph.Repository
+	repo     graph.Repository
+	embedder embedding.Embedder
 }
 
 // NewMemoryService creates a new MemoryService.
-func NewMemoryService(repo graph.Repository) *MemoryService {
-	return &MemoryService{repo: repo}
+func NewMemoryService(repo graph.Repository, embedder embedding.Embedder) *MemoryService {
+	return &MemoryService{repo: repo, embedder: embedder}
 }
 
 func (s *MemoryService) Store(ctx context.Context, req *StoreRequest) (*StoreResponse, error) {
@@ -58,6 +60,13 @@ func (s *MemoryService) Store(ctx context.Context, req *StoreRequest) (*StoreRes
 
 	if err := s.repo.CreateMemory(ctx, mem); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create memory: %v", err)
+	}
+
+	// Generate and store embedding for vector search.
+	if s.embedder != nil {
+		if vec, err := s.embedder.Embed(mem.Content); err == nil {
+			_ = s.repo.StoreEmbedding(ctx, mem.ID, vec)
+		}
 	}
 
 	// Link to session if provided.
@@ -102,10 +111,21 @@ func (s *MemoryService) Query(ctx context.Context, req *QueryRequest) (*QueryRes
 	parsed := ParseQuery(req.Query, req.ProjectId, types, req.MaxDepth, req.TopK)
 	filter := parsed.ToGraphFilter()
 
-	results, err := s.repo.QueryMemories(ctx, filter)
+	// --- Hybrid retrieval: graph + vector ---
+	graphResults, err := s.repo.QueryMemories(ctx, filter)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "query failed: %v", err)
+		return nil, status.Errorf(codes.Internal, "graph query failed: %v", err)
 	}
+
+	var vectorResults []model.MemoryWithContext
+	if s.embedder != nil && req.Query != "" {
+		if queryVec, err := s.embedder.Embed(req.Query); err == nil {
+			vectorResults, _ = s.repo.SearchByVector(ctx, queryVec, req.ProjectId, int(parsed.TopK)*2)
+		}
+	}
+
+	// Merge: deduplicate by ID, boost memories found by both methods.
+	results := mergeResults(graphResults, vectorResults)
 
 	// Rank results using scoring function.
 	results = ranking.RankResults(results, ranking.DefaultWeights(), int(parsed.TopK))
@@ -391,6 +411,36 @@ func extractKeywords(query string) []string {
 		keywords = append(keywords, w)
 	}
 	return keywords
+}
+
+// mergeResults combines graph and vector results, boosting memories found by both.
+func mergeResults(graph, vector []model.MemoryWithContext) []model.MemoryWithContext {
+	seen := make(map[uuid.UUID]*model.MemoryWithContext)
+
+	// Add all graph results.
+	for i := range graph {
+		id := graph[i].Memory.ID
+		r := graph[i]
+		seen[id] = &r
+	}
+
+	// Merge vector results — boost score if already found by graph.
+	for i := range vector {
+		id := vector[i].Memory.ID
+		if existing, ok := seen[id]; ok {
+			// Found by both methods — boost by 50%.
+			existing.Score += vector[i].Score * 0.5
+		} else {
+			r := vector[i]
+			seen[id] = &r
+		}
+	}
+
+	results := make([]model.MemoryWithContext, 0, len(seen))
+	for _, r := range seen {
+		results = append(results, *r)
+	}
+	return results
 }
 
 func hasOverlappingTags(a, b []string) bool {

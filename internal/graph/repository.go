@@ -51,6 +51,14 @@ type Repository interface {
 	EndSession(ctx context.Context, id uuid.UUID) (model.Session, error)
 	LinkMemoryToSession(ctx context.Context, sessionID, memoryID uuid.UUID) error
 
+	// --- Embeddings ---
+
+	// StoreEmbedding stores a vector embedding for a memory node.
+	StoreEmbedding(ctx context.Context, memoryID uuid.UUID, embedding []float32) error
+
+	// SearchByVector returns memories similar to the given embedding vector.
+	SearchByVector(ctx context.Context, embedding []float32, projectID string, topK int) ([]model.MemoryWithContext, error)
+
 	// --- Query ---
 
 	// QueryMemories performs a graph traversal based on the filter and returns ranked results.

@@ -28,14 +28,38 @@ func (r *AGERepository) Close() {
 	r.pool.Close()
 }
 
-// InitSchema creates the AGE graph and loads the extension.
+// InitSchema creates the AGE graph, pgvector table, and loads extensions.
 func (r *AGERepository) InitSchema(ctx context.Context) error {
-	// Ensure AGE extension is loaded.
+	// --- pgvector setup (must happen BEFORE setting search_path to ag_catalog) ---
+	if _, err := r.pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`); err != nil {
+		return fmt.Errorf("create vector extension: %w", err)
+	}
+
+	// Embeddings table: links memory node IDs to their vector embeddings.
+	if _, err := r.pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS public.memory_embeddings (
+			memory_id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			embedding vector(384) NOT NULL,
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		)
+	`); err != nil {
+		return fmt.Errorf("create public.memory_embeddings table: %w", err)
+	}
+
+	// HNSW index for fast approximate nearest neighbor search.
+	if _, err := r.pool.Exec(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_memory_embeddings_vector
+		ON public.memory_embeddings USING hnsw (embedding vector_cosine_ops)
+	`); err != nil {
+		return fmt.Errorf("create vector index: %w", err)
+	}
+
+	// --- AGE setup ---
 	if _, err := r.pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS age`); err != nil {
 		return fmt.Errorf("create age extension: %w", err)
 	}
 
-	// Add ag_catalog to search path for this session.
 	if _, err := r.pool.Exec(ctx, `SET search_path = ag_catalog, "$user", public`); err != nil {
 		return fmt.Errorf("set search_path: %w", err)
 	}
@@ -385,6 +409,96 @@ func (r *AGERepository) GetSubgraph(ctx context.Context, centerID uuid.UUID, dep
 
 	// TODO: also return edges between the discovered nodes.
 	return memories, nil, rows.Err()
+}
+
+// --- Stats ---
+
+// --- Embeddings (pgvector) ---
+
+func (r *AGERepository) StoreEmbedding(ctx context.Context, memoryID uuid.UUID, embedding []float32) error {
+	// Convert []float32 to pgvector string format: [0.1,0.2,0.3,...]
+	vecStr := float32SliceToVectorString(embedding)
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO public.memory_embeddings (memory_id, project_id, embedding)
+		 VALUES ($1, (SELECT 'default'), $2::vector)
+		 ON CONFLICT (memory_id) DO UPDATE SET embedding = $2::vector`,
+		memoryID.String(), vecStr)
+	if err != nil {
+		return fmt.Errorf("store embedding: %w", err)
+	}
+	return nil
+}
+
+func (r *AGERepository) SearchByVector(ctx context.Context, embedding []float32, projectID string, topK int) ([]model.MemoryWithContext, error) {
+	if topK <= 0 {
+		topK = 10
+	}
+
+	vecStr := float32SliceToVectorString(embedding)
+
+	// Use cosine distance for similarity search.
+	var query string
+	var rows pgx.Rows
+	var err error
+
+	if projectID != "" {
+		query = `SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
+				 FROM public.memory_embeddings
+				 WHERE project_id = $2
+				 ORDER BY embedding <=> $1::vector
+				 LIMIT $3`
+		rows, err = r.pool.Query(ctx, query, vecStr, projectID, topK)
+	} else {
+		query = `SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
+				 FROM public.memory_embeddings
+				 ORDER BY embedding <=> $1::vector
+				 LIMIT $2`
+		rows, err = r.pool.Query(ctx, query, vecStr, topK)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("vector search: %w", err)
+	}
+	defer rows.Close()
+
+	var results []model.MemoryWithContext
+	for rows.Next() {
+		var memID string
+		var similarity float64
+		if err := rows.Scan(&memID, &similarity); err != nil {
+			continue
+		}
+
+		id, err := uuid.Parse(memID)
+		if err != nil {
+			continue
+		}
+
+		mem, err := r.GetMemory(ctx, id)
+		if err != nil {
+			continue
+		}
+
+		results = append(results, model.MemoryWithContext{
+			Memory: mem,
+			Score:  similarity,
+		})
+	}
+
+	return results, rows.Err()
+}
+
+// float32SliceToVectorString converts a float32 slice to pgvector string format.
+func float32SliceToVectorString(v []float32) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, f := range v {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(fmt.Sprintf("%f", f))
+	}
+	b.WriteByte(']')
+	return b.String()
 }
 
 // --- Stats ---

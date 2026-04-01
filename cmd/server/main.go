@@ -13,6 +13,7 @@ import (
 	pb "github.com/context0/context0/api/gen/context0/v1"
 	"github.com/context0/context0/internal/auth"
 	"github.com/context0/context0/internal/config"
+	emb "github.com/context0/context0/internal/embedding"
 	"github.com/context0/context0/internal/graph"
 	"github.com/context0/context0/internal/metrics"
 	"github.com/context0/context0/internal/service"
@@ -61,7 +62,10 @@ func main() {
 		grpc.UnaryInterceptor(apiAuth.UnaryInterceptor()),
 	)
 
-	memorySvc := service.NewMemoryService(repo)
+	embedder := emb.NewBagOfWordsEmbedder(384)
+	log.Printf("embedding: using BagOfWords embedder (dim=%d)", embedder.Dimension())
+
+	memorySvc := service.NewMemoryService(repo, embedder)
 	sessionSvc := service.NewSessionService(repo)
 	healthSvc := service.NewHealthService(repo, cfg.Version)
 

@@ -31,7 +31,7 @@ spec:
       containers:
         - name: postgres-age
           # Apache AGE Docker image (PostgreSQL + AGE pre-installed)
-          image: apache/age:latest
+          image: context0/postgres-age-vector:dev
           ports:
             - containerPort: 5432
               name: postgres
