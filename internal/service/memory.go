@@ -9,6 +9,7 @@ import (
 	pb "github.com/context0/context0/api/gen/context0/v1"
 	"github.com/context0/context0/internal/graph"
 	"github.com/context0/context0/internal/metrics"
+	"github.com/context0/context0/internal/ranking"
 	"github.com/context0/context0/pkg/model"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
@@ -99,21 +100,17 @@ func (s *MemoryService) Query(ctx context.Context, req *QueryRequest) (*QueryRes
 		types = append(types, mt)
 	}
 
-	keywords := extractKeywords(req.Query)
-
-	filter := graph.QueryFilter{
-		ProjectID: req.ProjectId,
-		Keywords:  keywords,
-		Tags:      nil,
-		Types:     types,
-		MaxDepth:  req.MaxDepth,
-		TopK:      req.TopK,
-	}
+	// Parse query into structured form with time filtering.
+	parsed := ParseQuery(req.Query, req.ProjectId, types, req.MaxDepth, req.TopK)
+	filter := parsed.ToGraphFilter()
 
 	results, err := s.repo.QueryMemories(ctx, filter)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "query failed: %v", err)
 	}
+
+	// Rank results using scoring function.
+	results = ranking.RankResults(results, ranking.DefaultWeights(), int(parsed.TopK))
 
 	// Increment access counts for returned results.
 	for _, r := range results {
