@@ -16,6 +16,7 @@ import (
 	"github.com/context0/context0/internal/graph"
 	"github.com/context0/context0/internal/metrics"
 	"github.com/context0/context0/internal/service"
+	"github.com/context0/context0/internal/web"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -109,7 +110,8 @@ func main() {
 	// --- HTTP Server ---
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
-	mux.Handle("/", gwMux)
+	mux.Handle("/v1/", gwMux)                 // REST API
+	mux.Handle("/", web.Handler())             // Web UI
 
 	httpHandler := apiAuth.HTTPMiddleware(mux)
 

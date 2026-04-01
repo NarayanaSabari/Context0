@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,8 +86,8 @@ func (a *APIKeyAuth) UnaryInterceptor() grpc.UnaryServerInterceptor {
 // HTTPMiddleware wraps an HTTP handler with API key validation.
 func (a *APIKeyAuth) HTTPMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip auth for health and metrics endpoints.
-		if r.URL.Path == "/v1/health" || r.URL.Path == "/metrics" {
+		// Skip auth for health, metrics, and web UI.
+		if r.URL.Path == "/v1/health" || r.URL.Path == "/metrics" || !strings.HasPrefix(r.URL.Path, "/v1/") {
 			next.ServeHTTP(w, r)
 			return
 		}
