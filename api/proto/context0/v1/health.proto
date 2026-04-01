@@ -4,10 +4,16 @@ package context0.v1;
 
 option go_package = "github.com/context0/context0/api/gen/context0/v1;context0v1";
 
+import "google/api/annotations.proto";
+
 // HealthService provides health check for the engine.
 service HealthService {
   // Health returns the current health status of the engine.
-  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Health(HealthRequest) returns (HealthResponse) {
+    option (google.api.http) = {
+      get: "/v1/health"
+    };
+  }
 }
 
 message HealthRequest {}

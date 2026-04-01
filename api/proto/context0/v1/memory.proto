@@ -4,24 +4,47 @@ package context0.v1;
 
 option go_package = "github.com/context0/context0/api/gen/context0/v1;context0v1";
 
+import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
 
 // Context0 is the core memory engine service.
 service Context0 {
   // Store creates a new memory in the graph.
-  rpc Store(StoreRequest) returns (StoreResponse);
+  rpc Store(StoreRequest) returns (StoreResponse) {
+    option (google.api.http) = {
+      post: "/v1/memories"
+      body: "*"
+    };
+  }
 
   // Query retrieves memories by natural language query.
-  rpc Query(QueryRequest) returns (QueryResponse);
+  rpc Query(QueryRequest) returns (QueryResponse) {
+    option (google.api.http) = {
+      get: "/v1/memories/query"
+    };
+  }
 
   // Connect creates a relationship between two memories.
-  rpc Connect(ConnectRequest) returns (ConnectResponse);
+  rpc Connect(ConnectRequest) returns (ConnectResponse) {
+    option (google.api.http) = {
+      post: "/v1/memories/connect"
+      body: "*"
+    };
+  }
 
   // Delete removes a memory and its edges.
-  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse) {
+    option (google.api.http) = {
+      delete: "/v1/memories/{id}"
+    };
+  }
 
   // GetGraph returns a subgraph around a memory.
-  rpc GetGraph(GetGraphRequest) returns (GetGraphResponse);
+  rpc GetGraph(GetGraphRequest) returns (GetGraphResponse) {
+    option (google.api.http) = {
+      get: "/v1/memories/{center_id}/graph"
+    };
+  }
 }
 
 // MemoryType categorizes a memory node.
@@ -84,7 +107,6 @@ message StoreRequest {
   MemoryType type = 2;
   string project_id = 3;
   repeated string tags = 4;
-  // Optional: link this memory to an active session.
   string session_id = 5;
 }
 
