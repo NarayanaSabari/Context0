@@ -7,834 +7,650 @@
   <script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
   <style>
     :root {
-      --bg: #0d1117;
-      --surface: #161b22;
-      --border: #30363d;
-      --text: #e6edf3;
-      --text-muted: #8b949e;
-      --accent: #58a6ff;
-      --green: #3fb950;
-      --purple: #bc8cff;
-      --orange: #d29922;
-      --red: #f85149;
+      --bg: #0a0a0f;
+      --surface: #12131a;
+      --surface2: #1a1b26;
+      --border: #262836;
+      --text: #e1e2e8;
+      --text-muted: #6b6e82;
+      --accent: #7aa2f7;
+      --green: #9ece6a;
+      --orange: #e0af68;
+      --purple: #bb9af7;
+      --red: #f7768e;
+      --cyan: #7dcfff;
+      --radius: 10px;
     }
-
     * { margin: 0; padding: 0; box-sizing: border-box; }
-
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--text);
+      height: 100vh; display: flex; flex-direction: column;
+      overflow: hidden;
     }
 
+    /* ---- Header ---- */
     header {
       background: var(--surface);
       border-bottom: 1px solid var(--border);
-      padding: 12px 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      padding: 14px 28px;
+      display: flex; align-items: center; justify-content: space-between;
       flex-shrink: 0;
     }
-
-    header h1 {
-      font-size: 18px;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+    .logo { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+    .logo span { color: var(--accent); }
+    .header-stats {
+      display: flex; gap: 20px; font-size: 12px; color: var(--text-muted);
     }
+    .header-stats b { color: var(--text); font-weight: 600; }
 
-    header h1 span { color: var(--accent); }
+    /* ---- Layout ---- */
+    .main { display: flex; flex: 1; overflow: hidden; }
 
-    .stats {
-      display: flex;
-      gap: 24px;
-      font-size: 13px;
-      color: var(--text-muted);
-    }
-
-    .stats .stat-value {
-      color: var(--text);
-      font-weight: 600;
-      margin-left: 4px;
-    }
-
-    .main {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-    }
-
+    /* ---- Sidebar ---- */
     .sidebar {
-      width: 360px;
-      background: var(--surface);
+      width: 380px; background: var(--surface);
       border-right: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      flex-shrink: 0;
+      display: flex; flex-direction: column; flex-shrink: 0;
     }
-
-    .sidebar-header {
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      gap: 8px;
+    .sidebar-section {
+      padding: 16px 20px; border-bottom: 1px solid var(--border);
     }
-
-    .sidebar-header h2 {
-      font-size: 14px;
-      font-weight: 600;
-      flex: 1;
+    .sidebar-section h3 {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 1px; color: var(--text-muted); margin-bottom: 10px;
     }
-
-    .search-box {
-      margin: 12px 16px;
-      position: relative;
+    .key-input {
+      width: 100%; padding: 9px 12px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text);
+      font-size: 13px; font-family: monospace; outline: none;
     }
+    .key-input:focus { border-color: var(--accent); }
+    .key-input::placeholder { color: var(--text-muted); }
 
-    .search-box input {
-      width: 100%;
-      padding: 8px 12px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      color: var(--text);
-      font-size: 13px;
-      outline: none;
+    .search-input {
+      width: 100%; padding: 9px 12px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text);
+      font-size: 13px; outline: none;
     }
+    .search-input:focus { border-color: var(--accent); }
 
-    .search-box input:focus { border-color: var(--accent); }
-
-    .filters {
-      padding: 0 16px 12px;
-      display: flex;
-      gap: 6px;
+    .type-filters {
+      display: flex; gap: 6px; margin-top: 10px;
     }
-
-    .filter-btn {
-      padding: 4px 10px;
-      font-size: 12px;
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      background: transparent;
-      color: var(--text-muted);
-      cursor: pointer;
-      transition: all 0.15s;
+    .type-pill {
+      padding: 5px 12px; font-size: 11px; font-weight: 600;
+      border: 1px solid var(--border); border-radius: 20px;
+      background: transparent; color: var(--text-muted);
+      cursor: pointer; transition: all 0.15s;
     }
+    .type-pill.active { color: #fff; }
+    .type-pill.active[data-type="all"] { background: var(--accent); border-color: var(--accent); }
+    .type-pill.active[data-type="semantic"] { background: var(--green); border-color: var(--green); color: #000; }
+    .type-pill.active[data-type="episodic"] { background: var(--orange); border-color: var(--orange); color: #000; }
+    .type-pill.active[data-type="procedural"] { background: var(--purple); border-color: var(--purple); color: #000; }
+    .type-pill:hover:not(.active) { border-color: var(--text-muted); }
 
-    .filter-btn.active {
-      background: var(--accent);
-      color: #fff;
-      border-color: var(--accent);
+    /* ---- Memory List ---- */
+    .memory-list { flex: 1; overflow-y: auto; padding: 8px 12px; }
+    .mem-card {
+      padding: 12px 14px; border-radius: var(--radius);
+      cursor: pointer; margin-bottom: 4px; transition: all 0.15s;
+      border: 1px solid transparent;
     }
-
-    .filter-btn:hover:not(.active) {
-      border-color: var(--text-muted);
-      color: var(--text);
-    }
-
-    .memory-list {
-      flex: 1;
-      overflow-y: auto;
-      padding: 0 8px;
-    }
-
-    .memory-item {
-      padding: 10px 12px;
-      border-radius: 6px;
-      cursor: pointer;
-      margin-bottom: 2px;
-      transition: background 0.15s;
-    }
-
-    .memory-item:hover { background: rgba(88, 166, 255, 0.08); }
-    .memory-item.selected { background: rgba(88, 166, 255, 0.15); }
-
-    .memory-item .type-badge {
-      display: inline-block;
-      padding: 1px 6px;
-      border-radius: 10px;
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
+    .mem-card:hover { background: var(--surface2); border-color: var(--border); }
+    .mem-card.selected { background: rgba(122, 162, 247, 0.1); border-color: var(--accent); }
+    .mem-card .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 6px;
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
       letter-spacing: 0.5px;
     }
-
-    .type-episodic { background: rgba(210, 153, 34, 0.2); color: var(--orange); }
-    .type-semantic { background: rgba(63, 185, 80, 0.2); color: var(--green); }
-    .type-procedural { background: rgba(188, 140, 255, 0.2); color: var(--purple); }
-
-    .memory-item .content {
-      font-size: 13px;
-      margin-top: 4px;
-      line-height: 1.4;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
+    .badge-semantic { background: rgba(158, 206, 106, 0.15); color: var(--green); }
+    .badge-episodic { background: rgba(224, 175, 104, 0.15); color: var(--orange); }
+    .badge-procedural { background: rgba(187, 154, 247, 0.15); color: var(--purple); }
+    .mem-card .text {
+      font-size: 13px; line-height: 1.45; margin-top: 6px;
+      display: -webkit-box; -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .mem-card .sub {
+      font-size: 11px; color: var(--text-muted); margin-top: 5px;
+      display: flex; gap: 10px;
     }
 
-    .memory-item .meta {
-      font-size: 11px;
-      color: var(--text-muted);
-      margin-top: 4px;
-    }
+    /* ---- Graph Area ---- */
+    .graph-area { flex: 1; position: relative; background: var(--bg); }
+    #cy { width: 100%; height: 100%; }
 
-    .graph-container {
-      flex: 1;
-      position: relative;
-    }
-
-    #cy {
-      width: 100%;
-      height: 100%;
-    }
-
-    .detail-panel {
-      position: absolute;
-      bottom: 16px;
-      right: 16px;
-      width: 340px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 16px;
-      display: none;
-      max-height: 50%;
-      overflow-y: auto;
-    }
-
-    .detail-panel.visible { display: block; }
-
-    .detail-panel h3 {
-      font-size: 14px;
-      margin-bottom: 8px;
-    }
-
-    .detail-panel .field {
-      margin-bottom: 6px;
-    }
-
-    .detail-panel .field-label {
-      font-size: 11px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .detail-panel .field-value {
-      font-size: 13px;
-      margin-top: 2px;
-    }
-
-    .detail-panel .tags {
-      display: flex;
-      gap: 4px;
-      flex-wrap: wrap;
-      margin-top: 4px;
-    }
-
-    .detail-panel .tag {
-      padding: 2px 8px;
-      background: rgba(88, 166, 255, 0.15);
-      color: var(--accent);
-      border-radius: 10px;
-      font-size: 11px;
-    }
-
-    .detail-panel .edges-list {
-      margin-top: 8px;
-    }
-
-    .detail-panel .edge-item {
-      padding: 4px 0;
+    /* ---- Legend ---- */
+    .legend {
+      position: absolute; bottom: 20px; left: 20px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px 18px;
       font-size: 12px;
-      border-bottom: 1px solid var(--border);
+    }
+    .legend h4 {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+      color: var(--text-muted); margin-bottom: 8px;
+    }
+    .legend-row {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+    }
+    .legend-dot {
+      width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+    }
+    .legend-line {
+      width: 20px; height: 2px; flex-shrink: 0; border-radius: 1px;
     }
 
-    .detail-panel .edge-item:last-child { border-bottom: none; }
+    /* ---- Detail Panel ---- */
+    .detail {
+      position: absolute; top: 20px; right: 20px; width: 340px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px;
+      display: none; max-height: calc(100% - 40px); overflow-y: auto;
+    }
+    .detail.show { display: block; }
+    .detail-close {
+      position: absolute; top: 12px; right: 14px;
+      background: none; border: none; color: var(--text-muted);
+      font-size: 18px; cursor: pointer; line-height: 1;
+    }
+    .detail-close:hover { color: var(--text); }
+    .detail h3 { font-size: 15px; font-weight: 600; margin-bottom: 14px; padding-right: 24px; }
+    .detail .row { margin-bottom: 10px; }
+    .detail .label {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px;
+      color: var(--text-muted); margin-bottom: 3px;
+    }
+    .detail .value { font-size: 13px; line-height: 1.4; }
+    .detail .tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 3px; }
+    .detail .tag {
+      padding: 3px 9px; background: rgba(122, 162, 247, 0.12);
+      color: var(--accent); border-radius: 6px; font-size: 11px;
+    }
+    .detail .edges-title {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px;
+      color: var(--text-muted); margin: 14px 0 6px;
+    }
+    .detail .edge-row {
+      padding: 6px 0; font-size: 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .detail .edge-row:last-child { border-bottom: none; }
+    .edge-rel {
+      padding: 2px 6px; border-radius: 4px; font-size: 10px;
+      font-weight: 600; text-transform: uppercase;
+    }
+    .rel-relates_to { background: rgba(122, 162, 247, 0.15); color: var(--accent); }
+    .rel-supersedes { background: rgba(247, 118, 142, 0.15); color: var(--red); }
+    .rel-caused_by { background: rgba(224, 175, 104, 0.15); color: var(--orange); }
+    .rel-contains { background: rgba(158, 206, 106, 0.15); color: var(--green); }
 
+    /* ---- Toolbar ---- */
     .toolbar {
-      position: absolute;
-      top: 16px;
-      right: 16px;
-      display: flex;
-      gap: 8px;
+      position: absolute; top: 20px; left: 20px;
+      display: flex; gap: 6px;
     }
-
-    .toolbar button {
-      padding: 6px 14px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      color: var(--text);
-      cursor: pointer;
-      font-size: 12px;
+    .tool-btn {
+      padding: 7px 14px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text-muted); cursor: pointer; font-size: 12px;
       transition: all 0.15s;
     }
+    .tool-btn:hover { border-color: var(--accent); color: var(--accent); }
 
-    .toolbar button:hover {
-      border-color: var(--accent);
-      color: var(--accent);
+    /* ---- Empty State ---- */
+    .empty {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      height: 100%; text-align: center; padding: 40px;
     }
+    .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.3; }
+    .empty-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+    .empty-hint { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
 
-    .empty-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      color: var(--text-muted);
-      font-size: 14px;
-      gap: 8px;
+    /* ---- Tooltip ---- */
+    .edge-tooltip {
+      position: absolute; padding: 6px 10px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 6px; font-size: 11px; color: var(--text);
+      pointer-events: none; display: none; z-index: 10;
+      white-space: nowrap;
     }
-
-    .empty-state .hint { font-size: 12px; }
-
-    .loading { opacity: 0.5; pointer-events: none; }
   </style>
 </head>
 <body>
-  <header>
-    <h1><span>Context0</span> Memory Graph</h1>
-    <div class="stats" id="stats">
-      <div>Nodes: <span class="stat-value" id="stat-nodes">-</span></div>
-      <div>Edges: <span class="stat-value" id="stat-edges">-</span></div>
-      <div>Version: <span class="stat-value" id="stat-version">-</span></div>
+
+<header>
+  <div class="logo"><span>Context0</span> Memory Graph</div>
+  <div class="header-stats">
+    <div>Nodes <b id="s-nodes">-</b></div>
+    <div>Edges <b id="s-edges">-</b></div>
+    <div>Version <b id="s-ver">-</b></div>
+  </div>
+</header>
+
+<div class="main">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <h3>API Key</h3>
+      <input class="key-input" id="apikey" placeholder="Paste your API key..." />
     </div>
-  </header>
 
-  <div class="main">
-    <div class="sidebar">
-      <div class="sidebar-header">
-        <h2>Memories</h2>
-        <span id="memory-count" style="font-size:12px;color:var(--text-muted)"></span>
-      </div>
-
-      <div class="search-box">
-        <input type="text" id="search" placeholder="Search memories..." />
-      </div>
-
-      <div class="filters">
-        <button class="filter-btn active" data-type="all">All</button>
-        <button class="filter-btn" data-type="episodic">Episodic</button>
-        <button class="filter-btn" data-type="semantic">Semantic</button>
-        <button class="filter-btn" data-type="procedural">Procedural</button>
-      </div>
-
-      <div class="memory-list" id="memory-list"></div>
-
-      <div style="padding:12px 16px;border-top:1px solid var(--border)">
-        <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">API Key</div>
-        <input type="text" id="api-key-input" placeholder="Enter API key..."
-          style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;font-family:monospace" />
+    <div class="sidebar-section">
+      <h3>Search</h3>
+      <input class="search-input" id="search" placeholder="Search memories..." />
+      <div class="type-filters">
+        <button class="type-pill active" data-type="all">All</button>
+        <button class="type-pill" data-type="semantic">Semantic</button>
+        <button class="type-pill" data-type="episodic">Episodic</button>
+        <button class="type-pill" data-type="procedural">Procedural</button>
       </div>
     </div>
 
-    <div class="graph-container">
-      <div id="cy"></div>
-
-      <div class="toolbar">
-        <button onclick="resetLayout()">Reset Layout</button>
-        <button onclick="fitGraph()">Fit</button>
-        <button onclick="loadAllData()">Refresh</button>
-      </div>
-
-      <div class="detail-panel" id="detail-panel">
-        <h3 id="detail-title">Memory Details</h3>
-        <div id="detail-content"></div>
-      </div>
-    </div>
+    <div class="memory-list" id="list"></div>
   </div>
 
-  <script>
-    const API_BASE = window.location.origin;
-    let API_KEY = new URLSearchParams(window.location.search).get('key') || '';
-    let allMemories = [];
-    let activeFilter = 'all';
-    let cy;
+  <!-- Graph -->
+  <div class="graph-area">
+    <div id="cy"></div>
 
-    function getApiKey() {
-      const input = document.getElementById('api-key-input');
-      return input ? input.value : API_KEY;
+    <div class="toolbar">
+      <button class="tool-btn" onclick="showAllGraph()">Show All</button>
+      <button class="tool-btn" onclick="cy.fit(undefined,50)">Fit</button>
+      <button class="tool-btn" onclick="loadData()">Refresh</button>
+    </div>
+
+    <div class="legend">
+      <h4>Node Types</h4>
+      <div class="legend-row"><div class="legend-dot" style="background:var(--green)"></div> Semantic (facts)</div>
+      <div class="legend-row"><div class="legend-dot" style="background:var(--orange)"></div> Episodic (events)</div>
+      <div class="legend-row"><div class="legend-dot" style="background:var(--purple)"></div> Procedural (how-to)</div>
+      <h4 style="margin-top:10px">Edge Types</h4>
+      <div class="legend-row"><div class="legend-line" style="background:var(--accent)"></div> relates to</div>
+      <div class="legend-row"><div class="legend-line" style="background:var(--red)"></div> supersedes</div>
+      <div class="legend-row"><div class="legend-line" style="background:var(--orange)"></div> caused by</div>
+    </div>
+
+    <div class="detail" id="detail">
+      <button class="detail-close" onclick="closeDetail()">&times;</button>
+      <h3 id="d-title"></h3>
+      <div id="d-body"></div>
+    </div>
+
+    <div class="edge-tooltip" id="tooltip"></div>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+let KEY = new URLSearchParams(window.location.search).get('key') || '';
+let memories = [];
+let filter = 'all';
+let cy;
+
+function headers() {
+  const h = {};
+  const k = document.getElementById('apikey').value || KEY;
+  if (k) h['X-API-Key'] = k;
+  return h;
+}
+
+// ---- Cytoscape ----
+function initCy() {
+  cy = cytoscape({
+    container: document.getElementById('cy'),
+    style: [
+      { selector: 'node', style: {
+        'label': 'data(label)',
+        'text-wrap': 'wrap', 'text-max-width': '140px',
+        'font-size': '12px', 'color': '#e1e2e8',
+        'text-valign': 'center', 'text-halign': 'center',
+        'width': 'label', 'height': 'label',
+        'padding': '14px',
+        'shape': 'round-rectangle',
+        'border-width': 2, 'border-opacity': 0.6,
+        'text-outline-width': 0,
+        'font-weight': 500,
+      }},
+      { selector: 'node[type="semantic"]', style: {
+        'background-color': 'rgba(158,206,106,0.12)', 'border-color': '#9ece6a', 'color': '#9ece6a',
+      }},
+      { selector: 'node[type="episodic"]', style: {
+        'background-color': 'rgba(224,175,104,0.12)', 'border-color': '#e0af68', 'color': '#e0af68',
+      }},
+      { selector: 'node[type="procedural"]', style: {
+        'background-color': 'rgba(187,154,247,0.12)', 'border-color': '#bb9af7', 'color': '#bb9af7',
+      }},
+      { selector: 'node:selected', style: {
+        'border-width': 3, 'border-color': '#7aa2f7',
+        'background-color': 'rgba(122,162,247,0.15)',
+        'color': '#e1e2e8',
+      }},
+      { selector: 'node.faded', style: { 'opacity': 0.25 }},
+      { selector: 'edge', style: {
+        'width': 2, 'line-color': '#262836',
+        'target-arrow-color': '#262836', 'target-arrow-shape': 'triangle',
+        'curve-style': 'bezier', 'arrow-scale': 0.8,
+        'opacity': 0.7,
+      }},
+      { selector: 'edge[rel="supersedes"]', style: {
+        'line-color': '#f7768e', 'target-arrow-color': '#f7768e', 'line-style': 'dashed',
+      }},
+      { selector: 'edge[rel="caused_by"]', style: {
+        'line-color': '#e0af68', 'target-arrow-color': '#e0af68',
+      }},
+      { selector: 'edge[rel="relates_to"]', style: {
+        'line-color': '#7aa2f7', 'target-arrow-color': '#7aa2f7',
+      }},
+      { selector: 'edge[rel="contains"]', style: {
+        'line-color': '#9ece6a', 'target-arrow-color': '#9ece6a',
+      }},
+      { selector: 'edge.highlighted', style: { 'width': 3, 'opacity': 1 }},
+      { selector: 'edge.faded', style: { 'opacity': 0.1 }},
+    ],
+    layout: { name: 'preset' },
+    minZoom: 0.3, maxZoom: 2.5,
+    wheelSensitivity: 0.3,
+  });
+
+  // Click node -> show detail and highlight neighborhood
+  cy.on('tap', 'node', function(e) {
+    highlightNeighborhood(e.target);
+    showDetail(e.target.data());
+  });
+
+  // Click background -> clear
+  cy.on('tap', function(e) {
+    if (e.target === cy) {
+      clearHighlight();
+      closeDetail();
     }
+  });
 
-    // --- Cytoscape Setup ---
-    function initGraph() {
-      cy = cytoscape({
-        container: document.getElementById('cy'),
-        style: [
-          {
-            selector: 'node',
-            style: {
-              'label': 'data(label)',
-              'text-wrap': 'wrap',
-              'text-max-width': '120px',
-              'font-size': '11px',
-              'color': '#e6edf3',
-              'text-valign': 'bottom',
-              'text-margin-y': 8,
-              'width': 40,
-              'height': 40,
-              'border-width': 2,
-              'border-color': '#30363d',
-            }
-          },
-          {
-            selector: 'node[type="episodic"]',
-            style: {
-              'background-color': '#d29922',
-              'border-color': '#d29922',
-            }
-          },
-          {
-            selector: 'node[type="semantic"]',
-            style: {
-              'background-color': '#3fb950',
-              'border-color': '#3fb950',
-            }
-          },
-          {
-            selector: 'node[type="procedural"]',
-            style: {
-              'background-color': '#bc8cff',
-              'border-color': '#bc8cff',
-            }
-          },
-          {
-            selector: 'node[type="session"]',
-            style: {
-              'background-color': '#58a6ff',
-              'border-color': '#58a6ff',
-              'shape': 'diamond',
-            }
-          },
-          {
-            selector: 'node[type="project"]',
-            style: {
-              'background-color': '#f85149',
-              'border-color': '#f85149',
-              'shape': 'hexagon',
-              'width': 50,
-              'height': 50,
-            }
-          },
-          {
-            selector: 'node:selected',
-            style: {
-              'border-width': 3,
-              'border-color': '#58a6ff',
-              'overlay-color': '#58a6ff',
-              'overlay-opacity': 0.1,
-            }
-          },
-          {
-            selector: 'edge',
-            style: {
-              'width': 'data(weight)',
-              'line-color': '#30363d',
-              'target-arrow-color': '#30363d',
-              'target-arrow-shape': 'triangle',
-              'curve-style': 'bezier',
-              'label': 'data(label)',
-              'font-size': '9px',
-              'color': '#8b949e',
-              'text-rotation': 'autorotate',
-              'text-margin-y': -8,
-            }
-          },
-          {
-            selector: 'edge[relationship="supersedes"]',
-            style: {
-              'line-color': '#f85149',
-              'target-arrow-color': '#f85149',
-              'line-style': 'dashed',
-            }
-          },
-          {
-            selector: 'edge[relationship="caused_by"]',
-            style: {
-              'line-color': '#d29922',
-              'target-arrow-color': '#d29922',
-            }
-          },
-          {
-            selector: 'edge[relationship="relates_to"]',
-            style: {
-              'line-color': '#58a6ff',
-              'target-arrow-color': '#58a6ff',
-            }
-          },
-          {
-            selector: 'edge[relationship="contains"]',
-            style: {
-              'line-color': '#3fb950',
-              'target-arrow-color': '#3fb950',
-            }
-          },
-        ],
-        layout: { name: 'cose', animate: true, animationDuration: 500 },
-        minZoom: 0.2,
-        maxZoom: 3,
-      });
-
-      cy.on('tap', 'node', function(evt) {
-        showDetail(evt.target.data());
-      });
-
-      cy.on('tap', function(evt) {
-        if (evt.target === cy) {
-          hideDetail();
-        }
-      });
+  // Hover edge -> show tooltip
+  cy.on('mouseover', 'edge', function(e) {
+    const d = e.target.data();
+    const tip = document.getElementById('tooltip');
+    tip.textContent = `${d.rel || 'edge'} (weight: ${parseFloat(d.weight || 1).toFixed(1)})`;
+    tip.style.display = 'block';
+  });
+  cy.on('mouseout', 'edge', function() {
+    document.getElementById('tooltip').style.display = 'none';
+  });
+  cy.on('mousemove', function(e) {
+    const tip = document.getElementById('tooltip');
+    if (tip.style.display === 'block') {
+      tip.style.left = (e.renderedPosition.x + 15) + 'px';
+      tip.style.top = (e.renderedPosition.y + 15) + 'px';
     }
+  });
+}
 
-    // --- API Calls ---
-    function apiHeaders() {
-      const h = { 'Content-Type': 'application/json' };
-      const key = getApiKey();
-      if (key) h['X-API-Key'] = key;
-      return h;
+function highlightNeighborhood(node) {
+  clearHighlight();
+  const neighborhood = node.closedNeighborhood();
+  cy.elements().not(neighborhood).addClass('faded');
+  neighborhood.edges().addClass('highlighted');
+  node.select();
+}
+
+function clearHighlight() {
+  cy.elements().removeClass('faded').removeClass('highlighted');
+  cy.elements().unselect();
+}
+
+// ---- API ----
+async function fetchHealth() {
+  try {
+    const r = await fetch(`${API}/v1/health`, { headers: headers() });
+    const d = await r.json();
+    document.getElementById('s-nodes').textContent = d.nodeCount || 0;
+    document.getElementById('s-edges').textContent = d.edgeCount || 0;
+    document.getElementById('s-ver').textContent = d.version || '-';
+  } catch(e) { console.error('health:', e); }
+}
+
+async function fetchMemories() {
+  try {
+    const r = await fetch(`${API}/v1/memories/query?query=&top_k=200`, { headers: headers() });
+    if (!r.ok) {
+      if (r.status === 401) {
+        document.getElementById('list').innerHTML =
+          '<div class="empty"><div class="empty-icon">&#128274;</div><div class="empty-title">API Key Required</div><div class="empty-hint">Paste your API key above to view memories</div></div>';
+      }
+      return [];
     }
+    const d = await r.json();
+    return (d.results || []).map(r => r.memory);
+  } catch(e) { console.error('fetch:', e); return []; }
+}
 
-    async function fetchHealth() {
-      try {
-        const resp = await fetch(`${API_BASE}/v1/health`, { headers: apiHeaders() });
-        const data = await resp.json();
-        document.getElementById('stat-nodes').textContent = data.nodeCount || '0';
-        document.getElementById('stat-edges').textContent = data.edgeCount || '0';
-        document.getElementById('stat-version').textContent = data.version || '-';
-      } catch (e) {
-        console.error('Health check failed:', e);
+async function fetchSubgraph(id) {
+  try {
+    const r = await fetch(`${API}/v1/memories/${id}/graph?depth=2`, { headers: headers() });
+    if (!r.ok) return { nodes: [], edges: [] };
+    return await r.json();
+  } catch(e) { return { nodes: [], edges: [] }; }
+}
+
+// ---- Type helpers ----
+function typeStr(t) {
+  return ({ 'MEMORY_TYPE_EPISODIC':'episodic','MEMORY_TYPE_SEMANTIC':'semantic',
+    'MEMORY_TYPE_PROCEDURAL':'procedural','1':'episodic','2':'semantic','3':'procedural' })[t] || 'semantic';
+}
+function relStr(r) {
+  return ({ 'RELATIONSHIP_TYPE_RELATES_TO':'relates_to','RELATIONSHIP_TYPE_SUPERSEDES':'supersedes',
+    'RELATIONSHIP_TYPE_CAUSED_BY':'caused_by','1':'relates_to','2':'supersedes','3':'caused_by' })[r] || 'relates_to';
+}
+function short(s, n) { return s && s.length > n ? s.slice(0, n) + '...' : s || ''; }
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// ---- Render List ----
+function renderList() {
+  const el = document.getElementById('list');
+  const q = document.getElementById('search').value.toLowerCase();
+
+  let items = memories;
+  if (filter !== 'all') items = items.filter(m => typeStr(m.type) === filter);
+  if (q) items = items.filter(m =>
+    m.content.toLowerCase().includes(q) ||
+    (m.tags || []).some(t => t.toLowerCase().includes(q))
+  );
+
+  if (items.length === 0) {
+    el.innerHTML = '<div class="empty"><div class="empty-icon">&#128065;</div><div class="empty-title">No memories</div><div class="empty-hint">Store memories via CLI or API, then refresh</div></div>';
+    return;
+  }
+
+  el.innerHTML = items.map(m => {
+    const t = typeStr(m.type);
+    const date = m.createdAt ? new Date(m.createdAt).toLocaleDateString() : '';
+    const tags = (m.tags || []).slice(0, 3).join(', ');
+    return `<div class="mem-card" data-id="${m.id}" onclick="selectMem('${m.id}')">
+      <span class="badge badge-${t}">${t}</span>
+      <div class="text">${esc(m.content)}</div>
+      <div class="sub"><span>${date}</span>${tags ? '<span>' + esc(tags) + '</span>' : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+// ---- Select memory -> show its neighborhood ----
+async function selectMem(id) {
+  document.querySelectorAll('.mem-card').forEach(c => c.classList.remove('selected'));
+  const card = document.querySelector(`.mem-card[data-id="${id}"]`);
+  if (card) card.classList.add('selected');
+
+  const mem = memories.find(m => m.id === id);
+  if (mem) showDetail({ ...mem, type: typeStr(mem.type) });
+
+  // Fetch subgraph and render
+  const sub = await fetchSubgraph(id);
+  renderNeighborhood(id, sub);
+}
+
+// ---- Render: focused neighborhood view ----
+function renderNeighborhood(centerId, sub) {
+  cy.elements().remove();
+  const elems = [];
+  const seen = new Set();
+
+  const center = memories.find(m => m.id === centerId);
+  if (center) {
+    seen.add(centerId);
+    elems.push({ data: {
+      id: centerId,
+      label: short(center.content, 40),
+      type: typeStr(center.type),
+      ...center,
+    }});
+  }
+
+  for (const n of (sub.nodes || [])) {
+    if (seen.has(n.id)) continue;
+    seen.add(n.id);
+    elems.push({ data: {
+      id: n.id,
+      label: short(n.content, 35),
+      type: typeStr(n.type),
+      ...n,
+    }});
+  }
+
+  for (const e of (sub.edges || [])) {
+    if (seen.has(e.fromId) && seen.has(e.toId)) {
+      elems.push({ data: {
+        id: e.id, source: e.fromId, target: e.toId,
+        rel: relStr(e.relationship),
+        weight: e.weight || 1,
+      }});
+    }
+  }
+
+  // If API returned neighbors but no edges, draw implicit edges from center
+  if ((sub.nodes || []).length > 0 && (sub.edges || []).length === 0) {
+    for (const n of (sub.nodes || [])) {
+      elems.push({ data: {
+        id: `imp-${centerId}-${n.id}`, source: centerId, target: n.id,
+        rel: 'relates_to', weight: 0.5,
+      }});
+    }
+  }
+
+  cy.add(elems);
+  cy.layout({
+    name: 'concentric',
+    concentric: n => n.id() === centerId ? 2 : 1,
+    levelWidth: () => 1,
+    minNodeSpacing: 80,
+    animate: true, animationDuration: 400,
+  }).run();
+}
+
+// ---- Render: full overview ----
+function showAllGraph() {
+  cy.elements().remove();
+  const elems = [];
+
+  for (const m of memories) {
+    elems.push({ data: {
+      id: m.id,
+      label: short(m.content, 28),
+      type: typeStr(m.type),
+      ...m,
+    }});
+  }
+
+  // Connect by shared tags
+  for (let i = 0; i < memories.length; i++) {
+    for (let j = i + 1; j < memories.length; j++) {
+      const a = memories[i], b = memories[j];
+      const shared = (a.tags || []).filter(t => (b.tags || []).includes(t));
+      if (shared.length > 0) {
+        elems.push({ data: {
+          id: `t-${a.id.slice(0,8)}-${b.id.slice(0,8)}`,
+          source: a.id, target: b.id,
+          rel: 'relates_to', weight: shared.length,
+        }});
       }
     }
+  }
 
-    async function fetchAllMemories() {
-      try {
-        const url = `${API_BASE}/v1/memories/query?query=&top_k=100`;
-        const resp = await fetch(url, { headers: apiHeaders() });
-        if (!resp.ok) {
-          const err = await resp.text();
-          console.error('Fetch memories failed:', resp.status, err);
-          if (resp.status === 401) {
-            document.getElementById('memory-list').innerHTML =
-              '<div class="empty-state"><div>Authentication required</div><div class="hint">Enter your API key in the field below</div></div>';
-          }
-          return [];
-        }
-        const data = await resp.json();
-        return (data.results || []).map(r => r.memory);
-      } catch (e) {
-        console.error('Fetch memories failed:', e);
-        return [];
-      }
-    }
+  cy.add(elems);
+  cy.layout({
+    name: 'cose',
+    animate: true, animationDuration: 600,
+    nodeRepulsion: 12000,
+    idealEdgeLength: 120,
+    nodeDimensionsIncludeLabels: true,
+  }).run();
+}
 
-    async function fetchGraph(memoryId) {
-      try {
-        const url = `${API_BASE}/v1/memories/${memoryId}/graph?depth=2`;
-        const resp = await fetch(url, { headers: apiHeaders() });
-        return await resp.json();
-      } catch (e) {
-        console.error('Fetch graph failed:', e);
-        return { nodes: [], edges: [] };
-      }
-    }
+// ---- Detail panel ----
+function showDetail(d) {
+  const panel = document.getElementById('detail');
+  const t = d.type || typeStr(d.type);
+  const tags = d.tags || [];
+  const date = d.createdAt ? new Date(d.createdAt).toLocaleString() : '-';
 
-    // --- Render ---
-    function typeFromProto(t) {
-      const map = {
-        'MEMORY_TYPE_EPISODIC': 'episodic',
-        'MEMORY_TYPE_SEMANTIC': 'semantic',
-        'MEMORY_TYPE_PROCEDURAL': 'procedural',
-        '1': 'episodic', '2': 'semantic', '3': 'procedural',
-      };
-      return map[t] || 'semantic';
-    }
+  document.getElementById('d-title').innerHTML = `<span class="badge badge-${t}">${t}</span> Memory`;
+  document.getElementById('d-body').innerHTML = `
+    <div class="row"><div class="label">Content</div><div class="value">${esc(d.content || '')}</div></div>
+    <div class="row"><div class="label">ID</div><div class="value" style="font-family:monospace;font-size:11px;color:var(--text-muted)">${d.id || ''}</div></div>
+    <div class="row"><div class="label">Created</div><div class="value">${date}</div></div>
+    <div class="row"><div class="label">Accessed</div><div class="value">${d.accessCount || 0} times</div></div>
+    <div class="row"><div class="label">Decay Score</div><div class="value">${parseFloat(d.decayScore || 1).toFixed(3)}</div></div>
+    ${tags.length ? `<div class="row"><div class="label">Tags</div><div class="tags">${tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div></div>` : ''}
+  `;
+  panel.classList.add('show');
+}
 
-    function relFromProto(r) {
-      const map = {
-        'RELATIONSHIP_TYPE_RELATES_TO': 'relates_to',
-        'RELATIONSHIP_TYPE_SUPERSEDES': 'supersedes',
-        'RELATIONSHIP_TYPE_CAUSED_BY': 'caused_by',
-        '1': 'relates_to', '2': 'supersedes', '3': 'caused_by',
-      };
-      return map[r] || 'relates_to';
-    }
+function closeDetail() {
+  document.getElementById('detail').classList.remove('show');
+}
 
-    function truncate(s, len) {
-      return s && s.length > len ? s.substring(0, len) + '...' : s;
-    }
+// ---- Load ----
+async function loadData() {
+  await fetchHealth();
+  memories = await fetchMemories();
+  renderList();
 
-    function renderMemoryList(memories) {
-      const list = document.getElementById('memory-list');
-      const filtered = activeFilter === 'all'
-        ? memories
-        : memories.filter(m => typeFromProto(m.type) === activeFilter);
+  // If we have memories, show the first one's neighborhood to give an initial view
+  if (memories.length > 0 && cy.elements().length === 0) {
+    selectMem(memories[0].id);
+  }
+}
 
-      const searchTerm = document.getElementById('search').value.toLowerCase();
-      const searched = searchTerm
-        ? filtered.filter(m => m.content.toLowerCase().includes(searchTerm) ||
-            (m.tags || []).some(t => t.toLowerCase().includes(searchTerm)))
-        : filtered;
+// ---- Init ----
+document.addEventListener('DOMContentLoaded', () => {
+  initCy();
 
-      document.getElementById('memory-count').textContent = `(${searched.length})`;
+  // API key
+  const keyEl = document.getElementById('apikey');
+  keyEl.value = KEY;
+  keyEl.addEventListener('change', () => { KEY = keyEl.value; loadData(); });
 
-      if (searched.length === 0) {
-        list.innerHTML = '<div class="empty-state"><div>No memories found</div><div class="hint">Store memories via API or CLI</div></div>';
-        return;
-      }
+  // Search
+  document.getElementById('search').addEventListener('input', renderList);
 
-      list.innerHTML = searched.map(m => {
-        const type = typeFromProto(m.type);
-        const date = m.createdAt ? new Date(m.createdAt).toLocaleString() : '';
-        return `
-          <div class="memory-item" data-id="${m.id}" onclick="selectMemory('${m.id}')">
-            <span class="type-badge type-${type}">${type}</span>
-            <div class="content">${escapeHtml(m.content)}</div>
-            <div class="meta">${date} · accessed ${m.accessCount || 0}x</div>
-          </div>`;
-      }).join('');
-    }
-
-    async function selectMemory(id) {
-      document.querySelectorAll('.memory-item').forEach(el => el.classList.remove('selected'));
-      const item = document.querySelector(`.memory-item[data-id="${id}"]`);
-      if (item) item.classList.add('selected');
-
-      const graphData = await fetchGraph(id);
-      renderGraph(id, graphData);
-
-      const mem = allMemories.find(m => m.id === id);
-      if (mem) showDetail({ ...mem, type: typeFromProto(mem.type) });
-    }
-
-    function renderGraph(centerId, graphData) {
-      cy.elements().remove();
-
-      const nodes = new Set();
-      const elements = [];
-
-      // Add center node
-      const centerMem = allMemories.find(m => m.id === centerId);
-      if (centerMem) {
-        nodes.add(centerId);
-        elements.push({
-          data: {
-            id: centerId,
-            label: truncate(centerMem.content, 30),
-            type: typeFromProto(centerMem.type),
-            ...centerMem,
-          }
-        });
-      }
-
-      // Add neighbor nodes from graph response
-      for (const n of (graphData.nodes || [])) {
-        if (!nodes.has(n.id)) {
-          nodes.add(n.id);
-          elements.push({
-            data: {
-              id: n.id,
-              label: truncate(n.content, 30),
-              type: typeFromProto(n.type),
-              ...n,
-            }
-          });
-        }
-      }
-
-      // Add edges
-      for (const e of (graphData.edges || [])) {
-        if (nodes.has(e.fromId) && nodes.has(e.toId)) {
-          elements.push({
-            data: {
-              id: e.id,
-              source: e.fromId,
-              target: e.toId,
-              label: relFromProto(e.relationship),
-              relationship: relFromProto(e.relationship),
-              weight: Math.max(1, (e.weight || 1) * 3),
-            }
-          });
-        }
-      }
-
-      // If no edges from API, show relates_to edges between memories with shared tags
-      if ((graphData.edges || []).length === 0 && elements.length > 1) {
-        for (let i = 0; i < elements.length; i++) {
-          for (let j = i + 1; j < elements.length; j++) {
-            const a = elements[i].data;
-            const b = elements[j].data;
-            if (a.tags && b.tags && a.id !== centerId && b.id !== centerId) continue;
-            if (!a.id || !b.id || a.source || b.source) continue;
-            elements.push({
-              data: {
-                id: `auto-${a.id}-${b.id}`,
-                source: a.id === centerId ? a.id : b.id,
-                target: a.id === centerId ? b.id : a.id,
-                label: 'neighbor',
-                relationship: 'relates_to',
-                weight: 1,
-              }
-            });
-          }
-        }
-      }
-
-      cy.add(elements);
-      cy.layout({ name: 'cose', animate: true, animationDuration: 500, nodeRepulsion: 8000 }).run();
-    }
-
-    function renderFullGraph(memories) {
-      cy.elements().remove();
-      const elements = [];
-
-      for (const m of memories) {
-        elements.push({
-          data: {
-            id: m.id,
-            label: truncate(m.content, 25),
-            type: typeFromProto(m.type),
-            ...m,
-          }
-        });
-      }
-
-      // Auto-detect relationships via shared tags
-      for (let i = 0; i < memories.length; i++) {
-        for (let j = i + 1; j < memories.length; j++) {
-          const a = memories[i];
-          const b = memories[j];
-          if (a.tags && b.tags) {
-            const shared = (a.tags || []).filter(t => (b.tags || []).includes(t));
-            if (shared.length > 0) {
-              elements.push({
-                data: {
-                  id: `tag-${a.id}-${b.id}`,
-                  source: a.id,
-                  target: b.id,
-                  label: shared[0],
-                  relationship: 'relates_to',
-                  weight: shared.length,
-                }
-              });
-            }
-          }
-        }
-      }
-
-      cy.add(elements);
-      cy.layout({ name: 'cose', animate: true, animationDuration: 800, nodeRepulsion: 10000 }).run();
-    }
-
-    function showDetail(data) {
-      const panel = document.getElementById('detail-panel');
-      const content = document.getElementById('detail-content');
-
-      const type = data.type || typeFromProto(data.type);
-      const tags = data.tags || [];
-      const date = data.createdAt ? new Date(data.createdAt).toLocaleString() : '-';
-
-      content.innerHTML = `
-        <div class="field">
-          <div class="field-label">Type</div>
-          <div class="field-value"><span class="type-badge type-${type}">${type}</span></div>
-        </div>
-        <div class="field">
-          <div class="field-label">Content</div>
-          <div class="field-value">${escapeHtml(data.content || '')}</div>
-        </div>
-        <div class="field">
-          <div class="field-label">ID</div>
-          <div class="field-value" style="font-family:monospace;font-size:11px">${data.id || ''}</div>
-        </div>
-        <div class="field">
-          <div class="field-label">Created</div>
-          <div class="field-value">${date}</div>
-        </div>
-        <div class="field">
-          <div class="field-label">Access Count</div>
-          <div class="field-value">${data.accessCount || 0}</div>
-        </div>
-        <div class="field">
-          <div class="field-label">Decay Score</div>
-          <div class="field-value">${parseFloat(data.decayScore || 1).toFixed(3)}</div>
-        </div>
-        ${tags.length > 0 ? `
-        <div class="field">
-          <div class="field-label">Tags</div>
-          <div class="tags">${tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
-        </div>` : ''}
-      `;
-
-      panel.classList.add('visible');
-    }
-
-    function hideDetail() {
-      document.getElementById('detail-panel').classList.remove('visible');
-    }
-
-    function escapeHtml(s) {
-      const div = document.createElement('div');
-      div.textContent = s;
-      return div.innerHTML;
-    }
-
-    // --- Controls ---
-    function resetLayout() {
-      cy.layout({ name: 'cose', animate: true, animationDuration: 500 }).run();
-    }
-
-    function fitGraph() {
-      cy.fit(undefined, 50);
-    }
-
-    async function loadAllData() {
-      await fetchHealth();
-      allMemories = await fetchAllMemories();
-      renderMemoryList(allMemories);
-      if (allMemories.length > 0) {
-        renderFullGraph(allMemories);
-      }
-    }
-
-    // --- Init ---
-    document.addEventListener('DOMContentLoaded', () => {
-      initGraph();
-      loadAllData();
-
-      // Search
-      document.getElementById('search').addEventListener('input', () => {
-        renderMemoryList(allMemories);
-      });
-
-      // Type filters
-      document.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
-          activeFilter = btn.dataset.type;
-          renderMemoryList(allMemories);
-        });
-      });
-
-      // API key input — set from URL param and reload on change.
-      const keyInput = document.getElementById('api-key-input');
-      keyInput.value = API_KEY;
-      keyInput.addEventListener('change', () => {
-        API_KEY = keyInput.value;
-        loadAllData();
-      });
-
-      // Auto-refresh every 30s
-      setInterval(loadAllData, 30000);
+  // Filters
+  document.querySelectorAll('.type-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.type-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      filter = btn.dataset.type;
+      renderList();
     });
-  </script>
+  });
+
+  loadData();
+  setInterval(fetchHealth, 30000);
+});
+</script>
 </body>
 </html>
