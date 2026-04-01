@@ -1,0 +1,58 @@
+# Context0 Helm Chart values
+
+# API Server
+api:
+  replicas: 1
+  image:
+    repository: context0/context0
+    tag: dev
+    pullPolicy: IfNotPresent
+  grpcPort: 50051
+  httpPort: 8080
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# PostgreSQL + Apache AGE
+postgres:
+  image:
+    repository: apache/age
+    tag: PG16_latest
+    pullPolicy: IfNotPresent
+  database: context0
+  user: context0
+  password: context0-dev-password
+  storage: 5Gi
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+# Consolidation CronJob
+consolidation:
+  enabled: true
+  schedule: "0 */6 * * *"  # every 6 hours
+  decayHalfLifeDays: "30"
+  staleThreshold: "0.1"
+  pruneAgeDays: "30"
+  dryRun: "false"
+
+# Authentication
+auth:
+  apiKeys: "ctx0_dev_key_1,ctx0_dev_key_2"
+
+# Service exposure
+service:
+  type: ClusterIP
+  # Set to NodePort for kind cluster testing
+  nodePort:
+    enabled: false
+    grpc: 30051
+    http: 30080

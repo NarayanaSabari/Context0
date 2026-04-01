@@ -1,0 +1,15 @@
+apiVersion: v2
+name: context0
+description: Kubernetes-native memory engine for AI agents
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ai
+  - memory
+  - graph
+  - agents
+  - kubernetes
+home: https://github.com/context0/context0
+sources:
+  - https://github.com/context0/context0
