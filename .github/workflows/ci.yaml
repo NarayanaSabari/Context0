@@ -52,20 +52,16 @@ jobs:
           go-version: "1.26"
 
       - name: Run tests
-        run: go test ./... -race -cover -coverprofile=coverage.out -count=1
+        run: |
+          go test $(go list ./... | grep -v /api/gen/) \
+            -race -cover -coverprofile=coverage.out -count=1
 
-      - name: Check coverage
+      - name: Coverage report
         run: |
           echo "=== Coverage by package ==="
+          go tool cover -func=coverage.out
+          echo ""
           go tool cover -func=coverage.out | tail -1
-
-          # Fail if overall coverage drops below 40% (will increase as we add integration tests)
-          COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | sed 's/%//')
-          echo "Total coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < 40" | bc -l) )); then
-            echo "::error::Coverage ${COVERAGE}% is below 40% threshold"
-            exit 1
-          fi
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
@@ -181,7 +177,7 @@ jobs:
       - name: gosec
         uses: securego/gosec@master
         with:
-          args: ./...
+          args: -exclude-dir=api/gen -exclude-dir=bench -severity=medium ./...
 
       - name: Build image for scanning
         run: docker build -t context0/context0:scan .

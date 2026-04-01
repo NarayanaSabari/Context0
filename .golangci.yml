@@ -1,0 +1,32 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  disable:
+    - depguard
+
+linters-settings:
+  errcheck:
+    exclude-functions:
+      - fmt.Fprintf
+      - fmt.Fprintf
+      - (io.Closer).Close
+
+issues:
+  exclude-dirs:
+    - api/gen
+    - bench
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+    - path: cmd/cli/
+      linters:
+        - errcheck
