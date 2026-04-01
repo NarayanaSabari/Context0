@@ -328,6 +328,12 @@
       </div>
 
       <div class="memory-list" id="memory-list"></div>
+
+      <div style="padding:12px 16px;border-top:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">API Key</div>
+        <input type="text" id="api-key-input" placeholder="Enter API key..."
+          style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;font-family:monospace" />
+      </div>
     </div>
 
     <div class="graph-container">
@@ -348,10 +354,15 @@
 
   <script>
     const API_BASE = window.location.origin;
-    const API_KEY = new URLSearchParams(window.location.search).get('key') || '';
+    let API_KEY = new URLSearchParams(window.location.search).get('key') || '';
     let allMemories = [];
     let activeFilter = 'all';
     let cy;
+
+    function getApiKey() {
+      const input = document.getElementById('api-key-input');
+      return input ? input.value : API_KEY;
+    }
 
     // --- Cytoscape Setup ---
     function initGraph() {
@@ -486,7 +497,8 @@
     // --- API Calls ---
     function apiHeaders() {
       const h = { 'Content-Type': 'application/json' };
-      if (API_KEY) h['X-API-Key'] = API_KEY;
+      const key = getApiKey();
+      if (key) h['X-API-Key'] = key;
       return h;
     }
 
@@ -502,10 +514,19 @@
       }
     }
 
-    async function fetchAllMemories(projectId) {
+    async function fetchAllMemories() {
       try {
-        const url = `${API_BASE}/v1/memories/query?query=&project_id=${projectId || ''}&top_k=100`;
+        const url = `${API_BASE}/v1/memories/query?query=&top_k=100`;
         const resp = await fetch(url, { headers: apiHeaders() });
+        if (!resp.ok) {
+          const err = await resp.text();
+          console.error('Fetch memories failed:', resp.status, err);
+          if (resp.status === 401) {
+            document.getElementById('memory-list').innerHTML =
+              '<div class="empty-state"><div>Authentication required</div><div class="hint">Enter your API key in the field below</div></div>';
+          }
+          return [];
+        }
         const data = await resp.json();
         return (data.results || []).map(r => r.memory);
       } catch (e) {
@@ -776,17 +797,8 @@
 
     async function loadAllData() {
       await fetchHealth();
-
-      // Try to load memories for all projects (query without filter).
-      allMemories = await fetchAllMemories('');
-
-      // If no results, try with empty query
-      if (allMemories.length === 0) {
-        allMemories = await fetchAllMemories('default');
-      }
-
+      allMemories = await fetchAllMemories();
       renderMemoryList(allMemories);
-
       if (allMemories.length > 0) {
         renderFullGraph(allMemories);
       }
@@ -810,6 +822,14 @@
           activeFilter = btn.dataset.type;
           renderMemoryList(allMemories);
         });
+      });
+
+      // API key input — set from URL param and reload on change.
+      const keyInput = document.getElementById('api-key-input');
+      keyInput.value = API_KEY;
+      keyInput.addEventListener('change', () => {
+        API_KEY = keyInput.value;
+        loadAllData();
       });
 
       // Auto-refresh every 30s

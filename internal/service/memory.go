@@ -87,9 +87,7 @@ func (s *MemoryService) Query(ctx context.Context, req *QueryRequest) (*QueryRes
 	timer := prometheus.NewTimer(metrics.QueryDuration)
 	defer timer.ObserveDuration()
 
-	if req.ProjectId == "" {
-		return nil, status.Error(codes.InvalidArgument, "project_id is required")
-	}
+	// project_id is optional — if empty, query across all projects.
 
 	var types []model.MemoryType
 	for _, t := range req.Types {

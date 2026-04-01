@@ -278,7 +278,9 @@ func (r *AGERepository) LinkMemoryToSession(ctx context.Context, sessionID, memo
 func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) ([]model.MemoryWithContext, error) {
 	// Build a Cypher MATCH query with filters.
 	var conditions []string
-	conditions = append(conditions, fmt.Sprintf("m.project_id = '%s'", escapeCypher(filter.ProjectID)))
+	if filter.ProjectID != "" {
+		conditions = append(conditions, fmt.Sprintf("m.project_id = '%s'", escapeCypher(filter.ProjectID)))
+	}
 
 	if len(filter.Types) > 0 {
 		var typeStrs []string
@@ -288,8 +290,6 @@ func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) (
 		conditions = append(conditions, fmt.Sprintf("m.type IN [%s]", strings.Join(typeStrs, ", ")))
 	}
 
-	whereClause := strings.Join(conditions, " AND ")
-
 	// For MVP: keyword search via CONTAINS on content and tags.
 	if len(filter.Keywords) > 0 {
 		var keywordConds []string
@@ -297,7 +297,7 @@ func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) (
 			kw = escapeCypher(strings.ToLower(kw))
 			keywordConds = append(keywordConds, fmt.Sprintf("(toLower(m.content) CONTAINS '%s' OR toLower(m.tags) CONTAINS '%s')", kw, kw))
 		}
-		whereClause += " AND (" + strings.Join(keywordConds, " OR ") + ")"
+		conditions = append(conditions, "("+strings.Join(keywordConds, " OR ")+")")
 	}
 
 	topK := filter.TopK
@@ -305,11 +305,19 @@ func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) (
 		topK = 5
 	}
 
-	q := fmt.Sprintf(
-		`MATCH (m:Memory) WHERE %s RETURN properties(m) ORDER BY m.access_count DESC, m.created_at DESC LIMIT %d`,
-		whereClause,
-		topK,
-	)
+	var q string
+	if len(conditions) > 0 {
+		q = fmt.Sprintf(
+			`MATCH (m:Memory) WHERE %s RETURN properties(m) ORDER BY m.created_at DESC LIMIT %d`,
+			strings.Join(conditions, " AND "),
+			topK,
+		)
+	} else {
+		q = fmt.Sprintf(
+			`MATCH (m:Memory) RETURN properties(m) ORDER BY m.created_at DESC LIMIT %d`,
+			topK,
+		)
+	}
 
 	rows, err := r.cypher(ctx, q)
 	if err != nil {
