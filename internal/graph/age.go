@@ -15,12 +15,17 @@ import (
 
 // AGERepository implements Repository using Apache AGE on PostgreSQL.
 type AGERepository struct {
-	pool *pgxpool.Pool
+	pool         *pgxpool.Pool
+	embeddingDim int
 }
 
 // NewAGERepository creates a new AGE-backed repository.
-func NewAGERepository(pool *pgxpool.Pool) *AGERepository {
-	return &AGERepository{pool: pool}
+// embeddingDim sets the pgvector column dimension (e.g. 384, 768, 1536).
+func NewAGERepository(pool *pgxpool.Pool, embeddingDim int) *AGERepository {
+	if embeddingDim <= 0 {
+		embeddingDim = 384
+	}
+	return &AGERepository{pool: pool, embeddingDim: embeddingDim}
 }
 
 // Close releases the connection pool.
@@ -36,14 +41,15 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 	}
 
 	// Embeddings table: links memory node IDs to their vector embeddings.
-	if _, err := r.pool.Exec(ctx, `
+	createTable := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS public.memory_embeddings (
 			memory_id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
-			embedding vector(384) NOT NULL,
+			embedding vector(%d) NOT NULL,
 			created_at TIMESTAMPTZ DEFAULT NOW()
 		)
-	`); err != nil {
+	`, r.embeddingDim)
+	if _, err := r.pool.Exec(ctx, createTable); err != nil {
 		return fmt.Errorf("create public.memory_embeddings table: %w", err)
 	}
 
