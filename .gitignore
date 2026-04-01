@@ -1,0 +1,65 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go build artifacts
+api/gen/
+coverage.out
+coverage.html
+
+# Node / Web
+node_modules/
+web/dist/
+web/.vite/
+
+# Bench — ignore upstream files, only track our provider + modified files
+bench/*
+!bench/src/
+bench/src/*
+!bench/src/providers/
+bench/src/providers/*
+!bench/src/providers/context0/
+!bench/src/providers/index.ts
+!bench/src/types/
+bench/src/types/*
+!bench/src/types/provider.ts
+!bench/src/utils/
+bench/src/utils/*
+!bench/src/utils/config.ts
+bench/node_modules/
+bench/data/
+bench/ui/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+*.whl
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Docker
+*.tar
+
+# Secrets (never commit)
+*.pem
+*.key

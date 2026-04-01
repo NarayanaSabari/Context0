@@ -1,0 +1,83 @@
+name: Security Scan
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Every Monday at 6am UTC
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  gosec:
+    name: Go Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: gosec
+        uses: securego/gosec@master
+        with:
+          args: "-fmt sarif -out gosec.sarif ./..."
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: gosec.sarif
+
+  trivy:
+    name: Container Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build images
+        run: |
+          docker build -t context0/context0:scan .
+          docker build -t context0/postgres-age-vector:scan ./docker/postgres-age-vector/
+
+      - name: Scan API image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: context0/context0:scan
+          format: sarif
+          output: trivy-api.sarif
+          severity: CRITICAL,HIGH
+
+      - name: Scan Postgres image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: context0/postgres-age-vector:scan
+          format: sarif
+          output: trivy-pg.sarif
+          severity: CRITICAL,HIGH
+
+      - name: Upload API SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-api.sarif
+          category: trivy-api
+
+      - name: Upload PG SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-pg.sarif
+          category: trivy-postgres
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

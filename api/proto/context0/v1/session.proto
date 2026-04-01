@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package context0.v1;
+
+option go_package = "github.com/context0/context0/api/gen/context0/v1;context0v1";
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+// SessionService manages agent session lifecycle.
+service SessionService {
+  // StartSession begins a new agent session.
+  rpc StartSession(StartSessionRequest) returns (StartSessionResponse) {
+    option (google.api.http) = {
+      post: "/v1/sessions"
+      body: "*"
+    };
+  }
+
+  // EndSession closes an active session.
+  rpc EndSession(EndSessionRequest) returns (EndSessionResponse) {
+    option (google.api.http) = {
+      post: "/v1/sessions/{id}/end"
+    };
+  }
+}
+
+// Session represents an agent interaction session.
+message Session {
+  string id = 1;
+  string project_id = 2;
+  string agent_id = 3;
+  google.protobuf.Timestamp started_at = 4;
+  google.protobuf.Timestamp ended_at = 5;
+}
+
+message StartSessionRequest {
+  string project_id = 1;
+  string agent_id = 2;
+}
+
+message StartSessionResponse {
+  Session session = 1;
+}
+
+message EndSessionRequest {
+  string id = 1;
+}
+
+message EndSessionResponse {
+  Session session = 1;
+}
