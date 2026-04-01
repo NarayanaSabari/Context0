@@ -45,8 +45,21 @@ func main() {
 	}
 	log.Printf("database connected")
 
+	// --- Embedding (init early to get dimension for graph schema) ---
+	embedder, err := emb.NewFromConfig(emb.ProviderConfig{
+		Provider: cfg.EmbeddingProvider,
+		Model:    cfg.EmbeddingModel,
+		APIKey:   cfg.EmbeddingAPIKey,
+		BaseURL:  cfg.EmbeddingBaseURL,
+		Dim:      cfg.EmbeddingDim,
+	})
+	if err != nil {
+		log.Fatalf("failed to create embedder: %v", err)
+	}
+	log.Printf("embedding: provider=%s dim=%d", cfg.EmbeddingProvider, embedder.Dimension())
+
 	// --- Graph ---
-	repo := graph.NewAGERepository(pool)
+	repo := graph.NewAGERepository(pool, embedder.Dimension())
 	if err := repo.InitSchema(ctx); err != nil {
 		log.Fatalf("failed to init graph schema: %v", err)
 	}
@@ -62,9 +75,6 @@ func main() {
 	grpcServer := grpc.NewServer(
 		grpc.UnaryInterceptor(apiAuth.UnaryInterceptor()),
 	)
-
-	embedder := emb.NewBagOfWordsEmbedder(384)
-	log.Printf("embedding: using BagOfWords embedder (dim=%d)", embedder.Dimension())
 
 	memorySvc := service.NewMemoryService(repo, embedder)
 	sessionSvc := service.NewSessionService(repo)

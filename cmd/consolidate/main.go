@@ -29,7 +29,7 @@ func main() {
 		log.Fatalf("failed to ping database: %v", err)
 	}
 
-	repo := graph.NewAGERepository(pool)
+	repo := graph.NewAGERepository(pool, 0) // dim=0 uses default; consolidation doesn't create embeddings
 	defer repo.Close()
 
 	if err := repo.InitSchema(ctx); err != nil {

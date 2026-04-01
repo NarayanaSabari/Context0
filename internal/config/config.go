@@ -18,6 +18,19 @@ type Config struct {
 	// Auth
 	APIKeys []string
 
+	// Embedding
+	EmbeddingProvider string // "bag-of-words" | "ollama" | "openai" | "google"
+	EmbeddingModel    string // model name (e.g. "nomic-embed-text", "text-embedding-3-small")
+	EmbeddingAPIKey   string // API key for cloud providers (OpenAI, Google)
+	EmbeddingBaseURL  string // base URL override (Ollama endpoint, or custom OpenAI-compatible)
+	EmbeddingDim      int    // vector dimension (auto-detected if 0)
+
+	// LLM (for extraction)
+	LLMProvider string // "rule-based" | "ollama" | "openai"
+	LLMModel    string
+	LLMAPIKey   string
+	LLMBaseURL  string
+
 	// Version
 	Version string
 }
@@ -29,7 +42,19 @@ func Load() Config {
 		HTTPPort:    getEnvInt("CONTEXT0_HTTP_PORT", 8080),
 		DatabaseURL: getEnv("CONTEXT0_DATABASE_URL", "postgres://context0:context0@localhost:5432/context0?sslmode=disable"),
 		APIKeys:     splitEnv("CONTEXT0_API_KEYS", ","),
-		Version:     getEnv("CONTEXT0_VERSION", "0.1.0-dev"),
+
+		EmbeddingProvider: getEnv("CONTEXT0_EMBEDDING_PROVIDER", "bag-of-words"),
+		EmbeddingModel:    getEnv("CONTEXT0_EMBEDDING_MODEL", ""),
+		EmbeddingAPIKey:   getEnv("CONTEXT0_EMBEDDING_API_KEY", ""),
+		EmbeddingBaseURL:  getEnv("CONTEXT0_EMBEDDING_BASE_URL", ""),
+		EmbeddingDim:      getEnvInt("CONTEXT0_EMBEDDING_DIM", 0),
+
+		LLMProvider: getEnv("CONTEXT0_LLM_PROVIDER", "rule-based"),
+		LLMModel:    getEnv("CONTEXT0_LLM_MODEL", ""),
+		LLMAPIKey:   getEnv("CONTEXT0_LLM_API_KEY", ""),
+		LLMBaseURL:  getEnv("CONTEXT0_LLM_BASE_URL", ""),
+
+		Version: getEnv("CONTEXT0_VERSION", "0.1.0-dev"),
 	}
 }
 
