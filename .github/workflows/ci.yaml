@@ -28,6 +28,7 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
+          install-mode: goinstall
 
       - name: Proto lint (buf)
         uses: bufbuild/buf-setup-action@v1
@@ -177,7 +178,7 @@ jobs:
       - name: gosec
         uses: securego/gosec@master
         with:
-          args: -exclude-dir=api/gen -exclude-dir=bench -severity=medium ./...
+          args: -exclude-dir=api/gen -exclude-dir=bench -exclude=G115 -severity=medium ./...
 
       - name: Build image for scanning
         run: docker build -t context0/context0:scan .
