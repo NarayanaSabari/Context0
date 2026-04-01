@@ -81,6 +81,9 @@ func (s *MemoryService) Store(ctx context.Context, req *StoreRequest) (*StoreRes
 		}
 	}
 
+	// Detect contradictions with existing memories and create supersedes edges.
+	s.detectAndSupersede(ctx, mem)
+
 	// Auto-link by tags: find existing memories with overlapping tags and create relates_to edges.
 	if len(req.Tags) > 0 {
 		s.autoLinkByTags(ctx, mem)
@@ -348,6 +351,49 @@ func (s *MemoryService) GetProfile(ctx context.Context, req *pb.GetProfileReques
 }
 
 // autoLinkByTags finds existing memories with matching tags and creates relates_to edges.
+// detectAndSupersede checks if a new memory contradicts existing memories.
+// If a contradiction is found, creates a supersedes edge from the new memory to the old one.
+func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory) {
+	if mem.Type != model.MemoryTypeSemantic {
+		return
+	}
+
+	filter := graph.QueryFilter{
+		ProjectID: mem.ProjectID,
+		Types:     []model.MemoryType{model.MemoryTypeSemantic},
+		TopK:      50,
+	}
+
+	results, err := s.repo.QueryMemories(ctx, filter)
+	if err != nil {
+		return
+	}
+
+	var existingMems []model.Memory
+	for _, r := range results {
+		existingMems = append(existingMems, r.Memory)
+	}
+
+	contradictions := extraction.DetectContradictions(mem, existingMems)
+
+	for _, c := range contradictions {
+		if c.Confidence < 0.5 {
+			continue // skip low-confidence contradictions
+		}
+
+		edge := model.Edge{
+			ID:           uuid.New(),
+			FromID:       c.NewMemory.ID,
+			ToID:         c.OldMemory.ID,
+			Relationship: model.RelSupersedes,
+			Weight:       c.Confidence,
+			CreatedAt:    time.Now().UTC(),
+		}
+		_ = s.repo.CreateEdge(ctx, edge)
+		metrics.EdgesTotal.WithLabelValues(string(model.RelSupersedes)).Inc()
+	}
+}
+
 func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory) {
 	filter := graph.QueryFilter{
 		ProjectID: mem.ProjectID,
