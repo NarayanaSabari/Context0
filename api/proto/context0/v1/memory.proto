@@ -45,6 +45,21 @@ service Context0 {
       get: "/v1/memories/{center_id}/graph"
     };
   }
+
+  // Extract processes a raw conversation and auto-creates memories.
+  rpc Extract(ExtractRequest) returns (ExtractResponse) {
+    option (google.api.http) = {
+      post: "/v1/memories/extract"
+      body: "*"
+    };
+  }
+
+  // GetProfile returns an aggregated user/project profile from stored memories.
+  rpc GetProfile(GetProfileRequest) returns (GetProfileResponse) {
+    option (google.api.http) = {
+      get: "/v1/profiles/{project_id}"
+    };
+  }
 }
 
 // MemoryType categorizes a memory node.
@@ -159,4 +174,45 @@ message GetGraphRequest {
 message GetGraphResponse {
   repeated Memory nodes = 1;
   repeated Edge edges = 2;
+}
+
+// --- Extract ---
+
+message ExtractRequest {
+  // Raw conversation text (multi-turn messages).
+  string conversation = 1;
+  string project_id = 2;
+  // Optional: link extracted memories to a session.
+  string session_id = 3;
+}
+
+message ExtractResponse {
+  // Memories auto-created from the conversation.
+  repeated Memory memories = 1;
+  // Number of relationships auto-created.
+  int32 relationships_created = 2;
+}
+
+// --- GetProfile ---
+
+message GetProfileRequest {
+  string project_id = 1;
+  // Optional: filter profile by query relevance.
+  string query = 2;
+}
+
+message ProfileFact {
+  string content = 1;
+  MemoryType type = 2;
+  double confidence = 3;
+  repeated string tags = 4;
+}
+
+message GetProfileResponse {
+  // Stable facts and preferences (from semantic + procedural memories).
+  repeated ProfileFact static_profile = 1;
+  // Recent events and context (from episodic memories, last 7 days).
+  repeated ProfileFact dynamic_profile = 2;
+  // Total memory count for this project.
+  int64 total_memories = 3;
 }

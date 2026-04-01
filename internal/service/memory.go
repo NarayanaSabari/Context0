@@ -8,6 +8,7 @@ import (
 
 	pb "github.com/context0/context0/api/gen/context0/v1"
 	"github.com/context0/context0/internal/embedding"
+	"github.com/context0/context0/internal/extraction"
 	"github.com/context0/context0/internal/graph"
 	"github.com/context0/context0/internal/metrics"
 	"github.com/context0/context0/internal/ranking"
@@ -242,6 +243,107 @@ func (s *MemoryService) GetGraph(ctx context.Context, req *GetGraphRequest) (*Ge
 	return &GetGraphResponse{
 		Nodes: pbNodes,
 		Edges: pbEdges,
+	}, nil
+}
+
+func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*pb.ExtractResponse, error) {
+	if req.Conversation == "" {
+		return nil, status.Error(codes.InvalidArgument, "conversation is required")
+	}
+	if req.ProjectId == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
+
+	extractor := extraction.NewExtractor(nil) // TODO: use configured LLM provider
+	extracted, err := extractor.Extract(ctx, req.Conversation, req.ProjectId)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "extraction failed: %v", err)
+	}
+
+	memories := extraction.ToMemories(extracted, req.ProjectId)
+	var pbMemories []*pb.Memory
+	relCount := int32(0)
+
+	for _, mem := range memories {
+		if err := s.repo.CreateMemory(ctx, mem); err != nil {
+			continue
+		}
+
+		// Generate and store embedding.
+		if s.embedder != nil {
+			if vec, err := s.embedder.Embed(mem.Content); err == nil {
+				_ = s.repo.StoreEmbedding(ctx, mem.ID, vec)
+			}
+		}
+
+		// Link to session if provided.
+		if req.SessionId != "" {
+			sessID, err := uuid.Parse(req.SessionId)
+			if err == nil {
+				_ = s.repo.LinkMemoryToSession(ctx, sessID, mem.ID)
+			}
+		}
+
+		// Auto-link by tags.
+		s.autoLinkByTags(ctx, mem)
+		relCount++ // approximate — autoLinkByTags may create multiple edges
+
+		metrics.MemoriesTotal.WithLabelValues(string(mem.Type)).Inc()
+		pbMemories = append(pbMemories, memoryToProto(mem))
+	}
+
+	return &pb.ExtractResponse{
+		Memories:             pbMemories,
+		RelationshipsCreated: relCount,
+	}, nil
+}
+
+func (s *MemoryService) GetProfile(ctx context.Context, req *pb.GetProfileRequest) (*pb.GetProfileResponse, error) {
+	if req.ProjectId == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
+
+	// Fetch all memories for this project.
+	filter := graph.QueryFilter{
+		ProjectID: req.ProjectId,
+		TopK:      200,
+	}
+	results, err := s.repo.QueryMemories(ctx, filter)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "query failed: %v", err)
+	}
+
+	now := time.Now().UTC()
+	dynamicCutoff := now.AddDate(0, 0, -7) // last 7 days
+
+	var staticFacts []*pb.ProfileFact
+	var dynamicFacts []*pb.ProfileFact
+
+	for _, r := range results {
+		t := r.Memory.Type
+		fact := &pb.ProfileFact{
+			Content:    r.Memory.Content,
+			Type:       memoryTypeToProto(t),
+			Confidence: r.Memory.DecayScore,
+			Tags:       r.Memory.Tags,
+		}
+
+		switch t {
+		case model.MemoryTypeSemantic, model.MemoryTypeProcedural:
+			// Static profile: facts and procedures (stable knowledge).
+			staticFacts = append(staticFacts, fact)
+		case model.MemoryTypeEpisodic:
+			// Dynamic profile: only recent episodes.
+			if r.Memory.CreatedAt.After(dynamicCutoff) {
+				dynamicFacts = append(dynamicFacts, fact)
+			}
+		}
+	}
+
+	return &pb.GetProfileResponse{
+		StaticProfile:  staticFacts,
+		DynamicProfile: dynamicFacts,
+		TotalMemories:  int64(len(results)),
 	}, nil
 }
 
