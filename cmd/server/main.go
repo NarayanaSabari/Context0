@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	pb "github.com/context0/context0/api/gen/context0/v1"
@@ -84,7 +85,15 @@ func main() {
 	}()
 
 	// --- REST Gateway ---
-	gwMux := runtime.NewServeMux()
+	gwMux := runtime.NewServeMux(
+		// Forward X-API-Key header as gRPC metadata so the interceptor can read it.
+		runtime.WithIncomingHeaderMatcher(func(key string) (string, bool) {
+			if strings.EqualFold(key, "X-API-Key") {
+				return "x-api-key", true
+			}
+			return runtime.DefaultHeaderMatcher(key)
+		}),
+	)
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 
 	if err := pb.RegisterContext0HandlerFromEndpoint(ctx, gwMux, cfg.GRPCAddr(), opts); err != nil {

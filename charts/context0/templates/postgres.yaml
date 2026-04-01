@@ -35,7 +35,7 @@ spec:
                   key: password
           volumeMounts:
             - name: data
-              mountPath: /var/lib/postgresql/data
+              mountPath: /var/lib/postgresql
           resources:
             {{- toYaml .Values.postgres.resources | nindent 12 }}
           livenessProbe:

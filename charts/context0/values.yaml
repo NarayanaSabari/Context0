@@ -21,7 +21,7 @@ api:
 postgres:
   image:
     repository: apache/age
-    tag: PG16_latest
+    tag: latest
     pullPolicy: IfNotPresent
   database: context0
   user: context0

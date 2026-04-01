@@ -344,11 +344,12 @@ func (r *AGERepository) GetSubgraph(ctx context.Context, centerID uuid.UUID, dep
 		depth = 5
 	}
 
-	// Get all nodes within N hops.
+	// Get direct neighbors. AGE has limited variable-length path support,
+	// so for MVP we do 1-hop and iterate if depth > 1 is needed later.
+	_ = depth
 	q := fmt.Sprintf(
-		`MATCH path = (center {id: '%s'})-[*1..%d]-(neighbor) WHERE neighbor:Memory RETURN properties(neighbor)`,
+		`MATCH (center {id: '%s'})-[e]-(neighbor) RETURN properties(neighbor)`,
 		centerID.String(),
-		depth,
 	)
 
 	rows, err := r.cypher(ctx, q)

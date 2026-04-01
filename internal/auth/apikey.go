@@ -61,6 +61,10 @@ func (a *APIKeyAuth) UnaryInterceptor() grpc.UnaryServerInterceptor {
 		}
 
 		keys := md.Get(apiKeyHeader)
+		// grpc-gateway forwards HTTP headers with "grpcgateway-" prefix.
+		if len(keys) == 0 {
+			keys = md.Get("grpcgateway-" + apiKeyHeader)
+		}
 		if len(keys) == 0 {
 			return nil, status.Error(codes.Unauthenticated, "missing API key")
 		}
