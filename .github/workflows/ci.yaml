@@ -1,0 +1,195 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Lint ──────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+      - name: Proto lint (buf)
+        uses: bufbuild/buf-setup-action@v1
+      - run: buf lint api/proto
+
+      - name: Web lint
+        working-directory: web
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm tsc --noEmit
+
+  # ── Unit Tests ────────────────────────────────────────
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Run tests
+        run: go test ./... -race -cover -coverprofile=coverage.out -count=1
+
+      - name: Check coverage
+        run: |
+          echo "=== Coverage by package ==="
+          go tool cover -func=coverage.out | tail -1
+
+          # Fail if overall coverage drops below 40% (will increase as we add integration tests)
+          COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | sed 's/%//')
+          echo "Total coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 40" | bc -l) )); then
+            echo "::error::Coverage ${COVERAGE}% is below 40% threshold"
+            exit 1
+          fi
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  # ── Build ─────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build Go binaries
+        run: |
+          CGO_ENABLED=0 go build -o bin/context0-server ./cmd/server
+          CGO_ENABLED=0 go build -o bin/context0-consolidate ./cmd/consolidate
+          CGO_ENABLED=0 go build -o bin/context0 ./cmd/cli
+
+      - name: Build API Docker image
+        run: docker build -t context0/context0:ci .
+
+      - name: Build Postgres+AGE+pgvector image
+        run: docker build -t context0/postgres-age-vector:ci ./docker/postgres-age-vector/
+
+      - name: Build Web UI
+        working-directory: web
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Build Web Docker image
+        run: docker build -t context0/web:ci ./web/
+
+      - name: Helm lint
+        run: |
+          helm lint ./charts/context0
+          helm template context0 ./charts/context0 > /dev/null
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: bin/
+
+  # ── E2E Tests (main only) ────────────────────────────
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: context0-e2e
+
+      - name: Build and load images
+        run: |
+          docker build -t context0/context0:ci .
+          docker build -t context0/postgres-age-vector:ci ./docker/postgres-age-vector/
+          kind load docker-image context0/context0:ci --name context0-e2e
+          kind load docker-image context0/postgres-age-vector:ci --name context0-e2e
+
+      - name: Deploy
+        run: |
+          # Update manifests to use :ci tag
+          sed -i 's|context0/context0:dev|context0/context0:ci|g' deploy/context0.yaml
+          sed -i 's|context0/postgres-age-vector:dev|context0/postgres-age-vector:ci|g' deploy/postgres-age.yaml
+
+          kubectl apply -f deploy/namespace.yaml
+          kubectl apply -f deploy/postgres-age.yaml
+          kubectl -n context0 wait --for=condition=ready pod -l app=postgres-age --timeout=120s
+
+          kubectl apply -f deploy/context0.yaml
+          kubectl -n context0 wait --for=condition=ready pod -l app=context0-api --timeout=120s
+
+      - name: Port forward
+        run: |
+          kubectl -n context0 port-forward svc/context0-api 8080:8080 &
+          sleep 5
+          curl -sf http://localhost:8080/v1/health
+
+      - name: Run E2E tests
+        env:
+          CONTEXT0_E2E_HTTP: http://localhost:8080
+          CONTEXT0_E2E_API_KEY: ctx0_dev_key_1
+        run: go test ./test/e2e/... -v -tags=e2e -count=1 -timeout=120s
+
+  # ── Security Scan ─────────────────────────────────────
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: gosec
+        uses: securego/gosec@master
+        with:
+          args: ./...
+
+      - name: Build image for scanning
+        run: docker build -t context0/context0:scan .
+
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: context0/context0:scan
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 1
