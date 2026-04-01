@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package context0.v1;
+
+option go_package = "github.com/context0/context0/api/gen/context0/v1;context0v1";
+
+// HealthService provides health check for the engine.
+service HealthService {
+  // Health returns the current health status of the engine.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+  string version = 2;
+  int64 node_count = 3;
+  int64 edge_count = 4;
+}

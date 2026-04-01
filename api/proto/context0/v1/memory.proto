@@ -1,0 +1,140 @@
+syntax = "proto3";
+
+package context0.v1;
+
+option go_package = "github.com/context0/context0/api/gen/context0/v1;context0v1";
+
+import "google/protobuf/timestamp.proto";
+
+// Context0 is the core memory engine service.
+service Context0 {
+  // Store creates a new memory in the graph.
+  rpc Store(StoreRequest) returns (StoreResponse);
+
+  // Query retrieves memories by natural language query.
+  rpc Query(QueryRequest) returns (QueryResponse);
+
+  // Connect creates a relationship between two memories.
+  rpc Connect(ConnectRequest) returns (ConnectResponse);
+
+  // Delete removes a memory and its edges.
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+
+  // GetGraph returns a subgraph around a memory.
+  rpc GetGraph(GetGraphRequest) returns (GetGraphResponse);
+}
+
+// MemoryType categorizes a memory node.
+enum MemoryType {
+  MEMORY_TYPE_UNSPECIFIED = 0;
+  MEMORY_TYPE_EPISODIC = 1;
+  MEMORY_TYPE_SEMANTIC = 2;
+  MEMORY_TYPE_PROCEDURAL = 3;
+}
+
+// RelationshipType defines the kind of edge between nodes.
+enum RelationshipType {
+  RELATIONSHIP_TYPE_UNSPECIFIED = 0;
+  RELATIONSHIP_TYPE_RELATES_TO = 1;
+  RELATIONSHIP_TYPE_SUPERSEDES = 2;
+  RELATIONSHIP_TYPE_CAUSED_BY = 3;
+}
+
+// Memory represents a single memory node.
+message Memory {
+  string id = 1;
+  string content = 2;
+  MemoryType type = 3;
+  string project_id = 4;
+  repeated string tags = 5;
+  google.protobuf.Timestamp created_at = 6;
+  int64 access_count = 7;
+  double decay_score = 8;
+}
+
+// ContextEdge is a connected edge returned with query results.
+message ContextEdge {
+  RelationshipType relationship = 1;
+  string target_id = 2;
+  string target_content = 3;
+  double weight = 4;
+}
+
+// MemoryWithContext is a ranked memory result with its context edges.
+message MemoryWithContext {
+  Memory memory = 1;
+  repeated ContextEdge context = 2;
+  double score = 3;
+}
+
+// Edge represents a relationship between two memories.
+message Edge {
+  string id = 1;
+  string from_id = 2;
+  string to_id = 3;
+  RelationshipType relationship = 4;
+  double weight = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+// --- Store ---
+
+message StoreRequest {
+  string content = 1;
+  MemoryType type = 2;
+  string project_id = 3;
+  repeated string tags = 4;
+  // Optional: link this memory to an active session.
+  string session_id = 5;
+}
+
+message StoreResponse {
+  Memory memory = 1;
+}
+
+// --- Query ---
+
+message QueryRequest {
+  string query = 1;
+  string project_id = 2;
+  int32 top_k = 3;
+  int32 max_depth = 4;
+  repeated MemoryType types = 5;
+}
+
+message QueryResponse {
+  repeated MemoryWithContext results = 1;
+}
+
+// --- Connect ---
+
+message ConnectRequest {
+  string from_id = 1;
+  string to_id = 2;
+  RelationshipType relationship = 3;
+  double weight = 4;
+}
+
+message ConnectResponse {
+  Edge edge = 1;
+}
+
+// --- Delete ---
+
+message DeleteRequest {
+  string id = 1;
+}
+
+message DeleteResponse {}
+
+// --- GetGraph ---
+
+message GetGraphRequest {
+  string center_id = 1;
+  int32 depth = 2;
+}
+
+message GetGraphResponse {
+  repeated Memory nodes = 1;
+  repeated Edge edges = 2;
+}
