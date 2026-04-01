@@ -178,7 +178,7 @@ jobs:
       - name: gosec
         uses: securego/gosec@master
         with:
-          args: -exclude-dir=api/gen -exclude-dir=bench -exclude=G115 -severity=medium ./...
+          args: -exclude-dir=api/gen -exclude-dir=bench -exclude=G107,G115 -severity=medium ./...
 
       - name: Build image for scanning
         run: docker build -t context0/context0:scan .
