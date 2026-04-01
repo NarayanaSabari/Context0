@@ -1,0 +1,107 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-age-data
+  namespace: context0
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-age
+  namespace: context0
+  labels:
+    app: postgres-age
+spec:
+  serviceName: postgres-age
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-age
+  template:
+    metadata:
+      labels:
+        app: postgres-age
+    spec:
+      containers:
+        - name: postgres-age
+          # Apache AGE Docker image (PostgreSQL + AGE pre-installed)
+          image: apache/age:PG16_latest
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_DB
+              value: context0
+            - name: POSTGRES_USER
+              value: context0
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-age-secret
+                  key: password
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - context0
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - context0
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-age
+  namespace: context0
+  labels:
+    app: postgres-age
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres
+  selector:
+    app: postgres-age
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-age-secret
+  namespace: context0
+type: Opaque
+stringData:
+  password: context0-dev-password
