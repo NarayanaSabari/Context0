@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -10,12 +9,18 @@ import (
 	"os/signal"
 	"syscall"
 
+	pb "github.com/context0/context0/api/gen/context0/v1"
+	"github.com/context0/context0/internal/auth"
 	"github.com/context0/context0/internal/config"
 	"github.com/context0/context0/internal/graph"
 	"github.com/context0/context0/internal/metrics"
+	"github.com/context0/context0/internal/service"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -47,10 +52,24 @@ func main() {
 	// --- Metrics ---
 	metrics.Register()
 
-	// --- gRPC Server ---
-	grpcServer := grpc.NewServer()
+	// --- Auth ---
+	apiAuth := auth.NewAPIKeyAuth(cfg.APIKeys, 100)
 
-	// TODO: Register Context0 service, SessionService, HealthService
+	// --- gRPC Server ---
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(apiAuth.UnaryInterceptor()),
+	)
+
+	memorySvc := service.NewMemoryService(repo)
+	sessionSvc := service.NewSessionService(repo)
+	healthSvc := service.NewHealthService(repo, cfg.Version)
+
+	pb.RegisterContext0Server(grpcServer, memorySvc)
+	pb.RegisterSessionServiceServer(grpcServer, sessionSvc)
+	pb.RegisterHealthServiceServer(grpcServer, healthSvc)
+
+	// Enable gRPC reflection for debugging with grpcurl.
+	reflection.Register(grpcServer)
 
 	grpcLis, err := net.Listen("tcp", cfg.GRPCAddr())
 	if err != nil {
@@ -64,24 +83,34 @@ func main() {
 		}
 	}()
 
-	// --- HTTP Server (REST gateway + metrics) ---
+	// --- REST Gateway ---
+	gwMux := runtime.NewServeMux()
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+
+	if err := pb.RegisterContext0HandlerFromEndpoint(ctx, gwMux, cfg.GRPCAddr(), opts); err != nil {
+		log.Fatalf("failed to register memory gateway: %v", err)
+	}
+	if err := pb.RegisterSessionServiceHandlerFromEndpoint(ctx, gwMux, cfg.GRPCAddr(), opts); err != nil {
+		log.Fatalf("failed to register session gateway: %v", err)
+	}
+	if err := pb.RegisterHealthServiceHandlerFromEndpoint(ctx, gwMux, cfg.GRPCAddr(), opts); err != nil {
+		log.Fatalf("failed to register health gateway: %v", err)
+	}
+
+	// --- HTTP Server ---
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
-	mux.HandleFunc("/v1/health", func(w http.ResponseWriter, r *http.Request) {
-		nodeCount, _ := repo.NodeCount(r.Context())
-		edgeCount, _ := repo.EdgeCount(r.Context())
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","version":"%s","node_count":%d,"edge_count":%d}`,
-			cfg.Version, nodeCount, edgeCount)
-	})
+	mux.Handle("/", gwMux)
+
+	httpHandler := apiAuth.HTTPMiddleware(mux)
 
 	httpServer := &http.Server{
 		Addr:    cfg.HTTPAddr(),
-		Handler: mux,
+		Handler: httpHandler,
 	}
 
 	go func() {
-		log.Printf("HTTP server listening on %s", cfg.HTTPAddr())
+		log.Printf("HTTP server listening on %s (REST gateway + metrics)", cfg.HTTPAddr())
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP server failed: %v", err)
 		}

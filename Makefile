@@ -38,11 +38,15 @@ fmt:
 
 # Proto generation
 proto-gen:
-	protoc \
+	@mkdir -p api/gen/context0/v1
+	PATH="$(HOME)/go/bin:$(PATH)" protoc \
 		--go_out=api/gen --go_opt=paths=source_relative \
 		--go-grpc_out=api/gen --go-grpc_opt=paths=source_relative \
+		--grpc-gateway_out=api/gen --grpc-gateway_opt=paths=source_relative \
 		-I api/proto \
-		api/proto/context0/v1/*.proto
+		api/proto/context0/v1/memory.proto \
+		api/proto/context0/v1/session.proto \
+		api/proto/context0/v1/health.proto
 
 # Docker
 docker-build:
