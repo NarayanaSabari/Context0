@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	pb "github.com/context0/context0/api/gen/context0/v1"
 	"github.com/context0/context0/internal/auth"
@@ -118,8 +119,9 @@ func main() {
 	httpHandler := apiAuth.HTTPMiddleware(mux)
 
 	httpServer := &http.Server{
-		Addr:    cfg.HTTPAddr(),
-		Handler: httpHandler,
+		Addr:              cfg.HTTPAddr(),
+		Handler:           httpHandler,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	go func() {

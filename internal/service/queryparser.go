@@ -99,7 +99,6 @@ func filterTimeKeywords(query string, timeAfter **time.Time) string {
 			// Remove the time keyword from the query.
 			idx := strings.Index(lower, p.keyword)
 			query = query[:idx] + query[idx+len(p.keyword):]
-			lower = strings.ToLower(query)
 			break
 		}
 	}

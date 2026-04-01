@@ -6,7 +6,7 @@ bin/
 *.dylib
 
 # Go build artifacts
-api/gen/
+# NOTE: api/gen/ is committed (standard Go practice for proto generated code)
 coverage.out
 coverage.html
 
