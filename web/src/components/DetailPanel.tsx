@@ -1,18 +1,37 @@
+/**
+ * @file DetailPanel.tsx
+ * Floating overlay panel that displays detailed information about a selected
+ * memory node, including its full content, tags, access count, decay score,
+ * ID, and creation date. Renders as an absolutely-positioned card over the
+ * graph view and returns null when no memory is selected.
+ */
+
 import { X, Brain, Clock, Wrench, Hash, Activity, TrendingDown } from 'lucide-react'
 import type { Memory } from '../lib/types'
 import { parseType } from '../lib/types'
 
+/** Display metadata (icon, color, description) for each memory type. */
 const TYPE_META: Record<string, { icon: typeof Brain; color: string; label: string }> = {
   semantic:   { icon: Brain, color: 'text-green-400', label: 'Semantic — a known fact' },
   episodic:   { icon: Clock, color: 'text-amber-400', label: 'Episodic — something that happened' },
   procedural: { icon: Wrench, color: 'text-purple-400', label: 'Procedural — a learned pattern' },
 }
 
+/** Props for the {@link DetailPanel} component. */
 interface Props {
+  /** The memory to display details for, or null to hide the panel. */
   memory: Memory | null
+  /** Callback invoked when the user closes the panel. */
   onClose: () => void
 }
 
+/**
+ * Renders a floating detail panel for a selected memory node.
+ * Shows the memory type badge, full content, tags, access/decay stats,
+ * and metadata (ID, creation date). Returns null when no memory is selected.
+ *
+ * @param props - See {@link Props}.
+ */
 export default function DetailPanel({ memory, onClose }: Props) {
   if (!memory) return null
 

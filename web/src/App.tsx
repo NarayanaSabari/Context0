@@ -1,3 +1,10 @@
+/**
+ * @file App.tsx
+ * Root application component for the Context0 Memory Graph web UI.
+ * Manages global state (selected memory, graph nodes/edges, view mode) and
+ * orchestrates data fetching, sidebar navigation, and graph visualization.
+ */
+
 import { useState, useCallback, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ReactFlowProvider } from '@xyflow/react'
@@ -9,8 +16,16 @@ import { memoriesToNodes, edgesToFlowEdges, resultsToFullGraph } from './lib/gra
 import type { Memory, SubgraphResponse } from './lib/types'
 import type { Node, Edge } from '@xyflow/react'
 
+/** Determines whether the graph shows a single memory's neighborhood or all memories. */
 type ViewMode = 'focus' | 'all'
 
+/**
+ * Root application component.
+ *
+ * Renders a header with health stats and controls, a sidebar for browsing/searching
+ * memories, and a main area with an interactive graph visualization. Supports two
+ * view modes: "focus" (subgraph around a selected memory) and "all" (overview grid).
+ */
 export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedMemory, setSelectedMemory] = useState<Memory | null>(null)
@@ -31,6 +46,11 @@ export default function App() {
 
   const results = useMemo(() => memories.data ?? [], [memories.data])
 
+  /**
+   * Handles selecting a memory from the sidebar.
+   * Fetches the subgraph for the selected memory and builds graph nodes/edges.
+   * Falls back to implicit neighbor edges when the API returns no explicit edges.
+   */
   const handleSelect = useCallback(
     async (id: string) => {
       setSelectedId(id)
@@ -75,6 +95,7 @@ export default function App() {
     [results],
   )
 
+  /** Switches to overview mode, showing all memories laid out in a grid with tag-based edges. */
   const handleShowAll = useCallback(() => {
     setViewMode('all')
     setSelectedId(null)
@@ -84,14 +105,17 @@ export default function App() {
     setGraphEdges(edges)
   }, [results])
 
+  /** Clears the currently selected memory (closes the detail panel). */
   const handleClear = useCallback(() => {
     setSelectedMemory(null)
   }, [])
 
+  /** Triggers a data refresh by incrementing the query key, causing React Query to refetch. */
   const handleRefresh = useCallback(() => {
     setRefreshKey((k) => k + 1)
   }, [])
 
+  /** Handles clicking a node in the graph view, updating the selected memory for the detail panel. */
   const handleNodeClick = useCallback(
     (id: string) => {
       const mem = results.find((r) => r.memory.id === id)?.memory ?? null

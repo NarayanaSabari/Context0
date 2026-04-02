@@ -1,3 +1,18 @@
+// consolidate.go implements the memory consolidation pipeline, a background
+// maintenance process that keeps the memory graph healthy over time. It runs
+// three sequential phases:
+//
+//  1. Merge -- detect duplicate semantic memories (exact content match within
+//     the same project) and create supersedes edges from the newest copy to all
+//     older duplicates.
+//  2. Decay -- recalculate each memory's decay score using exponential time decay
+//     combined with a logarithmic frequency boost based on access count.
+//  3. Prune -- delete memories that have decayed below a staleness threshold,
+//     have never been accessed, and are older than a configurable age limit.
+//
+// The pipeline supports a dry-run mode that logs intended actions without mutating
+// the graph.
+
 package service
 
 import (
@@ -12,7 +27,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// ConsolidationConfig controls the consolidation pipeline.
+// ConsolidationConfig controls the behavior of the consolidation pipeline.
 type ConsolidationConfig struct {
 	DecayHalfLifeDays float64 // half-life for decay calculation (default: 30)
 	StaleThreshold    float64 // decay score below which a memory is considered stale (default: 0.1)
@@ -20,7 +35,8 @@ type ConsolidationConfig struct {
 	DryRun            bool    // if true, log actions but don't mutate
 }
 
-// DefaultConsolidationConfig returns sensible defaults.
+// DefaultConsolidationConfig returns production-ready defaults: 30-day half-life,
+// 0.1 stale threshold, 30-day minimum age for pruning, and mutations enabled.
 func DefaultConsolidationConfig() ConsolidationConfig {
 	return ConsolidationConfig{
 		DecayHalfLifeDays: 30,
@@ -30,14 +46,17 @@ func DefaultConsolidationConfig() ConsolidationConfig {
 	}
 }
 
-// ConsolidationResult tracks what the pipeline did.
+// ConsolidationResult tracks the outcome of a consolidation run, reporting how
+// many memories were affected in each phase.
 type ConsolidationResult struct {
 	MemoriesDecayed int
 	MemoriesPruned  int
 	EdgesMerged     int
 }
 
-// RunConsolidation executes all consolidation phases.
+// RunConsolidation executes all three consolidation phases (merge, decay, prune)
+// sequentially, returning a summary result. If any phase fails, the pipeline stops
+// and returns the error along with the partial result.
 func RunConsolidation(ctx context.Context, repo graph.Repository, cfg ConsolidationConfig) (ConsolidationResult, error) {
 	var result ConsolidationResult
 
@@ -68,12 +87,14 @@ func RunConsolidation(ctx context.Context, repo graph.Repository, cfg Consolidat
 	return result, nil
 }
 
-// phaseMerge finds memories with identical tags and high content overlap,
-// creates supersedes edges from newer to older.
+// phaseMerge detects duplicate semantic memories by grouping on (project_id, content).
+// For each group with more than one memory, the most recently created one is kept
+// and supersedes edges are created from it to all older duplicates. This prevents
+// identical facts from cluttering query results.
+//
+// NOTE: The current implementation uses exact content matching. A future version
+// should incorporate content similarity scoring for near-duplicate detection.
 func phaseMerge(ctx context.Context, repo graph.Repository, cfg ConsolidationConfig) (int, error) {
-	// For MVP: Find semantic memories in same project with matching tags.
-	// A full implementation would use content similarity scoring.
-	// For now, we detect exact duplicate content and create supersedes edges.
 
 	filter := graph.QueryFilter{
 		Types: []model.MemoryType{model.MemoryTypeSemantic},
@@ -136,9 +157,14 @@ func phaseMerge(ctx context.Context, repo graph.Repository, cfg ConsolidationCon
 	return merged, nil
 }
 
-// phaseDecay recalculates decay_score for all memories.
+// phaseDecay recalculates the decay_score for every memory using an exponential
+// decay formula combined with a frequency boost:
+//
+//	decay = exp(-0.693 * hoursSinceCreation / halfLifeHours) * (1 + frequencyBoost)
+//
+// where frequencyBoost = min(1.0, ln(1 + accessCount) / 5.0). This ensures that
+// frequently accessed memories decay more slowly. The final score is clamped to [0, 1].
 func phaseDecay(ctx context.Context, repo graph.Repository, cfg ConsolidationConfig) (int, error) {
-	// Query all memories and update their decay scores.
 	filter := graph.QueryFilter{TopK: 1000}
 	results, err := repo.QueryMemories(ctx, filter)
 	if err != nil {
@@ -180,7 +206,12 @@ func phaseDecay(ctx context.Context, repo graph.Repository, cfg ConsolidationCon
 	return decayed, nil
 }
 
-// phasePrune deletes memories that are stale, never accessed, and old enough.
+// phasePrune removes memories that meet all three pruning criteria simultaneously:
+//   - decay_score is below the configured stale threshold.
+//   - access_count is zero (the memory was never retrieved by a query).
+//   - age exceeds the configured minimum prune age in days.
+//
+// This conservative approach ensures that only truly abandoned memories are deleted.
 func phasePrune(ctx context.Context, repo graph.Repository, cfg ConsolidationConfig) (int, error) {
 	filter := graph.QueryFilter{TopK: 1000}
 	results, err := repo.QueryMemories(ctx, filter)

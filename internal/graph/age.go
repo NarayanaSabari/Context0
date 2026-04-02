@@ -13,14 +13,30 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// AGERepository implements Repository using Apache AGE on PostgreSQL.
+// AGERepository implements the Repository interface using Apache AGE, a
+// PostgreSQL extension that adds openCypher graph query support. Graph data
+// (nodes and edges) lives inside AGE's internal storage, while vector
+// embeddings are stored in a separate pgvector-backed table
+// (public.memory_embeddings) to leverage HNSW indexing for fast approximate
+// nearest neighbor search.
+//
+// All Cypher queries are executed through AGE's ag_catalog.cypher() SQL
+// function, which wraps a Cypher string inside a standard PostgreSQL query.
+// Results come back as agtype values (a JSON-like format specific to AGE)
+// that are parsed into Go structs by the helper functions in this file.
 type AGERepository struct {
 	pool         *pgxpool.Pool
-	embeddingDim int
+	embeddingDim int // dimension of the pgvector column (must match the Embedder)
 }
 
-// NewAGERepository creates a new AGE-backed repository.
-// embeddingDim sets the pgvector column dimension (e.g. 384, 768, 1536).
+// NewAGERepository creates a new AGE-backed repository. The embeddingDim
+// parameter sets the width of the pgvector column in public.memory_embeddings
+// and must match the Dimension() of the configured Embedder. Common values:
+//   - 384: bag-of-words / all-MiniLM-L6-v2
+//   - 768: nomic-embed-text / text-embedding-004
+//   - 1536: text-embedding-3-small (OpenAI)
+//
+// If embeddingDim is zero or negative, it defaults to 384.
 func NewAGERepository(pool *pgxpool.Pool, embeddingDim int) *AGERepository {
 	if embeddingDim <= 0 {
 		embeddingDim = 384
@@ -28,19 +44,28 @@ func NewAGERepository(pool *pgxpool.Pool, embeddingDim int) *AGERepository {
 	return &AGERepository{pool: pool, embeddingDim: embeddingDim}
 }
 
-// Close releases the connection pool.
+// Close releases the underlying pgxpool connection pool.
 func (r *AGERepository) Close() {
 	r.pool.Close()
 }
 
-// InitSchema creates the AGE graph, pgvector table, and loads extensions.
+// InitSchema sets up all required PostgreSQL extensions, tables, indexes, and
+// the AGE graph. The order matters:
+//  1. pgvector extension and embeddings table (in the public schema)
+//  2. HNSW index on the embedding column for cosine similarity search
+//  3. AGE extension and search_path configuration
+//  4. AGE graph creation (idempotent -- ignores "already exists" errors)
+//
+// This method is safe to call on every startup.
 func (r *AGERepository) InitSchema(ctx context.Context) error {
 	// --- pgvector setup (must happen BEFORE setting search_path to ag_catalog) ---
 	if _, err := r.pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`); err != nil {
 		return fmt.Errorf("create vector extension: %w", err)
 	}
 
-	// Embeddings table: links memory node IDs to their vector embeddings.
+	// Embeddings table: bridges AGE memory nodes (by UUID string) to their
+	// dense vector representations. The project_id column enables scoped
+	// similarity search without joining back into the AGE graph.
 	createTable := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS public.memory_embeddings (
 			memory_id TEXT PRIMARY KEY,
@@ -53,7 +78,9 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 		return fmt.Errorf("create public.memory_embeddings table: %w", err)
 	}
 
-	// HNSW index for fast approximate nearest neighbor search.
+	// HNSW index enables sub-linear approximate nearest neighbor queries.
+	// vector_cosine_ops is chosen because cosine similarity is the standard
+	// metric for text embedding comparison.
 	if _, err := r.pool.Exec(ctx, `
 		CREATE INDEX IF NOT EXISTS idx_memory_embeddings_vector
 		ON public.memory_embeddings USING hnsw (embedding vector_cosine_ops)
@@ -66,11 +93,14 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 		return fmt.Errorf("create age extension: %w", err)
 	}
 
+	// AGE requires ag_catalog on the search_path so that its custom types
+	// (agtype, graphid) and functions (cypher, create_graph) are resolvable.
 	if _, err := r.pool.Exec(ctx, `SET search_path = ag_catalog, "$user", public`); err != nil {
 		return fmt.Errorf("set search_path: %w", err)
 	}
 
-	// Create graph (ignore error if it already exists).
+	// Create the named graph. AGE does not support IF NOT EXISTS, so we
+	// catch and ignore the "already exists" error.
 	_, err := r.pool.Exec(ctx, `SELECT * FROM ag_catalog.create_graph('`+GraphName+`')`)
 	if err != nil && !strings.Contains(err.Error(), "already exists") {
 		return fmt.Errorf("create graph: %w", err)
@@ -79,15 +109,18 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 	return nil
 }
 
-// cypher executes a Cypher query via AGE's ag_catalog.cypher function.
-// Returns the raw rows for the caller to scan.
+// cypher executes a Cypher query via AGE's ag_catalog.cypher() SQL wrapper.
+// The Cypher string is embedded in a dollar-quoted block ($$ ... $$) to avoid
+// escaping issues with single quotes inside the query. The result column is
+// typed as agtype, which is AGE's JSON-like data format. Callers must scan
+// each row as a string and parse it with the appropriate parseXxx helper.
 func (r *AGERepository) cypher(ctx context.Context, query string, args ...any) (pgx.Rows, error) {
-	// AGE requires SET search_path per connection, and wraps Cypher in a SQL call.
 	sql := fmt.Sprintf(`SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result agtype)`, GraphName, query)
 	return r.pool.Query(ctx, sql, args...)
 }
 
-// cypherExec executes a Cypher query that doesn't return rows.
+// cypherExec executes a Cypher query that returns no meaningful rows (e.g.
+// CREATE, DELETE, SET). It discards any result and returns only the error.
 func (r *AGERepository) cypherExec(ctx context.Context, query string) error {
 	sql := fmt.Sprintf(`SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result agtype)`, GraphName, query)
 	_, err := r.pool.Exec(ctx, sql)
@@ -96,6 +129,9 @@ func (r *AGERepository) cypherExec(ctx context.Context, query string) error {
 
 // --- Project ---
 
+// CreateProject creates a :Project vertex in the AGE graph with id, name,
+// and created_at properties. The Cypher CREATE clause is used because
+// projects are created once and identified by their string ID.
 func (r *AGERepository) CreateProject(ctx context.Context, project model.Project) error {
 	q := fmt.Sprintf(
 		`CREATE (p:Project {id: '%s', name: '%s', created_at: '%s'}) RETURN p`,
@@ -106,6 +142,9 @@ func (r *AGERepository) CreateProject(ctx context.Context, project model.Project
 	return r.cypherExec(ctx, q)
 }
 
+// GetProject retrieves a project by its string ID. The Cypher MATCH clause
+// filters on the id property, and properties(p) returns all vertex properties
+// as an agtype map that is parsed by parseProject.
 func (r *AGERepository) GetProject(ctx context.Context, id string) (model.Project, error) {
 	q := fmt.Sprintf(`MATCH (p:Project {id: '%s'}) RETURN properties(p)`, escapeCypher(id))
 	rows, err := r.cypher(ctx, q)
@@ -128,6 +167,10 @@ func (r *AGERepository) GetProject(ctx context.Context, id string) (model.Projec
 
 // --- Memory ---
 
+// CreateMemory creates a :Memory vertex with content, type, project_id, tags,
+// and metadata properties. Tags are serialized as a JSON string because AGE
+// does not natively support list-typed properties. The initial access_count
+// is 0 and decay_score is 1.0 (no decay).
 func (r *AGERepository) CreateMemory(ctx context.Context, mem model.Memory) error {
 	tagsJSON, _ := json.Marshal(mem.Tags)
 	q := fmt.Sprintf(
@@ -142,6 +185,8 @@ func (r *AGERepository) CreateMemory(ctx context.Context, mem model.Memory) erro
 	return r.cypherExec(ctx, q)
 }
 
+// GetMemory retrieves a single memory node by its UUID. Returns an error
+// if the node does not exist.
 func (r *AGERepository) GetMemory(ctx context.Context, id uuid.UUID) (model.Memory, error) {
 	q := fmt.Sprintf(`MATCH (m:Memory {id: '%s'}) RETURN properties(m)`, id.String())
 	rows, err := r.cypher(ctx, q)
@@ -162,11 +207,16 @@ func (r *AGERepository) GetMemory(ctx context.Context, id uuid.UUID) (model.Memo
 	return parseMemory(raw)
 }
 
+// DeleteMemory removes a memory node and all its connected edges using
+// Cypher's DETACH DELETE, which automatically deletes relationships first.
 func (r *AGERepository) DeleteMemory(ctx context.Context, id uuid.UUID) error {
 	q := fmt.Sprintf(`MATCH (m:Memory {id: '%s'}) DETACH DELETE m`, id.String())
 	return r.cypherExec(ctx, q)
 }
 
+// IncrementAccessCount atomically increases a memory's access_count by 1.
+// This counter feeds into the ranking layer to prioritize frequently accessed
+// memories during retrieval.
 func (r *AGERepository) IncrementAccessCount(ctx context.Context, id uuid.UUID) error {
 	q := fmt.Sprintf(
 		`MATCH (m:Memory {id: '%s'}) SET m.access_count = m.access_count + 1 RETURN m`,
@@ -177,6 +227,10 @@ func (r *AGERepository) IncrementAccessCount(ctx context.Context, id uuid.UUID) 
 
 // --- Edge ---
 
+// CreateEdge creates a directed, labeled relationship between two nodes.
+// The Cypher MATCH clause finds both endpoints by id (label-agnostic), then
+// CREATE adds the edge with the relationship type as its label (e.g.
+// relates_to, supersedes, caused_by) and weight/created_at as properties.
 func (r *AGERepository) CreateEdge(ctx context.Context, edge model.Edge) error {
 	relLabel := toEdgeLabel(edge.Relationship)
 	q := fmt.Sprintf(
@@ -191,6 +245,8 @@ func (r *AGERepository) CreateEdge(ctx context.Context, edge model.Edge) error {
 	return r.cypherExec(ctx, q)
 }
 
+// GetEdgesFrom returns all outgoing edges from the node with the given ID.
+// The Cypher pattern (a)-[e]->(b) matches only outbound relationships.
 func (r *AGERepository) GetEdgesFrom(ctx context.Context, nodeID uuid.UUID) ([]model.Edge, error) {
 	q := fmt.Sprintf(
 		`MATCH (a {id: '%s'})-[e]->(b) RETURN properties(e), label(e), a.id, b.id`,
@@ -199,6 +255,8 @@ func (r *AGERepository) GetEdgesFrom(ctx context.Context, nodeID uuid.UUID) ([]m
 	return r.queryEdges(ctx, q)
 }
 
+// GetEdgesTo returns all incoming edges to the node with the given ID.
+// The Cypher pattern (a)-[e]->(b {id: ...}) matches only inbound relationships.
 func (r *AGERepository) GetEdgesTo(ctx context.Context, nodeID uuid.UUID) ([]model.Edge, error) {
 	q := fmt.Sprintf(
 		`MATCH (a)-[e]->(b {id: '%s'}) RETURN properties(e), label(e), a.id, b.id`,
@@ -207,14 +265,19 @@ func (r *AGERepository) GetEdgesTo(ctx context.Context, nodeID uuid.UUID) ([]mod
 	return r.queryEdges(ctx, q)
 }
 
+// DeleteEdgesForNode removes all edges (both directions) connected to the
+// given node without deleting the node itself. The undirected Cypher pattern
+// (n)-[e]-() matches edges in both directions.
 func (r *AGERepository) DeleteEdgesForNode(ctx context.Context, nodeID uuid.UUID) error {
 	q := fmt.Sprintf(`MATCH (n {id: '%s'})-[e]-() DELETE e`, nodeID.String())
 	return r.cypherExec(ctx, q)
 }
 
+// queryEdges is a shared helper for GetEdgesFrom and GetEdgesTo. It executes
+// the given Cypher query and attempts to parse each row into a model.Edge.
+// NOTE: This is a simplified implementation. AGE returns multi-column agtype
+// results that require more sophisticated parsing for full edge hydration.
 func (r *AGERepository) queryEdges(ctx context.Context, q string) ([]model.Edge, error) {
-	// This is a simplified implementation — AGE returns agtype that needs parsing.
-	// Full implementation will parse multi-column returns from Cypher.
 	rows, err := r.cypher(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("query edges: %w", err)
@@ -235,6 +298,9 @@ func (r *AGERepository) queryEdges(ctx context.Context, q string) ([]model.Edge,
 
 // --- Session ---
 
+// CreateSession creates a :Session vertex and a :belongs_to edge linking it
+// to the parent :Project vertex. This two-step operation ensures every session
+// is connected to its project in the graph for traversal queries.
 func (r *AGERepository) CreateSession(ctx context.Context, sess model.Session) error {
 	q := fmt.Sprintf(
 		`CREATE (s:Session {id: '%s', project_id: '%s', agent_id: '%s', started_at: '%s'}) RETURN s`,
@@ -266,6 +332,9 @@ func (r *AGERepository) CreateSession(ctx context.Context, sess model.Session) e
 	return r.cypherExec(ctx, belongsQ)
 }
 
+// EndSession sets the ended_at timestamp on a session node to the current
+// UTC time and returns the updated session. The Cypher SET clause performs
+// an in-place property update on the matched vertex.
 func (r *AGERepository) EndSession(ctx context.Context, id uuid.UUID) (model.Session, error) {
 	now := time.Now().UTC()
 	q := fmt.Sprintf(
@@ -291,6 +360,8 @@ func (r *AGERepository) EndSession(ctx context.Context, id uuid.UUID) (model.Ses
 	return parseSession(raw)
 }
 
+// LinkMemoryToSession creates a :contains edge from a Session to a Memory,
+// recording that the memory was produced or accessed during that session.
 func (r *AGERepository) LinkMemoryToSession(ctx context.Context, sessionID, memoryID uuid.UUID) error {
 	edgeID := uuid.New()
 	q := fmt.Sprintf(
@@ -305,8 +376,14 @@ func (r *AGERepository) LinkMemoryToSession(ctx context.Context, sessionID, memo
 
 // --- Query ---
 
+// QueryMemories builds a dynamic Cypher MATCH query from the given filter.
+// Filter conditions are AND-ed: project_id, memory types, and keywords.
+// Keywords use Cypher's toLower() + CONTAINS for case-insensitive substring
+// matching against both content and tags (OR-ed within the keyword group).
+// Results are ordered by created_at DESC and capped at filter.TopK (default 5).
+// Each result gets a placeholder Score of 1.0; real scoring is deferred to
+// the ranking layer.
 func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) ([]model.MemoryWithContext, error) {
-	// Build a Cypher MATCH query with filters.
 	var conditions []string
 	if filter.ProjectID != "" {
 		conditions = append(conditions, fmt.Sprintf("m.project_id = '%s'", escapeCypher(filter.ProjectID)))
@@ -374,6 +451,11 @@ func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) (
 	return results, rows.Err()
 }
 
+// GetSubgraph returns all unique Memory nodes reachable from a center node
+// within the given hop depth. Depth is clamped to [1, 5] to prevent
+// unbounded traversals. Currently performs a 1-hop neighbor lookup because
+// AGE has limited support for variable-length path patterns; deeper traversals
+// will be added iteratively.
 func (r *AGERepository) GetSubgraph(ctx context.Context, centerID uuid.UUID, depth int32) ([]model.Memory, []model.Edge, error) {
 	if depth <= 0 {
 		depth = 2
@@ -417,10 +499,12 @@ func (r *AGERepository) GetSubgraph(ctx context.Context, centerID uuid.UUID, dep
 	return memories, nil, rows.Err()
 }
 
-// --- Stats ---
-
 // --- Embeddings (pgvector) ---
 
+// StoreEmbedding upserts a vector embedding for a memory node into the
+// public.memory_embeddings table. The embedding is converted to pgvector's
+// text format ([0.1,0.2,...]) and cast to the vector type. ON CONFLICT
+// performs an upsert so re-embedding a memory replaces the old vector.
 func (r *AGERepository) StoreEmbedding(ctx context.Context, memoryID uuid.UUID, embedding []float32) error {
 	// Convert []float32 to pgvector string format: [0.1,0.2,0.3,...]
 	vecStr := float32SliceToVectorString(embedding)
@@ -435,6 +519,12 @@ func (r *AGERepository) StoreEmbedding(ctx context.Context, memoryID uuid.UUID, 
 	return nil
 }
 
+// SearchByVector performs approximate nearest neighbor search against stored
+// embeddings using pgvector's cosine distance operator (<=>). The similarity
+// score is computed as 1 - cosine_distance, yielding values in [0, 1] where
+// 1 means identical. Results are ordered by ascending distance (highest
+// similarity first) and limited to topK. For each matching embedding, the
+// full Memory is fetched from the AGE graph via GetMemory.
 func (r *AGERepository) SearchByVector(ctx context.Context, embedding []float32, projectID string, topK int) ([]model.MemoryWithContext, error) {
 	if topK <= 0 {
 		topK = 10
@@ -493,7 +583,9 @@ func (r *AGERepository) SearchByVector(ctx context.Context, embedding []float32,
 	return results, rows.Err()
 }
 
-// float32SliceToVectorString converts a float32 slice to pgvector string format.
+// float32SliceToVectorString converts a Go float32 slice to pgvector's text
+// input format: "[0.100000,0.200000,...]". This string can be cast to the
+// vector type in SQL via $1::vector.
 func float32SliceToVectorString(v []float32) string {
 	var b strings.Builder
 	b.WriteByte('[')
@@ -509,6 +601,8 @@ func float32SliceToVectorString(v []float32) string {
 
 // --- Stats ---
 
+// NodeCount returns the total number of vertices in the AGE graph by running
+// MATCH (n) RETURN count(n). The agtype result is a JSON number string.
 func (r *AGERepository) NodeCount(ctx context.Context) (int64, error) {
 	q := `MATCH (n) RETURN count(n)`
 	rows, err := r.cypher(ctx, q)
@@ -533,6 +627,7 @@ func (r *AGERepository) NodeCount(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// EdgeCount returns the total number of directed edges in the AGE graph.
 func (r *AGERepository) EdgeCount(ctx context.Context) (int64, error) {
 	q := `MATCH ()-[e]->() RETURN count(e)`
 	rows, err := r.cypher(ctx, q)
@@ -558,17 +653,22 @@ func (r *AGERepository) EdgeCount(ctx context.Context) (int64, error) {
 
 // --- Helpers ---
 
-// escapeCypher escapes single quotes in strings for Cypher injection safety.
+// escapeCypher escapes single quotes in strings to prevent Cypher injection.
+// This is a minimal defense; parameterized queries should be preferred when
+// AGE adds support for them.
 func escapeCypher(s string) string {
 	return strings.ReplaceAll(s, "'", "\\'")
 }
 
-// toEdgeLabel converts a RelationshipType to a Cypher edge label.
+// toEdgeLabel converts a model.RelationshipType to a Cypher-compatible edge
+// label string (e.g. "relates_to", "supersedes", "caused_by").
 func toEdgeLabel(rel model.RelationshipType) string {
 	return string(rel) // e.g. "relates_to", "supersedes", "caused_by"
 }
 
-// parseMemory parses an agtype JSON properties result into a Memory.
+// parseMemory deserializes an agtype JSON properties map (returned by
+// Cypher's properties() function) into a model.Memory. Tags are stored as
+// a JSON-encoded string and decoded back into a []string slice.
 func parseMemory(raw string) (model.Memory, error) {
 	var props map[string]any
 	if err := json.Unmarshal([]byte(raw), &props); err != nil {
@@ -601,7 +701,7 @@ func parseMemory(raw string) (model.Memory, error) {
 	}, nil
 }
 
-// parseProject parses an agtype JSON properties result into a Project.
+// parseProject deserializes an agtype JSON properties map into a model.Project.
 func parseProject(raw string) (model.Project, error) {
 	var props map[string]any
 	if err := json.Unmarshal([]byte(raw), &props); err != nil {
@@ -617,7 +717,8 @@ func parseProject(raw string) (model.Project, error) {
 	}, nil
 }
 
-// parseSession parses an agtype JSON properties result into a Session.
+// parseSession deserializes an agtype JSON properties map into a model.Session.
+// The ended_at field is optional and only populated if the session has ended.
 func parseSession(raw string) (model.Session, error) {
 	var props map[string]any
 	if err := json.Unmarshal([]byte(raw), &props); err != nil {
@@ -642,6 +743,8 @@ func parseSession(raw string) (model.Session, error) {
 	return sess, nil
 }
 
+// getString extracts a string value from an agtype properties map.
+// Non-string values are converted via fmt.Sprintf. Missing keys return "".
 func getString(m map[string]any, key string) string {
 	v, ok := m[key]
 	if !ok {
@@ -654,6 +757,8 @@ func getString(m map[string]any, key string) string {
 	return s
 }
 
+// getFloat extracts a float64 value from an agtype properties map.
+// Returns 0 if the key is missing or the value is not a float64.
 func getFloat(m map[string]any, key string) float64 {
 	v, ok := m[key]
 	if !ok {
