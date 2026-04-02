@@ -1,20 +1,34 @@
+/**
+ * @file graph-utils.ts
+ * Utility functions for transforming Context0 memory data into React Flow
+ * graph elements (nodes and edges). Handles layout positioning, color theming
+ * by memory type, and edge styling by relationship type.
+ */
+
 import type { Node, Edge as FlowEdge } from '@xyflow/react'
 import type { Memory, Edge, MemoryResult } from './types'
 import { parseType, parseRel } from './types'
 
+/** Data payload attached to each React Flow memory node. */
 export interface MemoryNodeData {
+  /** The underlying memory object. */
   memory: Memory
+  /** Display-friendly memory type (semantic, episodic, procedural). */
   memType: string
+  /** Truncated content string used as the node label. */
   label: string
+  /** Index signature required by React Flow's generic node data type. */
   [key: string]: unknown
 }
 
+/** Background, border, and text colors for each memory type. */
 const TYPE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
   semantic:   { bg: '#162316', border: '#9ece6a', text: '#9ece6a' },
   episodic:   { bg: '#261e10', border: '#e0af68', text: '#e0af68' },
   procedural: { bg: '#1e1528', border: '#bb9af7', text: '#bb9af7' },
 }
 
+/** Stroke colors for each relationship type on graph edges. */
 const REL_COLORS: Record<string, string> = {
   relates_to: '#7aa2f7',
   supersedes: '#f7768e',
@@ -22,6 +36,14 @@ const REL_COLORS: Record<string, string> = {
   contains:   '#9ece6a',
 }
 
+/**
+ * Converts an array of memories into React Flow node objects.
+ * Positions nodes in a radial layout around the center node.
+ *
+ * @param memories - The memory objects to convert into nodes.
+ * @param centerId - Optional ID of the central/focused memory (placed at origin with thicker border).
+ * @returns An array of React Flow {@link Node} objects with {@link MemoryNodeData}.
+ */
 export function memoriesToNodes(
   memories: Memory[],
   centerId?: string,
@@ -32,6 +54,7 @@ export function memoriesToNodes(
   return memories.map((m, i) => {
     const t = parseType(m.type)
     const isCenter = m.id === centerId
+    // Distribute non-center nodes evenly around a circle
     const angle = (2 * Math.PI * i) / count
 
     return {
@@ -61,6 +84,13 @@ export function memoriesToNodes(
   })
 }
 
+/**
+ * Converts Context0 graph edges into React Flow edge objects with
+ * relationship-based styling (color, width, animation).
+ *
+ * @param edges - The raw edges from the API.
+ * @returns An array of styled React Flow {@link FlowEdge} objects.
+ */
 export function edgesToFlowEdges(edges: Edge[]): FlowEdge[] {
   return edges.map((e) => {
     const rel = parseRel(e.relationship)
@@ -88,6 +118,13 @@ export function edgesToFlowEdges(edges: Edge[]): FlowEdge[] {
   })
 }
 
+/**
+ * Transforms all memory query results into a full graph for overview mode.
+ * Lays out nodes in a grid and creates edges between memories that share tags.
+ *
+ * @param results - All memory query results to display.
+ * @returns An object containing the positioned nodes and tag-based edges.
+ */
 export function resultsToFullGraph(
   results: MemoryResult[],
 ): { nodes: Node<MemoryNodeData>[]; edges: FlowEdge[] } {

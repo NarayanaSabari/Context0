@@ -1,3 +1,20 @@
+// Package extraction converts raw conversation text into structured memory objects.
+//
+// Two extraction strategies are supported:
+//
+//   - LLM-based extraction: sends the conversation to a language model with a
+//     structured prompt, then parses the JSON array response into typed memories.
+//     This produces higher quality results but requires an LLM provider.
+//
+//   - Rule-based extraction: a zero-dependency fallback that scans each line of
+//     the conversation for keyword patterns indicating preferences, procedures,
+//     events, or facts. It strips speaker prefixes, filters noise (greetings,
+//     filler), classifies each line by type, extracts technical topic tags, and
+//     deduplicates results by content.
+//
+// The LLM strategy is used when a provider is configured; otherwise the rule-based
+// strategy is applied automatically. If the LLM call fails at runtime, the
+// extractor falls back to rule-based extraction transparently.
 package extraction
 
 import (
@@ -12,7 +29,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// ExtractedMemory is a memory extracted from a conversation.
+// ExtractedMemory represents a single memory extracted from a conversation. It
+// carries the raw content, the classified memory type (semantic, episodic, or
+// procedural), keyword tags, and an optional relation hint for linking to existing
+// memories.
 type ExtractedMemory struct {
 	Content  string           `json:"content"`
 	Type     model.MemoryType `json:"type"`
@@ -20,13 +40,17 @@ type ExtractedMemory struct {
 	Relation *ExtractedRelation `json:"relation,omitempty"`
 }
 
-// ExtractedRelation indicates this memory relates to an existing memory.
+// ExtractedRelation indicates that an extracted memory relates to an existing
+// memory in the graph. TargetHint is a content fragment used to fuzzy-match
+// against existing memories when creating the relationship edge.
 type ExtractedRelation struct {
 	Type      model.RelationshipType `json:"type"`
 	TargetHint string                `json:"target_hint"` // content fragment to match against existing memories
 }
 
-// Extractor extracts structured memories from raw conversations.
+// Extractor extracts structured memories from raw conversations. It delegates to
+// either the LLM-based or rule-based strategy depending on whether an LLM provider
+// was supplied at construction time.
 type Extractor struct {
 	llmProvider llm.Provider // nil = use rule-based extraction
 }
@@ -37,7 +61,9 @@ func NewExtractor(llmProvider llm.Provider) *Extractor {
 	return &Extractor{llmProvider: llmProvider}
 }
 
-// Extract processes a raw conversation and returns structured memories.
+// Extract processes a raw conversation and returns structured memories. It
+// dispatches to the LLM strategy if a provider is available, otherwise falls back
+// to rule-based extraction.
 func (e *Extractor) Extract(ctx context.Context, conversation string, projectID string) ([]ExtractedMemory, error) {
 	if e.llmProvider != nil {
 		return e.llmExtract(ctx, conversation, projectID)
@@ -47,6 +73,9 @@ func (e *Extractor) Extract(ctx context.Context, conversation string, projectID 
 
 // --- LLM-based extraction ---
 
+// llmExtract sends the conversation to the configured LLM with a structured prompt
+// requesting a JSON array of memories. Each memory includes content, type, and tags.
+// If the LLM call fails, it transparently falls back to rule-based extraction.
 func (e *Extractor) llmExtract(ctx context.Context, conversation string, _ string) ([]ExtractedMemory, error) {
 	prompt := fmt.Sprintf(`You are a memory extraction engine. Analyze this conversation and extract structured memories.
 
@@ -71,8 +100,11 @@ Output ONLY the JSON array, no other text:`, conversation)
 	return parseLLMResponse(response)
 }
 
+// parseLLMResponse extracts a JSON array from an LLM response string. It handles
+// common formatting issues: strips markdown code fences, locates the outermost
+// array brackets, and unmarshals each element into an ExtractedMemory. Empty
+// content entries are silently skipped.
 func parseLLMResponse(response string) ([]ExtractedMemory, error) {
-	// Find JSON array in the response.
 	response = strings.TrimSpace(response)
 
 	// Strip markdown code fences if present.
@@ -125,6 +157,17 @@ func parseLLMResponse(response string) ([]ExtractedMemory, error) {
 
 // --- Rule-based extraction (no LLM needed) ---
 
+// ruleExtract processes each line of a conversation independently. For each line it:
+//  1. Strips speaker prefixes (e.g. "user: ").
+//  2. Filters out noise (greetings, filler, very short lines).
+//  3. Classifies the line into a memory type by matching keyword patterns:
+//     - Preference patterns ("prefer", "like to", etc.) -> semantic
+//     - Procedural patterns ("always run", "before deploying", etc.) -> procedural
+//     - Event patterns ("decided to", "switched to", etc.) -> episodic
+//     - Fact patterns (" is ", " uses ", etc.) -> semantic
+//     - Substantial unmatched content (>30 chars) -> episodic (default)
+//  4. Extracts technical topic tags from recognized terms.
+//  5. Deduplicates by exact content (case-insensitive).
 func (e *Extractor) ruleExtract(conversation string) []ExtractedMemory {
 	var memories []ExtractedMemory
 	lines := strings.Split(conversation, "\n")
@@ -151,14 +194,20 @@ func (e *Extractor) ruleExtract(conversation string) []ExtractedMemory {
 	return dedup(memories)
 }
 
+// stripSpeaker removes a leading "Speaker: " prefix from a conversation line.
+// It only matches if the colon appears within the first 30 characters to avoid
+// stripping content that happens to contain a colon further in.
 func stripSpeaker(line string) string {
-	// Match "Speaker: content" pattern.
 	if idx := strings.Index(line, ": "); idx > 0 && idx < 30 {
 		return strings.TrimSpace(line[idx+2:])
 	}
 	return line
 }
 
+// classifyLine attempts to classify a single line of conversation content into
+// a typed ExtractedMemory. It checks keyword pattern lists in priority order:
+// preferences, procedural, events, then facts. Returns nil if the content is
+// noise or too short to be meaningful.
 func classifyLine(content string) *ExtractedMemory {
 	lower := strings.ToLower(content)
 
@@ -227,6 +276,8 @@ func classifyLine(content string) *ExtractedMemory {
 	return nil
 }
 
+// isNoise returns true if the lowercased line is a greeting, filler phrase, or
+// too short (under 15 characters) to contain meaningful information.
 func isNoise(lower string) bool {
 	noise := []string{
 		"hello", "hi there", "hey", "thanks", "thank you", "ok", "okay",
@@ -241,9 +292,10 @@ func isNoise(lower string) bool {
 	return len(lower) < 15
 }
 
-// extractTopics pulls keyword-like topics from content.
+// extractTopics pulls keyword-like topics from content by matching words against
+// a curated dictionary of technical terms (databases, languages, frameworks, cloud
+// providers, etc.). Returns at most 4 tags, deduplicated and lowercased.
 func extractTopics(content string) []string {
-	// Technical terms are usually capitalized or contain special chars.
 	words := strings.Fields(content)
 	var topics []string
 	seen := make(map[string]bool)
@@ -278,6 +330,8 @@ func extractTopics(content string) []string {
 	return topics
 }
 
+// dedup removes duplicate extracted memories by comparing lowercased content.
+// The first occurrence of each unique content string is kept.
 func dedup(memories []ExtractedMemory) []ExtractedMemory {
 	var result []ExtractedMemory
 	seen := make(map[string]bool)
@@ -291,7 +345,9 @@ func dedup(memories []ExtractedMemory) []ExtractedMemory {
 	return result
 }
 
-// ToMemories converts extracted memories to model.Memory objects.
+// ToMemories converts a slice of ExtractedMemory values into fully initialized
+// model.Memory objects, assigning new UUIDs, setting the project ID, and
+// initializing access count to 0 and decay score to 1.0 (maximum freshness).
 func ToMemories(extracted []ExtractedMemory, projectID string) []model.Memory {
 	var memories []model.Memory
 	now := time.Now().UTC()

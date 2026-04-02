@@ -1,3 +1,25 @@
+// contradiction.go detects factual contradictions between semantic memories using
+// four complementary strategies applied in order of confidence:
+//
+//  1. Replacement signals (confidence 0.9) -- the new memory contains explicit
+//     replacement language ("switched to", "migrated to", "no longer", etc.) and
+//     shares keywords or tags with the old memory.
+//
+//  2. Subject-verb-object divergence (confidence 0.85) -- both memories contain
+//     the same subject+verb pattern but with different objects, indicating a value
+//     change (e.g. "backend uses Python" vs "backend uses Go").
+//
+//  3. Negation conflict (confidence 0.8) -- the memories have high keyword overlap
+//     (Jaccard >= 0.4) but exactly one of them contains a negation word ("not",
+//     "don't", "never", etc.).
+//
+//  4. Tag-based divergence (confidence 0.5) -- the memories share 50%+ of their
+//     tags but have moderate content similarity (0.3-0.8 Jaccard), suggesting they
+//     discuss the same topic with different conclusions.
+//
+// Only semantic (fact) memories are checked; episodic and procedural memories are
+// inherently non-contradictory.
+
 package extraction
 
 import (
@@ -6,7 +28,10 @@ import (
 	"github.com/context0/context0/pkg/model"
 )
 
-// Contradiction represents a detected conflict between two memories.
+// Contradiction represents a detected conflict between a newly stored memory and
+// an existing memory. It captures both memories, a human-readable reason explaining
+// the detected conflict, and a confidence score in [0, 1] indicating how certain
+// the detection is.
 type Contradiction struct {
 	NewMemory  model.Memory
 	OldMemory  model.Memory
@@ -38,6 +63,9 @@ func DetectContradictions(newMem model.Memory, existing []model.Memory) []Contra
 	return contradictions
 }
 
+// detectPair runs all four contradiction detection strategies against a single
+// pair of memories, returning the first match (strategies are ordered by
+// descending confidence so the strongest signal wins).
 func detectPair(newMem, oldMem model.Memory) *Contradiction {
 	newLower := strings.ToLower(newMem.Content)
 	oldLower := strings.ToLower(oldMem.Content)
@@ -120,14 +148,19 @@ func detectPair(newMem, oldMem model.Memory) *Contradiction {
 	return nil
 }
 
-// triple represents a subject-verb-object pattern.
+// triple represents a subject-verb-object pattern extracted from natural language.
+// It is used by Strategy 2 to detect when two memories assign different values
+// (objects) to the same subject+verb combination.
 type triple struct {
 	subject string
 	verb    string
 	object  string
 }
 
-// extractTriples pulls "subject verb object" patterns from text.
+// extractTriples scans text for "subject verb object" patterns by searching for
+// known verbs (" uses ", " is ", " prefers ", etc.) and extracting the surrounding
+// words as subject (up to 3 trailing words before the verb) and object (up to 3
+// leading words after the verb).
 func extractTriples(text string) []triple {
 	var triples []triple
 
@@ -162,7 +195,10 @@ func extractTriples(text string) []triple {
 	return triples
 }
 
-// keywordOverlap calculates the Jaccard similarity of significant words.
+// keywordOverlap calculates the Jaccard similarity coefficient between the
+// significant (non-stop) words of two strings. Returns a value in [0, 1] where
+// 1.0 means identical word sets. This is used by multiple strategies to gauge
+// topical similarity between two memories.
 func keywordOverlap(a, b string) float64 {
 	aWords := significantWords(a)
 	bWords := significantWords(b)
@@ -186,6 +222,9 @@ func keywordOverlap(a, b string) float64 {
 	return float64(intersection) / float64(union)
 }
 
+// significantWords tokenizes text and returns a set of words after removing
+// stop words and short tokens (length <= 1). The result is used for Jaccard
+// similarity calculations.
 func significantWords(text string) map[string]bool {
 	words := strings.Fields(text)
 	result := make(map[string]bool)
@@ -210,6 +249,9 @@ func significantWords(text string) map[string]bool {
 	return result
 }
 
+// tagOverlapRatio computes the ratio of shared tags to the size of the smaller
+// tag set. This asymmetric measure ensures that a memory with few specific tags
+// can still show high overlap with a memory that has many tags.
 func tagOverlapRatio(a, b []string) float64 {
 	setA := make(map[string]bool)
 	for _, t := range a {
@@ -234,6 +276,7 @@ func tagOverlapRatio(a, b []string) float64 {
 	return float64(overlap) / float64(smaller)
 }
 
+// hasAny returns true if the text contains any of the given substrings.
 func hasAny(text string, patterns []string) bool {
 	for _, p := range patterns {
 		if strings.Contains(text, p) {
@@ -243,6 +286,8 @@ func hasAny(text string, patterns []string) bool {
 	return false
 }
 
+// lastWords returns the last n meaningful (non-stop, non-punctuation) words from
+// a string. Used to extract the subject portion before a verb in triple extraction.
 func lastWords(s string, n int) string {
 	words := strings.Fields(s)
 	stop := map[string]bool{"the": true, "a": true, "an": true, "our": true, "my": true, "this": true, "we": true, "i": true}
@@ -264,6 +309,8 @@ func lastWords(s string, n int) string {
 	return strings.Join(meaningful[len(meaningful)-n:], " ")
 }
 
+// firstWords returns the first n meaningful words from a string. Used to extract
+// the object portion after a verb in triple extraction.
 func firstWords(s string, n int) string {
 	words := strings.Fields(s)
 	var meaningful []string

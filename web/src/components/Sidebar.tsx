@@ -1,9 +1,17 @@
+/**
+ * @file Sidebar.tsx
+ * Left sidebar component that provides API key entry, text search, memory type
+ * filtering, and a scrollable list of memory cards. Clicking a memory card
+ * triggers the parent to load and display its subgraph.
+ */
+
 import { useState } from 'react'
 import { Search, Brain, Clock, Wrench, Key } from 'lucide-react'
 import type { MemoryResult, MemoryType } from '../lib/types'
 import { parseType } from '../lib/types'
 import { setApiKey, getApiKey } from '../lib/api'
 
+/** Available filter options for the memory type pill buttons. */
 const FILTERS: { label: string; value: MemoryType | 'all' }[] = [
   { label: 'All', value: 'all' },
   { label: 'Semantic', value: 'semantic' },
@@ -11,24 +19,37 @@ const FILTERS: { label: string; value: MemoryType | 'all' }[] = [
   { label: 'Procedural', value: 'procedural' },
 ]
 
+/** Visual badge config (icon + Tailwind classes) for each memory type. */
 const TYPE_BADGE: Record<string, { icon: typeof Brain; cls: string }> = {
   semantic:   { icon: Brain, cls: 'bg-green-500/10 text-green-400 border-green-500/20' },
   episodic:   { icon: Clock, cls: 'bg-amber-500/10 text-amber-400 border-amber-500/20' },
   procedural: { icon: Wrench, cls: 'bg-purple-500/10 text-purple-400 border-purple-500/20' },
 }
 
+/** Props for the {@link Sidebar} component. */
 interface Props {
+  /** All memory query results to display in the list. */
   results: MemoryResult[]
+  /** ID of the currently selected memory (highlighted in the list), or null. */
   selectedId: string | null
+  /** Callback invoked when the user clicks a memory card. */
   onSelect: (id: string) => void
+  /** Callback to trigger a data refresh (e.g. after changing the API key). */
   onRefresh: () => void
 }
 
+/**
+ * Sidebar panel with API key input, search/filter controls, and a scrollable
+ * memory list. Filters memories by type and text search across content and tags.
+ *
+ * @param props - See {@link Props}.
+ */
 export default function Sidebar({ results, selectedId, onSelect, onRefresh }: Props) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<MemoryType | 'all'>('all')
   const [key, setKey] = useState(getApiKey())
 
+  // Apply type filter and case-insensitive text search across content and tags
   const filtered = results.filter((r) => {
     const t = parseType(r.memory.type)
     if (filter !== 'all' && t !== filter) return false
