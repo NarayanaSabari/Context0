@@ -14,13 +14,16 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/context0-server ./cmd/server
 RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/context0-consolidate ./cmd/consolidate
 
-# Stage 2: Runtime (distroless)
-FROM gcr.io/distroless/static-debian12:nonroot
+# Stage 2: Runtime (alpine for healthcheck support)
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates wget
+RUN adduser -D -u 1000 context0
 
 COPY --from=builder /bin/context0-server /usr/local/bin/context0-server
 COPY --from=builder /bin/context0-consolidate /usr/local/bin/context0-consolidate
 
-USER nonroot:nonroot
+USER context0
 
 EXPOSE 50051 8080
 
