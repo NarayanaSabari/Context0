@@ -5,18 +5,29 @@ import (
 	"strings"
 )
 
-// BagOfWordsEmbedder generates fixed-dimension vectors using hashed bag-of-words.
-// This is a zero-dependency embedding approach suitable for MVP.
-// It uses feature hashing (hashing trick) to map tokens into a fixed-size vector,
-// with TF-IDF-like weighting for better similarity matching.
+// BagOfWordsEmbedder generates fixed-dimension vectors using feature hashing
+// (the "hashing trick"). It is a zero-dependency, CPU-only embedding approach
+// suitable for development, testing, and MVP deployments where installing a
+// model server is not practical.
 //
-// Replace with a real model (Ollama, sentence-transformers) for production quality.
+// Algorithm overview:
+//  1. Tokenize input text (lowercase, strip punctuation, remove stop words).
+//  2. Compute term frequencies and apply TF weighting: 1 + log(count).
+//  3. Hash each token into two positions using FNV-1a, with a sign hash to
+//     reduce directional bias from collisions.
+//  4. Hash consecutive token bigrams at half weight for phrase-level signal.
+//  5. L2-normalize the final vector so cosine similarity works correctly.
+//
+// Limitations: no semantic understanding -- relies purely on lexical overlap.
+// For production quality, switch to OllamaEmbedder or OpenAIEmbedder.
 type BagOfWordsEmbedder struct {
 	dim int
 }
 
 // NewBagOfWordsEmbedder creates an embedder with the given vector dimension.
-// Recommended: 384 (matches common small models for future migration).
+// Recommended value is 384 because it matches common small transformer models
+// (e.g. all-MiniLM-L6-v2), making migration to a real model seamless -- the
+// pgvector column dimension stays the same.
 func NewBagOfWordsEmbedder(dim int) *BagOfWordsEmbedder {
 	if dim <= 0 {
 		dim = 384
@@ -24,10 +35,13 @@ func NewBagOfWordsEmbedder(dim int) *BagOfWordsEmbedder {
 	return &BagOfWordsEmbedder{dim: dim}
 }
 
+// Dimension returns the fixed vector size used by this embedder.
 func (e *BagOfWordsEmbedder) Dimension() int {
 	return e.dim
 }
 
+// Embed converts text into a fixed-dimension vector using hashed bag-of-words
+// with TF weighting and bigram features. The output is L2-normalized.
 func (e *BagOfWordsEmbedder) Embed(text string) ([]float32, error) {
 	tokens := tokenize(text)
 	vec := make([]float32, e.dim)
@@ -43,15 +57,17 @@ func (e *BagOfWordsEmbedder) Embed(text string) ([]float32, error) {
 	}
 
 	// Hash each token into the vector with TF-weighted contribution.
+	// Using two hash positions per token spreads the signal across the
+	// vector and reduces the impact of hash collisions.
 	for token, count := range tf {
-		// TF weight: 1 + log(count)
+		// TF weight uses sublinear scaling: frequent terms get diminishing returns.
 		weight := float32(1.0 + math.Log(float64(count)))
 
-		// Use two hash positions per token (reduces collision impact).
 		h1 := fnvHash(token) % uint32(e.dim)
 		h2 := fnvHash(token+"_salt") % uint32(e.dim)
 
-		// Sign from a third hash (allows subtraction to reduce bias).
+		// A sign hash allows some tokens to subtract, which reduces
+		// systematic positive bias and produces richer vector geometry.
 		sign := float32(1.0)
 		if fnvHash(token+"_sign")%2 == 0 {
 			sign = -1.0
@@ -61,20 +77,23 @@ func (e *BagOfWordsEmbedder) Embed(text string) ([]float32, error) {
 		vec[h2] += weight * sign
 	}
 
-	// Also hash bigrams for phrase-level similarity.
+	// Bigram hashing captures word-pair co-occurrence, giving texts with
+	// similar phrases higher similarity than texts sharing only individual words.
 	for i := 0; i < len(tokens)-1; i++ {
 		bigram := tokens[i] + "_" + tokens[i+1]
 		h := fnvHash(bigram) % uint32(e.dim)
 		vec[h] += 0.5
 	}
 
-	// L2 normalize.
+	// L2-normalize so that cosine similarity equals the dot product.
 	normalize(vec)
 
 	return vec, nil
 }
 
-// tokenize splits text into lowercase tokens, filtering stop words and short words.
+// tokenize splits text into lowercase tokens, stripping punctuation and
+// filtering out stop words and single-character tokens. This preprocessing
+// focuses the embedding on content-bearing terms.
 func tokenize(text string) []string {
 	words := strings.Fields(strings.ToLower(text))
 	var tokens []string
@@ -92,7 +111,8 @@ func tokenize(text string) []string {
 	return tokens
 }
 
-// fnvHash is FNV-1a hash for strings.
+// fnvHash computes a 32-bit FNV-1a hash of the string. FNV-1a is chosen for
+// its simplicity, speed, and good distribution properties for short strings.
 func fnvHash(s string) uint32 {
 	h := uint32(2166136261)
 	for i := 0; i < len(s); i++ {
@@ -102,7 +122,9 @@ func fnvHash(s string) uint32 {
 	return h
 }
 
-// normalize applies L2 normalization to a vector.
+// normalize applies in-place L2 normalization to a vector, scaling it to unit
+// length. After normalization, cosine similarity between two vectors equals
+// their dot product. Zero vectors are left unchanged to avoid division by zero.
 func normalize(vec []float32) {
 	var sum float64
 	for _, v := range vec {
@@ -117,6 +139,9 @@ func normalize(vec []float32) {
 	}
 }
 
+// stopWords contains common English function words that carry little semantic
+// meaning and would add noise to the embedding. Removing them improves
+// similarity accuracy for content-bearing terms.
 var stopWords = map[string]bool{
 	"a": true, "an": true, "the": true, "is": true, "are": true,
 	"was": true, "were": true, "be": true, "been": true, "being": true,

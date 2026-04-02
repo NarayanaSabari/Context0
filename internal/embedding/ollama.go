@@ -9,14 +9,23 @@ import (
 )
 
 // OllamaEmbedder generates embeddings via a local or remote Ollama instance.
-// Default model: nomic-embed-text (768 dims, good quality, runs on CPU).
+// Ollama is a good choice when:
+//   - You want higher quality than bag-of-words without sending data to a cloud API.
+//   - The deployment environment has a GPU or sufficient CPU for inference.
+//   - No API key management is desired.
+//
+// Default model: nomic-embed-text (768 dimensions, good quality, runs on CPU).
+// Other popular models: all-minilm (384 dims), mxbai-embed-large (1024 dims).
 type OllamaEmbedder struct {
-	baseURL string
-	model   string
-	dim     int
+	baseURL string // Ollama server URL (default: http://localhost:11434)
+	model   string // model name to request from Ollama
+	dim     int    // expected vector dimension; updated on first successful call
 }
 
-// NewOllamaEmbedder creates an Ollama embedding provider.
+// NewOllamaEmbedder creates an Ollama embedding provider. Defaults:
+//   - baseURL: http://localhost:11434
+//   - model: nomic-embed-text
+//   - dim: 768
 func NewOllamaEmbedder(baseURL, model string, dim int) *OllamaEmbedder {
 	if baseURL == "" {
 		baseURL = "http://localhost:11434"
@@ -30,8 +39,13 @@ func NewOllamaEmbedder(baseURL, model string, dim int) *OllamaEmbedder {
 	return &OllamaEmbedder{baseURL: baseURL, model: model, dim: dim}
 }
 
+// Dimension returns the expected vector dimension. This value may be updated
+// after the first successful Embed call if the model returns a different size.
 func (o *OllamaEmbedder) Dimension() int { return o.dim }
 
+// Embed sends text to the Ollama /api/embeddings endpoint and returns the
+// resulting vector. The Ollama API returns float64 values which are
+// down-cast to float32 for pgvector compatibility.
 func (o *OllamaEmbedder) Embed(text string) ([]float32, error) {
 	body := map[string]any{
 		"model":  o.model,
@@ -61,13 +75,14 @@ func (o *OllamaEmbedder) Embed(text string) ([]float32, error) {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
-	// Convert float64 to float32.
+	// Convert float64 to float32 (pgvector and cosine math use float32).
 	vec := make([]float32, len(result.Embedding))
 	for i, v := range result.Embedding {
 		vec[i] = float32(v)
 	}
 
-	// Update dimension on first successful call.
+	// Auto-correct dimension on the first successful call so that
+	// Dimension() returns the true model output size going forward.
 	if len(vec) > 0 && o.dim != len(vec) {
 		o.dim = len(vec)
 	}

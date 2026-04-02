@@ -1,3 +1,11 @@
+// queryparser.go transforms natural-language query strings into structured
+// ParsedQuery values that can drive both the graph repository's QueryFilter
+// and direct Cypher execution against Apache AGE. It handles:
+//   - Keyword extraction with stop-word filtering.
+//   - Time expression detection (e.g. "last week", "today", "recently").
+//   - Bounds clamping for maxDepth (1..5) and topK (1..20).
+//   - Cypher query construction for memory matching and neighborhood expansion.
+
 package service
 
 import (
@@ -9,12 +17,15 @@ import (
 	"github.com/context0/context0/pkg/model"
 )
 
-// escapeCypherQ escapes single quotes for Cypher strings.
+// escapeCypherQ escapes single quotes in a string to prevent Cypher injection
+// when interpolating user-provided values into query templates.
 func escapeCypherQ(s string) string {
 	return strings.ReplaceAll(s, "'", "\\'")
 }
 
-// ParsedQuery represents a structured query extracted from natural language.
+// ParsedQuery represents a structured query extracted from a natural-language
+// search string. It captures the parsed keywords, optional time filter, memory
+// type constraints, and pagination parameters needed by downstream retrieval.
 type ParsedQuery struct {
 	Keywords  []string
 	Tags      []string
@@ -25,7 +36,10 @@ type ParsedQuery struct {
 	TopK      int32
 }
 
-// ParseQuery converts a QueryRequest into a structured ParsedQuery.
+// ParseQuery converts a raw query string and request parameters into a structured
+// ParsedQuery. It extracts keywords (filtering stop words), detects and removes
+// time expressions (setting TimeAfter accordingly), and clamps maxDepth and topK
+// to safe bounds.
 func ParseQuery(query string, projectID string, types []model.MemoryType, maxDepth, topK int32) ParsedQuery {
 	keywords := extractKeywords(query)
 
@@ -58,7 +72,9 @@ func ParseQuery(query string, projectID string, types []model.MemoryType, maxDep
 	}
 }
 
-// ToGraphFilter converts a ParsedQuery into a graph.QueryFilter.
+// ToGraphFilter converts a ParsedQuery into the graph.QueryFilter struct expected
+// by the repository layer. Note that TimeAfter is not yet propagated to the filter
+// and is handled separately by the Cypher query builder.
 func (p ParsedQuery) ToGraphFilter() graph.QueryFilter {
 	return graph.QueryFilter{
 		ProjectID: p.ProjectID,
@@ -106,8 +122,11 @@ func filterTimeKeywords(query string, timeAfter **time.Time) string {
 	return strings.TrimSpace(query)
 }
 
-// BuildCypherQuery constructs a Cypher query string from a ParsedQuery.
-// This is used for direct Cypher execution against AGE.
+// BuildCypherQuery constructs a Cypher MATCH query from a ParsedQuery for direct
+// execution against Apache AGE. The generated query filters by project_id, optional
+// memory types, optional time range, and keyword matching (case-insensitive
+// substring search against both content and tags). It fetches 3x the requested topK
+// (minimum 20) to give the ranking layer enough candidates for re-ranking.
 func BuildCypherQuery(p ParsedQuery) string {
 	var conditions []string
 	conditions = append(conditions, fmt.Sprintf("m.project_id = '%s'", escapeCypherQ(p.ProjectID)))
@@ -148,8 +167,9 @@ func BuildCypherQuery(p ParsedQuery) string {
 	)
 }
 
-// BuildNeighborhoodQuery returns a Cypher query that expands 1-hop neighbors
-// of a given memory node, optionally filtered by edge types.
+// BuildNeighborhoodQuery returns a Cypher query that expands 1-hop neighbors of
+// a given memory node. If edgeTypes is non-empty, only edges matching those
+// relationship types are traversed; otherwise all edge types are included.
 func BuildNeighborhoodQuery(memoryID string, edgeTypes []model.RelationshipType) string {
 	if len(edgeTypes) == 0 {
 		return fmt.Sprintf(

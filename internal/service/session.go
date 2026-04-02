@@ -1,3 +1,8 @@
+// session.go implements the SessionService gRPC handlers for managing agent
+// sessions. A session represents a bounded interaction window between an agent
+// and the Context0 memory system. Memories created during a session are linked
+// back to it, enabling session-scoped queries and context replay.
+
 package service
 
 import (
@@ -14,17 +19,22 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// SessionService implements the SessionService gRPC service.
+// SessionService implements the SessionService gRPC service. It manages the
+// lifecycle of agent sessions, tracking which agent is interacting with which
+// project and for how long.
 type SessionService struct {
 	pb.UnimplementedSessionServiceServer
 	repo graph.Repository
 }
 
-// NewSessionService creates a new SessionService.
+// NewSessionService creates a new SessionService backed by the given graph repository.
 func NewSessionService(repo graph.Repository) *SessionService {
 	return &SessionService{repo: repo}
 }
 
+// StartSession creates a new session for the given project and agent. The session
+// ID is generated server-side and returned to the caller. The active sessions
+// metric is incremented to support monitoring.
 func (s *SessionService) StartSession(ctx context.Context, req *pb.StartSessionRequest) (*pb.StartSessionResponse, error) {
 	if req.ProjectId == "" {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
@@ -51,6 +61,8 @@ func (s *SessionService) StartSession(ctx context.Context, req *pb.StartSessionR
 	}, nil
 }
 
+// EndSession marks an existing session as completed by setting its end timestamp.
+// The active sessions metric is decremented accordingly.
 func (s *SessionService) EndSession(ctx context.Context, req *pb.EndSessionRequest) (*pb.EndSessionResponse, error) {
 	if req.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
@@ -73,6 +85,8 @@ func (s *SessionService) EndSession(ctx context.Context, req *pb.EndSessionReque
 	}, nil
 }
 
+// sessionToProto converts an internal Session model to its protobuf representation.
+// The EndedAt field is only set if the session has been ended.
 func sessionToProto(s model.Session) *pb.Session {
 	pbSess := &pb.Session{
 		Id:        s.ID.String(),

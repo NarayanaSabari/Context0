@@ -1,17 +1,31 @@
+/**
+ * @file Legend.tsx
+ * Graph legend component displayed in the bottom-left corner of the graph view.
+ * Shows color-coded icons for each memory node type and line styles for each
+ * relationship edge type, helping users interpret the visual graph encoding.
+ */
+
 import { Brain, Clock, Wrench } from 'lucide-react'
 
+/** Legend entries for memory node types, each with an icon, label, and color. */
 const NODES = [
   { icon: Brain, label: 'Semantic (facts)', color: '#9ece6a' },
   { icon: Clock, label: 'Episodic (events)', color: '#e0af68' },
   { icon: Wrench, label: 'Procedural (how-to)', color: '#bb9af7' },
 ]
 
+/** Legend entries for edge relationship types, each with a label, color, and line style. */
 const EDGES = [
   { label: 'relates to', color: '#7aa2f7', dashed: false },
   { label: 'supersedes', color: '#f7768e', dashed: true },
   { label: 'caused by', color: '#e0af68', dashed: false },
 ]
 
+/**
+ * Renders a compact legend overlay in the bottom-left of the graph canvas.
+ * Displays node type icons with labels and edge relationship line samples,
+ * helping users understand the graph's visual encoding.
+ */
 export default function Legend() {
   return (
     <div className="absolute bottom-4 left-4 bg-[#12131a] border border-[#262836] rounded-xl p-4 z-10 text-[12px]">

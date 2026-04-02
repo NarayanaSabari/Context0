@@ -1,3 +1,19 @@
+// Package service implements the gRPC service layer for Context0, the memory graph
+// system. It orchestrates the core memory lifecycle: Store, Query, Extract, and
+// GetProfile. Each operation coordinates between the graph repository (for
+// persistent storage and traversal), the embedding layer (for vector search), and
+// the extraction/ranking subsystems.
+//
+// The primary flow is:
+//
+//  1. Store -- persist a memory node, generate its embedding, link it to a session,
+//     detect contradictions with existing memories, and auto-link by shared tags.
+//  2. Query -- hybrid retrieval combining graph-based keyword/tag matching with
+//     vector similarity search, merged and ranked by a weighted scoring function.
+//  3. Extract -- parse a raw conversation into structured memories using either
+//     an LLM provider or rule-based heuristics, then store each extracted memory.
+//  4. GetProfile -- build a user/project profile by splitting memories into a
+//     static layer (semantic facts, procedures) and a dynamic layer (recent episodes).
 package service
 
 import (
@@ -20,18 +36,29 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// MemoryService implements the Context0 gRPC service.
+// MemoryService implements the Context0 gRPC service. It holds a graph repository
+// for persistent memory storage and traversal, and an optional embedder for
+// generating vector representations used in hybrid search.
 type MemoryService struct {
 	pb.UnimplementedContext0Server
 	repo     graph.Repository
 	embedder embedding.Embedder
 }
 
-// NewMemoryService creates a new MemoryService.
+// NewMemoryService creates a new MemoryService with the given graph repository
+// and embedder. The embedder may be nil, in which case vector search is disabled
+// and the service operates in graph-only mode.
 func NewMemoryService(repo graph.Repository, embedder embedding.Embedder) *MemoryService {
 	return &MemoryService{repo: repo, embedder: embedder}
 }
 
+// Store persists a new memory node into the graph. The full pipeline is:
+//  1. Validate input (content and project_id are required).
+//  2. Create the memory node in the graph repository.
+//  3. Generate and store an embedding vector for future similarity search.
+//  4. Link the memory to a session if session_id is provided.
+//  5. Detect contradictions with existing semantic memories and create supersedes edges.
+//  6. Auto-link to other memories that share overlapping tags via relates_to edges.
 func (s *MemoryService) Store(ctx context.Context, req *StoreRequest) (*StoreResponse, error) {
 	timer := prometheus.NewTimer(metrics.StoreDuration)
 	defer timer.ObserveDuration()
@@ -96,6 +123,14 @@ func (s *MemoryService) Store(ctx context.Context, req *StoreRequest) (*StoreRes
 	}, nil
 }
 
+// Query performs hybrid retrieval over the memory graph. It combines:
+//   - Graph-based retrieval using keyword/tag matching and type filters.
+//   - Vector-based retrieval using cosine similarity on embeddings.
+//
+// Results from both methods are merged (duplicates are boosted by 50%), ranked
+// using the weighted scoring function in the ranking package, and truncated to
+// the requested top-K count. Access counts are incremented for all returned memories
+// so the decay/consolidation pipeline can factor in usage frequency.
 func (s *MemoryService) Query(ctx context.Context, req *QueryRequest) (*QueryResponse, error) {
 	timer := prometheus.NewTimer(metrics.QueryDuration)
 	defer timer.ObserveDuration()
@@ -149,6 +184,9 @@ func (s *MemoryService) Query(ctx context.Context, req *QueryRequest) (*QueryRes
 	return &QueryResponse{Results: pbResults}, nil
 }
 
+// Connect creates a directed edge between two existing memory nodes. Both nodes
+// must already exist in the graph. If no weight is specified, the edge defaults
+// to a weight of 1.0. The edge relationship type must be a valid RelationshipType.
 func (s *MemoryService) Connect(ctx context.Context, req *ConnectRequest) (*ConnectResponse, error) {
 	if req.FromId == "" || req.ToId == "" {
 		return nil, status.Error(codes.InvalidArgument, "from_id and to_id are required")
@@ -201,6 +239,7 @@ func (s *MemoryService) Connect(ctx context.Context, req *ConnectRequest) (*Conn
 	}, nil
 }
 
+// Delete removes a memory node and its associated edges from the graph.
 func (s *MemoryService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResponse, error) {
 	if req.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
@@ -218,6 +257,8 @@ func (s *MemoryService) Delete(ctx context.Context, req *DeleteRequest) (*Delete
 	return &DeleteResponse{}, nil
 }
 
+// GetGraph returns a subgraph centered on a given memory node, expanding outward
+// to the specified depth. This is used for graph visualization and context exploration.
 func (s *MemoryService) GetGraph(ctx context.Context, req *GetGraphRequest) (*GetGraphResponse, error) {
 	if req.CenterId == "" {
 		return nil, status.Error(codes.InvalidArgument, "center_id is required")
@@ -249,6 +290,10 @@ func (s *MemoryService) GetGraph(ctx context.Context, req *GetGraphRequest) (*Ge
 	}, nil
 }
 
+// Extract processes a raw conversation string and automatically extracts structured
+// memories from it. The extraction is delegated to the extraction package, which
+// supports both LLM-based and rule-based strategies. Each extracted memory is
+// persisted, embedded, optionally linked to a session, and auto-linked by tags.
 func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*pb.ExtractResponse, error) {
 	if req.Conversation == "" {
 		return nil, status.Error(codes.InvalidArgument, "conversation is required")
@@ -301,6 +346,12 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 	}, nil
 }
 
+// GetProfile builds a user/project profile by splitting all project memories into
+// two layers:
+//   - Static profile: semantic facts and procedural knowledge that are stable over time.
+//   - Dynamic profile: episodic memories from the last 7 days representing recent activity.
+//
+// Each fact carries the memory's current decay score as a confidence indicator.
 func (s *MemoryService) GetProfile(ctx context.Context, req *pb.GetProfileRequest) (*pb.GetProfileResponse, error) {
 	if req.ProjectId == "" {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
@@ -350,9 +401,11 @@ func (s *MemoryService) GetProfile(ctx context.Context, req *pb.GetProfileReques
 	}, nil
 }
 
-// autoLinkByTags finds existing memories with matching tags and creates relates_to edges.
-// detectAndSupersede checks if a new memory contradicts existing memories.
-// If a contradiction is found, creates a supersedes edge from the new memory to the old one.
+// detectAndSupersede checks whether a newly stored memory contradicts any existing
+// semantic memories in the same project. For each contradiction detected with
+// confidence >= 0.5, a supersedes edge is created from the new memory to the old one,
+// signaling that the new memory replaces the old fact. Only semantic memories are
+// checked because episodic and procedural memories do not contradict each other.
 func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory) {
 	if mem.Type != model.MemoryTypeSemantic {
 		return
@@ -394,6 +447,9 @@ func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory
 	}
 }
 
+// autoLinkByTags finds existing memories in the same project that share at least
+// one tag with the given memory and creates relates_to edges with a default weight
+// of 0.5 to connect them. This builds implicit topic clusters in the graph.
 func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory) {
 	filter := graph.QueryFilter{
 		ProjectID: mem.ProjectID,
@@ -425,6 +481,8 @@ func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory) {
 }
 
 // --- Type aliases for generated proto types ---
+// These aliases allow the service layer to reference proto request/response types
+// without requiring callers to import the generated proto package directly.
 
 type StoreRequest = pb.StoreRequest
 type StoreResponse = pb.StoreResponse
@@ -438,7 +496,10 @@ type GetGraphRequest = pb.GetGraphRequest
 type GetGraphResponse = pb.GetGraphResponse
 
 // --- Converters ---
+// The functions below translate between internal domain models and their protobuf
+// wire representations. They are used by every gRPC handler in this package.
 
+// memoryToProto converts an internal Memory model to its protobuf representation.
 func memoryToProto(m model.Memory) *pb.Memory {
 	return &pb.Memory{
 		Id:          m.ID.String(),
@@ -452,6 +513,8 @@ func memoryToProto(m model.Memory) *pb.Memory {
 	}
 }
 
+// memoryWithContextToProto converts a MemoryWithContext (memory plus its neighboring
+// edges and their target content) to the protobuf representation.
 func memoryWithContextToProto(m model.MemoryWithContext) *pb.MemoryWithContext {
 	var ctxEdges []*pb.ContextEdge
 	for _, c := range m.Context {
@@ -469,6 +532,7 @@ func memoryWithContextToProto(m model.MemoryWithContext) *pb.MemoryWithContext {
 	}
 }
 
+// edgeToProto converts an internal Edge model to its protobuf representation.
 func edgeToProto(e model.Edge) *pb.Edge {
 	return &pb.Edge{
 		Id:           e.ID.String(),
@@ -480,6 +544,7 @@ func edgeToProto(e model.Edge) *pb.Edge {
 	}
 }
 
+// memoryTypeToProto maps an internal MemoryType to its protobuf enum value.
 func memoryTypeToProto(t model.MemoryType) pb.MemoryType {
 	switch t {
 	case model.MemoryTypeEpisodic:
@@ -493,6 +558,8 @@ func memoryTypeToProto(t model.MemoryType) pb.MemoryType {
 	}
 }
 
+// protoToMemoryType maps a protobuf MemoryType enum to the internal model type.
+// Returns an error for unrecognized values.
 func protoToMemoryType(t pb.MemoryType) (model.MemoryType, error) {
 	switch t {
 	case pb.MemoryType_MEMORY_TYPE_EPISODIC:
@@ -506,6 +573,7 @@ func protoToMemoryType(t pb.MemoryType) (model.MemoryType, error) {
 	}
 }
 
+// relTypeToProto maps an internal RelationshipType to its protobuf enum value.
 func relTypeToProto(r model.RelationshipType) pb.RelationshipType {
 	switch r {
 	case model.RelRelatesTo:
@@ -519,6 +587,8 @@ func relTypeToProto(r model.RelationshipType) pb.RelationshipType {
 	}
 }
 
+// protoToRelType maps a protobuf RelationshipType enum to the internal model type.
+// Returns an error for unrecognized values.
 func protoToRelType(r pb.RelationshipType) (model.RelationshipType, error) {
 	switch r {
 	case pb.RelationshipType_RELATIONSHIP_TYPE_RELATES_TO:
@@ -561,7 +631,10 @@ func extractKeywords(query string) []string {
 	return keywords
 }
 
-// mergeResults combines graph and vector results, boosting memories found by both.
+// mergeResults combines graph-retrieved and vector-retrieved results into a single
+// deduplicated slice. When a memory appears in both result sets, its score is
+// boosted by 50% of the vector score, rewarding memories that are relevant across
+// both retrieval strategies.
 func mergeResults(graph, vector []model.MemoryWithContext) []model.MemoryWithContext {
 	seen := make(map[uuid.UUID]*model.MemoryWithContext)
 
@@ -591,6 +664,8 @@ func mergeResults(graph, vector []model.MemoryWithContext) []model.MemoryWithCon
 	return results
 }
 
+// hasOverlappingTags returns true if the two tag slices share at least one tag
+// (compared case-insensitively).
 func hasOverlappingTags(a, b []string) bool {
 	set := make(map[string]bool, len(a))
 	for _, t := range a {

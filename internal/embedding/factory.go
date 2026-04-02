@@ -2,17 +2,34 @@ package embedding
 
 import "fmt"
 
-// ProviderConfig holds the configuration for creating an embedder.
+// ProviderConfig holds the configuration for creating an Embedder via the
+// factory function NewFromConfig. It maps directly to environment variables
+// or config file fields, allowing runtime selection of the embedding backend.
 type ProviderConfig struct {
-	Provider string // "bag-of-words" | "ollama" | "openai" | "google"
-	Model    string // model name (provider-specific)
-	APIKey   string // API key (for cloud providers)
-	BaseURL  string // base URL override
-	Dim      int    // vector dimension (0 = auto-detect)
+	// Provider selects the embedding backend. Supported values:
+	//   "bag-of-words" / "bow" / "" (default) - zero-dependency hashed BoW
+	//   "ollama"  - local Ollama instance (no API key, privacy-friendly)
+	//   "openai"  - OpenAI or any compatible API (highest quality)
+	//   "google"  - Google Generative AI API
+	Provider string
+	// Model is the provider-specific model name (e.g. "nomic-embed-text",
+	// "text-embedding-3-small", "text-embedding-004"). Empty means use default.
+	Model string
+	// APIKey is required for cloud providers (openai, google). Set via
+	// CONTEXT0_EMBEDDING_API_KEY environment variable.
+	APIKey string
+	// BaseURL overrides the default API endpoint. Useful for self-hosted
+	// Ollama instances or OpenAI-compatible proxies (vLLM, LiteLLM, etc.).
+	BaseURL string
+	// Dim sets the vector dimension. Zero or negative means auto-detect
+	// (use the provider's default dimension).
+	Dim int
 }
 
-// NewFromConfig creates an Embedder from configuration.
-// Falls back to BagOfWords if the requested provider is unavailable.
+// NewFromConfig creates an Embedder from the given configuration. When
+// Provider is empty, it defaults to the bag-of-words embedder. Returns an
+// error if a cloud provider is requested without an API key or if the
+// provider name is unrecognized.
 func NewFromConfig(cfg ProviderConfig) (Embedder, error) {
 	switch cfg.Provider {
 	case "bag-of-words", "bow", "":

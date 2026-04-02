@@ -1,3 +1,7 @@
+// Context0 Memory Engine API
+//
+// Defines the core gRPC service for storing, querying, connecting, and
+// extracting memories in the Context0 knowledge graph.
 syntax = "proto3";
 
 package context0.v1;
@@ -7,7 +11,9 @@ option go_package = "github.com/context0/context0/api/gen/context0/v1;context0v1
 import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
 
-// Context0 is the core memory engine service.
+// Context0 is the core memory engine service providing CRUD operations,
+// semantic search, graph traversal, and automatic extraction of memories
+// from agent conversations.
 service Context0 {
   // Store creates a new memory in the graph.
   rpc Store(StoreRequest) returns (StoreResponse) {
@@ -62,157 +68,292 @@ service Context0 {
   }
 }
 
-// MemoryType categorizes a memory node.
+// MemoryType categorizes a memory node by its cognitive function.
 enum MemoryType {
+  // MEMORY_TYPE_UNSPECIFIED is the default zero value; must not be used explicitly.
   MEMORY_TYPE_UNSPECIFIED = 0;
+
+  // MEMORY_TYPE_EPISODIC represents event-based memories tied to specific
+  // interactions or moments in time.
   MEMORY_TYPE_EPISODIC = 1;
+
+  // MEMORY_TYPE_SEMANTIC represents factual, long-lived knowledge extracted
+  // from conversations (e.g., preferences, facts).
   MEMORY_TYPE_SEMANTIC = 2;
+
+  // MEMORY_TYPE_PROCEDURAL represents learned processes, workflows, or
+  // how-to knowledge.
   MEMORY_TYPE_PROCEDURAL = 3;
 }
 
-// RelationshipType defines the kind of edge between nodes.
+// RelationshipType defines the semantic kind of a directed edge between
+// two memory nodes in the knowledge graph.
 enum RelationshipType {
+  // RELATIONSHIP_TYPE_UNSPECIFIED is the default zero value; must not be used explicitly.
   RELATIONSHIP_TYPE_UNSPECIFIED = 0;
+
+  // RELATIONSHIP_TYPE_RELATES_TO indicates a general semantic association.
   RELATIONSHIP_TYPE_RELATES_TO = 1;
+
+  // RELATIONSHIP_TYPE_SUPERSEDES indicates the source memory replaces or
+  // updates the target memory.
   RELATIONSHIP_TYPE_SUPERSEDES = 2;
+
+  // RELATIONSHIP_TYPE_CAUSED_BY indicates the source memory was produced as
+  // a consequence of the target memory.
   RELATIONSHIP_TYPE_CAUSED_BY = 3;
 }
 
-// Memory represents a single memory node.
+// Memory represents a single memory node in the Context0 knowledge graph.
 message Memory {
+  // Unique identifier for this memory node (UUID string).
   string id = 1;
+
+  // Natural-language text content of the memory.
   string content = 2;
+
+  // Cognitive category of this memory.
   MemoryType type = 3;
+
+  // Identifier of the project this memory is scoped to.
   string project_id = 4;
+
+  // Free-form labels for filtering and categorization.
   repeated string tags = 5;
+
+  // Timestamp when the memory was first stored.
   google.protobuf.Timestamp created_at = 6;
+
+  // Number of times this memory has been retrieved by queries.
   int64 access_count = 7;
+
+  // Computed relevance score (0-1) representing the memory's current freshness.
+  // Lower scores indicate the memory is fading.
   double decay_score = 8;
 }
 
-// ContextEdge is a connected edge returned with query results.
+// ContextEdge is a simplified edge returned alongside a memory in query results
+// to explain how the memory relates to neighboring nodes.
 message ContextEdge {
+  // Type of connection to the target node.
   RelationshipType relationship = 1;
+
+  // Unique identifier of the connected memory node.
   string target_id = 2;
+
+  // Text content of the connected memory (included to avoid extra lookups).
   string target_content = 3;
+
+  // Strength of this edge (0-1).
   double weight = 4;
 }
 
-// MemoryWithContext is a ranked memory result with its context edges.
+// MemoryWithContext is a ranked memory result bundled with its neighboring
+// edges and a composite relevance score.
 message MemoryWithContext {
+  // The retrieved memory node.
   Memory memory = 1;
+
+  // Edges connecting this memory to related nodes, explaining relevance.
   repeated ContextEdge context = 2;
+
+  // Composite relevance score combining vector similarity, decay, and graph proximity.
   double score = 3;
 }
 
-// Edge represents a relationship between two memories.
+// Edge represents a directed, weighted relationship between two memory nodes
+// in the knowledge graph.
 message Edge {
+  // Unique identifier for this edge (UUID string).
   string id = 1;
+
+  // Source memory node of this directed edge.
   string from_id = 2;
+
+  // Target memory node of this directed edge.
   string to_id = 3;
+
+  // Semantic type of the connection.
   RelationshipType relationship = 4;
+
+  // Strength of this relationship (0-1). Higher values rank higher in traversal.
   double weight = 5;
+
+  // Timestamp when this edge was created.
   google.protobuf.Timestamp created_at = 6;
 }
 
 // --- Store ---
 
+// StoreRequest is the input to the Store RPC for creating a new memory.
 message StoreRequest {
+  // Natural-language text content of the memory to store.
   string content = 1;
+
+  // Cognitive category of the memory.
   MemoryType type = 2;
+
+  // Project to scope this memory to.
   string project_id = 3;
+
+  // Optional free-form labels for categorization.
   repeated string tags = 4;
+
+  // Optional session to associate this memory with.
   string session_id = 5;
 }
 
+// StoreResponse is the output of the Store RPC.
 message StoreResponse {
+  // The newly created memory node.
   Memory memory = 1;
 }
 
 // --- Query ---
 
+// QueryRequest is the input to the Query RPC for semantic memory retrieval.
 message QueryRequest {
+  // Natural-language query string used for vector similarity search.
   string query = 1;
+
+  // Project to search within.
   string project_id = 2;
+
+  // Maximum number of results to return.
   int32 top_k = 3;
+
+  // Maximum graph traversal depth for context edges (0 = no traversal).
   int32 max_depth = 4;
+
+  // Optional filter to restrict results to specific memory types.
   repeated MemoryType types = 5;
 }
 
+// QueryResponse is the output of the Query RPC.
 message QueryResponse {
+  // Ranked list of memories with their context edges and scores.
   repeated MemoryWithContext results = 1;
 }
 
 // --- Connect ---
 
+// ConnectRequest is the input to the Connect RPC for creating an edge
+// between two existing memories.
 message ConnectRequest {
+  // Source memory node ID.
   string from_id = 1;
+
+  // Target memory node ID.
   string to_id = 2;
+
+  // Semantic type of the relationship to create.
   RelationshipType relationship = 3;
+
+  // Strength of the relationship (0-1).
   double weight = 4;
 }
 
+// ConnectResponse is the output of the Connect RPC.
 message ConnectResponse {
+  // The newly created edge.
   Edge edge = 1;
 }
 
 // --- Delete ---
 
+// DeleteRequest is the input to the Delete RPC for removing a memory
+// and all of its connected edges.
 message DeleteRequest {
+  // ID of the memory to delete.
   string id = 1;
 }
 
+// DeleteResponse is the output of the Delete RPC. Empty on success.
 message DeleteResponse {}
 
 // --- GetGraph ---
 
+// GetGraphRequest is the input to the GetGraph RPC for retrieving a
+// subgraph centered on a specific memory.
 message GetGraphRequest {
+  // ID of the center memory node to expand from.
   string center_id = 1;
+
+  // Number of hops to traverse outward from the center node.
   int32 depth = 2;
 }
 
+// GetGraphResponse is the output of the GetGraph RPC containing the
+// requested subgraph.
 message GetGraphResponse {
+  // All memory nodes within the requested traversal depth.
   repeated Memory nodes = 1;
+
+  // All edges connecting the returned nodes.
   repeated Edge edges = 2;
 }
 
 // --- Extract ---
 
+// ExtractRequest is the input to the Extract RPC which processes raw
+// conversation text and automatically creates memories and relationships.
 message ExtractRequest {
-  // Raw conversation text (multi-turn messages).
+  // Raw conversation text (multi-turn messages) to extract knowledge from.
   string conversation = 1;
+
+  // Project to scope the extracted memories to.
   string project_id = 2;
-  // Optional: link extracted memories to a session.
+
+  // Optional session ID to link extracted memories to.
   string session_id = 3;
 }
 
+// ExtractResponse is the output of the Extract RPC.
 message ExtractResponse {
-  // Memories auto-created from the conversation.
+  // Memories automatically created from the conversation.
   repeated Memory memories = 1;
-  // Number of relationships auto-created.
+
+  // Number of edges (relationships) automatically created between
+  // the extracted memories and existing graph nodes.
   int32 relationships_created = 2;
 }
 
 // --- GetProfile ---
 
+// GetProfileRequest is the input to the GetProfile RPC for building
+// an aggregated user/project profile from stored memories.
 message GetProfileRequest {
+  // Project to build the profile for.
   string project_id = 1;
-  // Optional: filter profile by query relevance.
+
+  // Optional query string to filter the profile by relevance.
   string query = 2;
 }
 
+// ProfileFact is a single distilled fact in a user/project profile,
+// derived from one or more underlying memories.
 message ProfileFact {
+  // Natural-language description of the fact.
   string content = 1;
+
+  // Cognitive category of the source memories.
   MemoryType type = 2;
+
+  // Confidence score (0-1) indicating how well-supported this fact is.
   double confidence = 3;
+
+  // Tags inherited from the source memories.
   repeated string tags = 4;
 }
 
+// GetProfileResponse is the output of the GetProfile RPC.
 message GetProfileResponse {
-  // Stable facts and preferences (from semantic + procedural memories).
+  // Stable facts and preferences derived from semantic and procedural memories.
   repeated ProfileFact static_profile = 1;
-  // Recent events and context (from episodic memories, last 7 days).
+
+  // Recent events and context derived from episodic memories (last 7 days).
   repeated ProfileFact dynamic_profile = 2;
-  // Total memory count for this project.
+
+  // Total number of memories stored for this project.
   int64 total_memories = 3;
 }

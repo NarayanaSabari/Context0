@@ -8,17 +8,26 @@ import (
 	"net/http"
 )
 
-// OpenAIEmbedder generates embeddings via the OpenAI API (or any compatible API).
-// Works with: OpenAI, Azure OpenAI, vLLM, LiteLLM, Together, Anyscale, etc.
+// OpenAIEmbedder generates embeddings via the OpenAI /v1/embeddings API.
+// It is compatible with any service that implements the same request/response
+// schema, including Azure OpenAI, vLLM, LiteLLM, Together AI, and Anyscale.
+//
+// Use this provider when you need the highest embedding quality and can
+// accept the latency/cost of a cloud API call per embedding. For cost-sensitive
+// workloads, consider using Ollama with a local model instead.
+//
+// Default model: text-embedding-3-small (1536 dimensions).
 type OpenAIEmbedder struct {
-	baseURL string
-	apiKey  string
-	model   string
-	dim     int
+	baseURL string // API base URL (default: https://api.openai.com/v1)
+	apiKey  string // Bearer token for Authorization header
+	model   string // model identifier sent in the request body
+	dim     int    // expected vector dimension; auto-corrected after first call
 }
 
-// NewOpenAIEmbedder creates an OpenAI-compatible embedding provider.
-// Default model: text-embedding-3-small (1536 dims).
+// NewOpenAIEmbedder creates an OpenAI-compatible embedding provider. Defaults:
+//   - baseURL: https://api.openai.com/v1
+//   - model: text-embedding-3-small
+//   - dim: 1536
 func NewOpenAIEmbedder(baseURL, apiKey, model string, dim int) *OpenAIEmbedder {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
@@ -32,8 +41,13 @@ func NewOpenAIEmbedder(baseURL, apiKey, model string, dim int) *OpenAIEmbedder {
 	return &OpenAIEmbedder{baseURL: baseURL, apiKey: apiKey, model: model, dim: dim}
 }
 
+// Dimension returns the expected vector dimension. This value may be updated
+// after the first successful Embed call if the model returns a different size.
 func (o *OpenAIEmbedder) Dimension() int { return o.dim }
 
+// Embed sends text to the OpenAI-compatible /embeddings endpoint and returns
+// the first embedding vector from the response. The API returns float64
+// values which are down-cast to float32 for pgvector compatibility.
 func (o *OpenAIEmbedder) Embed(text string) ([]float32, error) {
 	body := map[string]any{
 		"model": o.model,
@@ -84,6 +98,7 @@ func (o *OpenAIEmbedder) Embed(text string) ([]float32, error) {
 		vec[i] = float32(v)
 	}
 
+	// Auto-correct dimension on the first successful call.
 	if len(vec) > 0 && o.dim != len(vec) {
 		o.dim = len(vec)
 	}

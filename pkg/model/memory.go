@@ -1,3 +1,5 @@
+// Package model defines the core domain types for the Context0 memory engine,
+// including memories, edges, sessions, and projects.
 package model
 
 import (
@@ -6,38 +8,85 @@ import (
 	"github.com/google/uuid"
 )
 
-// MemoryType represents the category of a memory node.
+// MemoryType represents the category of a memory node in the Context0 graph.
+// Each type maps to a distinct cognitive category used for retrieval and profiling.
 type MemoryType string
 
 const (
-	MemoryTypeEpisodic   MemoryType = "episodic"
-	MemoryTypeSemantic   MemoryType = "semantic"
+	// MemoryTypeEpisodic represents event-based memories tied to specific interactions
+	// or moments in time (e.g., "user asked about deployment on March 5th").
+	MemoryTypeEpisodic MemoryType = "episodic"
+
+	// MemoryTypeSemantic represents factual, long-lived knowledge extracted from
+	// conversations (e.g., "user prefers Go over Python").
+	MemoryTypeSemantic MemoryType = "semantic"
+
+	// MemoryTypeProcedural represents learned processes, workflows, or how-to
+	// knowledge (e.g., "deploy by running make release").
 	MemoryTypeProcedural MemoryType = "procedural"
 )
 
-// Memory represents a single memory node in the graph.
+// Memory represents a single memory node in the Context0 knowledge graph.
+// Memories are the fundamental unit of stored knowledge, created either
+// explicitly via the Store RPC or automatically via the Extract RPC.
 type Memory struct {
-	ID          uuid.UUID  `json:"id"`
-	Content     string     `json:"content"`
-	Type        MemoryType `json:"type"`
-	ProjectID   string     `json:"project_id"`
-	Tags        []string   `json:"tags"`
-	CreatedAt   time.Time  `json:"created_at"`
-	AccessCount int64      `json:"access_count"`
-	DecayScore  float64    `json:"decay_score"`
+	// ID is the unique identifier for this memory node.
+	ID uuid.UUID `json:"id"`
+
+	// Content is the natural-language text of the memory.
+	Content string `json:"content"`
+
+	// Type is the cognitive category of this memory (episodic, semantic, or procedural).
+	Type MemoryType `json:"type"`
+
+	// ProjectID is the identifier of the project this memory is scoped to.
+	ProjectID string `json:"project_id"`
+
+	// Tags is a set of free-form labels for filtering and categorization.
+	Tags []string `json:"tags"`
+
+	// CreatedAt is the timestamp when the memory was first stored.
+	CreatedAt time.Time `json:"created_at"`
+
+	// AccessCount tracks how many times this memory has been retrieved by queries.
+	// Used as an input to the decay scoring algorithm.
+	AccessCount int64 `json:"access_count"`
+
+	// DecayScore is a computed value between 0 and 1 representing the memory's
+	// current relevance. Lower scores indicate the memory is fading and may be
+	// pruned or deprioritized in query results.
+	DecayScore float64 `json:"decay_score"`
 }
 
-// MemoryWithContext is a memory returned from a query, including its connected edges.
+// MemoryWithContext is a memory returned from a query, bundled with its
+// neighboring edges and a relevance score. It provides the caller with
+// enough context to understand why the memory was retrieved.
 type MemoryWithContext struct {
-	Memory  Memory        `json:"memory"`
+	// Memory is the retrieved memory node.
+	Memory Memory `json:"memory"`
+
+	// Context is the set of edges connecting this memory to related nodes,
+	// included to explain the memory's relevance to the query.
 	Context []ContextEdge `json:"context"`
-	Score   float64       `json:"score"`
+
+	// Score is the composite relevance score combining vector similarity,
+	// decay, and graph proximity. Higher is more relevant.
+	Score float64 `json:"score"`
 }
 
-// ContextEdge is a simplified edge returned alongside a memory to explain relevance.
+// ContextEdge is a simplified edge returned alongside a memory in query results
+// to explain how the memory relates to neighboring nodes.
 type ContextEdge struct {
+	// Relationship is the type of connection to the target node.
 	Relationship RelationshipType `json:"relationship"`
-	TargetID     uuid.UUID        `json:"target_id"`
-	TargetContent string          `json:"target_content"`
-	Weight       float64          `json:"weight"`
+
+	// TargetID is the unique identifier of the connected memory node.
+	TargetID uuid.UUID `json:"target_id"`
+
+	// TargetContent is the text content of the connected memory, included
+	// so callers can display context without a separate lookup.
+	TargetContent string `json:"target_content"`
+
+	// Weight is the strength of this edge, between 0 and 1.
+	Weight float64 `json:"weight"`
 }
