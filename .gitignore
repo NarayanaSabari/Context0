@@ -40,6 +40,7 @@ __pycache__/
 dist/
 build/
 *.whl
+.venv/
 
 # IDE
 .idea/
