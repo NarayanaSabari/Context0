@@ -33,30 +33,8 @@ func TestRecencyFactor(t *testing.T) {
 	}
 }
 
-func TestAverageEdgeWeight(t *testing.T) {
-	tests := []struct {
-		name  string
-		edges []model.ContextEdge
-		want  float64
-	}{
-		{"empty", nil, 0},
-		{"single", []model.ContextEdge{{Weight: 0.8}}, 0.8},
-		{"multiple", []model.ContextEdge{{Weight: 0.6}, {Weight: 1.0}}, 0.8},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := averageEdgeWeight(tt.edges)
-			if got != tt.want {
-				t.Errorf("averageEdgeWeight() = %f, want %f", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestScore(t *testing.T) {
 	now := time.Now().UTC()
-	w := DefaultWeights()
 
 	recentSemantic := model.MemoryWithContext{
 		Memory: model.Memory{
@@ -76,8 +54,8 @@ func TestScore(t *testing.T) {
 		},
 	}
 
-	scoreRecent := Score(recentSemantic, w, now)
-	scoreOld := Score(oldEpisodic, w, now)
+	scoreRecent := Score(recentSemantic, now)
+	scoreOld := Score(oldEpisodic, now)
 
 	if scoreRecent <= scoreOld {
 		t.Errorf("recent semantic (%f) should score higher than old episodic (%f)", scoreRecent, scoreOld)
@@ -86,7 +64,6 @@ func TestScore(t *testing.T) {
 
 func TestRankResults(t *testing.T) {
 	now := time.Now().UTC()
-	w := DefaultWeights()
 
 	results := []model.MemoryWithContext{
 		{Memory: model.Memory{ID: uuid.New(), Type: model.MemoryTypeEpisodic, CreatedAt: now.Add(-30 * 24 * time.Hour), AccessCount: 0}},
@@ -94,7 +71,7 @@ func TestRankResults(t *testing.T) {
 		{Memory: model.Memory{ID: uuid.New(), Type: model.MemoryTypeProcedural, CreatedAt: now.Add(-time.Hour), AccessCount: 5}},
 	}
 
-	ranked := RankResults(results, w, 2)
+	ranked := RankResults(results, 2)
 
 	if len(ranked) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(ranked))

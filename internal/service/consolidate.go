@@ -9,9 +9,6 @@
 //     combined with a logarithmic frequency boost based on access count.
 //  3. Prune -- delete memories that have decayed below a staleness threshold,
 //     have never been accessed, and are older than a configurable age limit.
-//
-// The pipeline supports a dry-run mode that logs intended actions without mutating
-// the graph.
 
 package service
 
@@ -32,17 +29,15 @@ type ConsolidationConfig struct {
 	DecayHalfLifeDays float64 // half-life for decay calculation (default: 30)
 	StaleThreshold    float64 // decay score below which a memory is considered stale (default: 0.1)
 	PruneAgeDays      int     // minimum age in days before pruning (default: 30)
-	DryRun            bool    // if true, log actions but don't mutate
 }
 
 // DefaultConsolidationConfig returns production-ready defaults: 30-day half-life,
-// 0.1 stale threshold, 30-day minimum age for pruning, and mutations enabled.
+// 0.1 stale threshold, and 30-day minimum age for pruning.
 func DefaultConsolidationConfig() ConsolidationConfig {
 	return ConsolidationConfig{
 		DecayHalfLifeDays: 30,
 		StaleThreshold:    0.1,
 		PruneAgeDays:      30,
-		DryRun:            false,
 	}
 }
 
@@ -57,7 +52,7 @@ type ConsolidationResult struct {
 // RunConsolidation executes all three consolidation phases (merge, decay, prune)
 // sequentially, returning a summary result. If any phase fails, the pipeline stops
 // and returns the error along with the partial result.
-func RunConsolidation(ctx context.Context, repo graph.Repository, cfg ConsolidationConfig) (ConsolidationResult, error) {
+func RunConsolidation(ctx context.Context, repo *graph.AGERepository, cfg ConsolidationConfig) (ConsolidationResult, error) {
 	var result ConsolidationResult
 
 	log.Println("consolidation: starting merge phase...")
@@ -94,7 +89,7 @@ func RunConsolidation(ctx context.Context, repo graph.Repository, cfg Consolidat
 //
 // NOTE: The current implementation uses exact content matching. A future version
 // should incorporate content similarity scoring for near-duplicate detection.
-func phaseMerge(ctx context.Context, repo graph.Repository, cfg ConsolidationConfig) (int, error) {
+func phaseMerge(ctx context.Context, repo *graph.AGERepository, cfg ConsolidationConfig) (int, error) {
 
 	filter := graph.QueryFilter{
 		Types: []model.MemoryType{model.MemoryTypeSemantic},
@@ -134,10 +129,6 @@ func phaseMerge(ctx context.Context, repo graph.Repository, cfg ConsolidationCon
 			if m.ID == newest.ID {
 				continue
 			}
-			if cfg.DryRun {
-				log.Printf("consolidation [dry-run]: would supersede %s with %s", m.ID, newest.ID)
-				continue
-			}
 			edge := model.Edge{
 				ID:           uuid.New(),
 				FromID:       newest.ID,
@@ -146,7 +137,7 @@ func phaseMerge(ctx context.Context, repo graph.Repository, cfg ConsolidationCon
 				Weight:       1.0,
 				CreatedAt:    time.Now().UTC(),
 			}
-			if err := repo.CreateEdge(ctx, edge); err != nil {
+			if _, err := repo.CreateEdge(ctx, edge); err != nil {
 				log.Printf("consolidation: failed to create supersedes edge: %v", err)
 				continue
 			}
@@ -164,7 +155,7 @@ func phaseMerge(ctx context.Context, repo graph.Repository, cfg ConsolidationCon
 //
 // where frequencyBoost = min(1.0, ln(1 + accessCount) / 5.0). This ensures that
 // frequently accessed memories decay more slowly. The final score is clamped to [0, 1].
-func phaseDecay(ctx context.Context, repo graph.Repository, cfg ConsolidationConfig) (int, error) {
+func phaseDecay(ctx context.Context, repo *graph.AGERepository, cfg ConsolidationConfig) (int, error) {
 	filter := graph.QueryFilter{TopK: 1000}
 	results, err := repo.QueryMemories(ctx, filter)
 	if err != nil {
@@ -192,14 +183,10 @@ func phaseDecay(ctx context.Context, repo graph.Repository, cfg ConsolidationCon
 			newScore = 1.0
 		}
 
-		if cfg.DryRun {
-			log.Printf("consolidation [dry-run]: would set decay_score of %s from %.3f to %.3f",
-				r.Memory.ID, r.Memory.DecayScore, newScore)
+		if err := repo.UpdateDecayScore(ctx, r.Memory.ID, newScore); err != nil {
+			log.Printf("consolidation: failed to update decay score for %s: %v", r.Memory.ID, err)
 			continue
 		}
-
-		// TODO: Add UpdateDecayScore to repository interface.
-		// For now, decay is tracked in-memory during consolidation.
 		decayed++
 	}
 
@@ -212,7 +199,7 @@ func phaseDecay(ctx context.Context, repo graph.Repository, cfg ConsolidationCon
 //   - age exceeds the configured minimum prune age in days.
 //
 // This conservative approach ensures that only truly abandoned memories are deleted.
-func phasePrune(ctx context.Context, repo graph.Repository, cfg ConsolidationConfig) (int, error) {
+func phasePrune(ctx context.Context, repo *graph.AGERepository, cfg ConsolidationConfig) (int, error) {
 	filter := graph.QueryFilter{TopK: 1000}
 	results, err := repo.QueryMemories(ctx, filter)
 	if err != nil {
@@ -229,12 +216,6 @@ func phasePrune(ctx context.Context, repo graph.Repository, cfg ConsolidationCon
 		if r.Memory.DecayScore < cfg.StaleThreshold &&
 			r.Memory.AccessCount == 0 &&
 			ageDays > float64(cfg.PruneAgeDays) {
-
-			if cfg.DryRun {
-				log.Printf("consolidation [dry-run]: would prune memory %s (decay=%.3f, access=%d, age=%.0f days)",
-					r.Memory.ID, r.Memory.DecayScore, r.Memory.AccessCount, ageDays)
-				continue
-			}
 
 			if err := repo.DeleteMemory(ctx, r.Memory.ID); err != nil {
 				log.Printf("consolidation: failed to prune memory %s: %v", r.Memory.ID, err)

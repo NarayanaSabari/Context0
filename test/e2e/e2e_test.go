@@ -11,11 +11,14 @@ package e2e
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 )
@@ -26,8 +29,8 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	httpBase = envOrDefault("CONTEXT0_E2E_HTTP", "http://localhost:8080")
-	apiKey = envOrDefault("CONTEXT0_E2E_API_KEY", "ctx0_dev_key_1")
+	httpBase = cmp.Or(os.Getenv("CONTEXT0_E2E_HTTP"), "http://localhost:8080")
+	apiKey = cmp.Or(os.Getenv("CONTEXT0_E2E_API_KEY"), "ctx0_dev_key_1")
 
 	// Wait for server to be ready.
 	if !waitForHealth(httpBase, 30*time.Second) {
@@ -89,6 +92,22 @@ func TestStoreAndQuery(t *testing.T) {
 		t.Fatal("query returned 0 results, expected at least 1")
 	}
 	t.Logf("query returned %d results", len(results))
+
+	// The two memories share overlapping tags, so Store's auto-linking should
+	// have created a relates_to edge between them. Query results must carry
+	// that edge back as context so callers can see why memories matched.
+	found := slices.ContainsFunc(results, func(res any) bool {
+		r := res.(map[string]any)
+		mem := r["memory"].(map[string]any)
+		if mem["id"] != memoryID && mem["id"] != memoryID2 {
+			return false
+		}
+		ctxEdges, ok := r["context"].([]any)
+		return ok && len(ctxEdges) > 0
+	})
+	if !found {
+		t.Errorf("expected at least one tag-linked result to carry non-empty context, got results: %v", results)
+	}
 }
 
 func TestConnect(t *testing.T) {
@@ -111,6 +130,74 @@ func TestConnect(t *testing.T) {
 		t.Fatalf("connect did not return edge: %v", connectResp)
 	}
 	t.Logf("created edge: %s", edge["id"])
+}
+
+func TestConnectIdempotent(t *testing.T) {
+	projectID := fmt.Sprintf("e2e-connect-idem-%d", time.Now().UnixNano())
+
+	// Two memories sharing a tag: Store's auto-linking will try to add a
+	// relates_to edge between them once they're both persisted.
+	mem1 := storeMemory(t, projectID, "Old: Project uses MySQL", "semantic", []string{"database"})
+	mem2 := storeMemory(t, projectID, "New: Project migrated to PostgreSQL", "semantic", []string{"database"})
+
+	// Explicitly connect them with supersedes.
+	connect := func() map[string]any {
+		resp := httpPost(t, "/v1/memories/connect", map[string]any{
+			"from_id":      mem2,
+			"to_id":        mem1,
+			"relationship": 2, // SUPERSEDES
+			"weight":       1.0,
+		})
+		edge, ok := resp["edge"].(map[string]any)
+		if !ok || edge["id"] == nil {
+			t.Fatalf("connect did not return edge: %v", resp)
+		}
+		return edge
+	}
+
+	first := connect()
+	second := connect()
+
+	if first["id"] != second["id"] {
+		t.Errorf("re-connecting the same (from, to, relationship) triple should return the existing edge, got ids %v then %v", first["id"], second["id"])
+	}
+
+	// Fetch the subgraph and verify: exactly one edge per (from, to,
+	// relationship) triple, and no redundant relates_to edge coexists with
+	// the more specific supersedes edge between the same pair.
+	graphResp := httpGet(t, fmt.Sprintf("/v1/memories/%s/graph?depth=2", mem1))
+	edges, ok := graphResp["edges"].([]any)
+	if !ok || len(edges) == 0 {
+		t.Fatalf("graph returned no edges: %v", graphResp)
+	}
+
+	type triple struct{ from, to, rel string }
+	seen := make(map[triple]int)
+	for _, e := range edges {
+		edge := e.(map[string]any)
+		key := triple{
+			from: fmt.Sprint(edge["fromId"]),
+			to:   fmt.Sprint(edge["toId"]),
+			rel:  fmt.Sprint(edge["relationship"]),
+		}
+		seen[key]++
+	}
+	for key, count := range seen {
+		if count > 1 {
+			t.Errorf("duplicate edge for triple %+v: found %d copies", key, count)
+		}
+	}
+
+	supersedesKey := triple{from: mem2, to: mem1, rel: "RELATIONSHIP_TYPE_SUPERSEDES"}
+	if seen[supersedesKey] != 1 {
+		t.Errorf("expected exactly one supersedes edge %s -> %s, got %d", mem2, mem1, seen[supersedesKey])
+	}
+
+	relatesKey := triple{from: mem1, to: mem2, rel: "RELATIONSHIP_TYPE_RELATES_TO"}
+	relatesKeyRev := triple{from: mem2, to: mem1, rel: "RELATIONSHIP_TYPE_RELATES_TO"}
+	if seen[relatesKey] != 0 || seen[relatesKeyRev] != 0 {
+		t.Errorf("expected no relates_to edge between %s and %s once a supersedes edge exists, got edges: %v", mem1, mem2, edges)
+	}
 }
 
 func TestDelete(t *testing.T) {
@@ -150,6 +237,33 @@ func TestGetGraph(t *testing.T) {
 	// Get subgraph.
 	graphResp := httpGet(t, fmt.Sprintf("/v1/memories/%s/graph?depth=2", mem1))
 	t.Logf("subgraph response: %v", graphResp)
+
+	nodes, ok := graphResp["nodes"].([]any)
+	if !ok || len(nodes) == 0 {
+		t.Fatalf("graph returned no nodes: %v", graphResp)
+	}
+
+	edges, ok := graphResp["edges"].([]any)
+	if !ok || len(edges) == 0 {
+		t.Fatalf("graph returned no edges for a connected pair: %v", graphResp)
+	}
+
+	// At least one returned edge must be the explicit relates_to connection
+	// we created between mem1 and mem2 (extraction may add further edges,
+	// e.g. a contradiction-detected supersedes, which is fine).
+	foundConnected := false
+	for _, e := range edges {
+		edge := e.(map[string]any)
+		touchesCenter := edge["fromId"] == mem1 || edge["toId"] == mem1
+		touchesTarget := edge["fromId"] == mem2 || edge["toId"] == mem2
+		if touchesCenter && touchesTarget && edge["relationship"] == "RELATIONSHIP_TYPE_RELATES_TO" {
+			foundConnected = true
+			break
+		}
+	}
+	if !foundConnected {
+		t.Errorf("expected a relates_to edge between %s and %s, got edges: %v", mem1, mem2, edges)
+	}
 }
 
 func TestSessionLifecycle(t *testing.T) {
@@ -184,6 +298,74 @@ func TestSessionLifecycle(t *testing.T) {
 		t.Error("ended session should have endedAt set")
 	}
 	t.Logf("ended session: %s", sessionID)
+}
+
+// TestConcurrentStores guards against per-connection session state being
+// configured on only one pooled connection.
+//
+// search_path is session state, so `SET search_path = ag_catalog, ...` applies
+// to a single connection. When it was run once at startup instead of from the
+// pool's AfterConnect hook, the service worked until pgxpool opened a second
+// connection or recycled the first, after which requests failed with
+// `type "agtype" does not exist`. The rest of this suite cannot catch that: it
+// runs sequentially and reuses one warm connection, so it never sees a second
+// one. Only concurrency forces the pool to grow.
+func TestConcurrentStores(t *testing.T) {
+	const concurrency = 12
+
+	projectID := fmt.Sprintf("e2e-concurrent-%d", time.Now().UnixNano())
+
+	type result struct {
+		status int
+		body   string
+		err    error
+	}
+	results := make([]result, concurrency)
+
+	var wg sync.WaitGroup
+	for i := range concurrency {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+
+			payload, _ := json.Marshal(map[string]any{
+				"content":    fmt.Sprintf("Concurrent probe %d: service uses PostgreSQL", i),
+				"type":       2, // SEMANTIC
+				"project_id": projectID,
+				"tags":       []string{"database", "concurrency"},
+			})
+
+			// Built by hand rather than via httpPost: the shared helpers call
+			// t.Fatalf, which is illegal from a non-test goroutine.
+			req, err := http.NewRequest("POST", httpBase+"/v1/memories", bytes.NewReader(payload))
+			if err != nil {
+				results[i] = result{err: err}
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-API-Key", apiKey)
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				results[i] = result{err: err}
+				return
+			}
+			defer resp.Body.Close()
+
+			body, _ := io.ReadAll(resp.Body)
+			results[i] = result{status: resp.StatusCode, body: string(body)}
+		}(i)
+	}
+	wg.Wait()
+
+	for i, r := range results {
+		switch {
+		case r.err != nil:
+			t.Errorf("concurrent store %d failed: %v", i, r.err)
+		case r.status != http.StatusOK:
+			t.Errorf("concurrent store %d returned %d: %s", i, r.status, r.body)
+		}
+	}
 }
 
 func TestAuthRejectsInvalidKey(t *testing.T) {
@@ -281,11 +463,4 @@ func waitForHealth(base string, timeout time.Duration) bool {
 		time.Sleep(time.Second)
 	}
 	return false
-}
-
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

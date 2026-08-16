@@ -24,11 +24,11 @@ import (
 // project and for how long.
 type SessionService struct {
 	pb.UnimplementedSessionServiceServer
-	repo graph.Repository
+	repo *graph.AGERepository
 }
 
 // NewSessionService creates a new SessionService backed by the given graph repository.
-func NewSessionService(repo graph.Repository) *SessionService {
+func NewSessionService(repo *graph.AGERepository) *SessionService {
 	return &SessionService{repo: repo}
 }
 

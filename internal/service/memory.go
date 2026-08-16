@@ -41,14 +41,14 @@ import (
 // generating vector representations used in hybrid search.
 type MemoryService struct {
 	pb.UnimplementedContext0Server
-	repo     graph.Repository
+	repo     *graph.AGERepository
 	embedder embedding.Embedder
 }
 
 // NewMemoryService creates a new MemoryService with the given graph repository
 // and embedder. The embedder may be nil, in which case vector search is disabled
 // and the service operates in graph-only mode.
-func NewMemoryService(repo graph.Repository, embedder embedding.Embedder) *MemoryService {
+func NewMemoryService(repo *graph.AGERepository, embedder embedding.Embedder) *MemoryService {
 	return &MemoryService{repo: repo, embedder: embedder}
 }
 
@@ -59,7 +59,7 @@ func NewMemoryService(repo graph.Repository, embedder embedding.Embedder) *Memor
 //  4. Link the memory to a session if session_id is provided.
 //  5. Detect contradictions with existing semantic memories and create supersedes edges.
 //  6. Auto-link to other memories that share overlapping tags via relates_to edges.
-func (s *MemoryService) Store(ctx context.Context, req *StoreRequest) (*StoreResponse, error) {
+func (s *MemoryService) Store(ctx context.Context, req *pb.StoreRequest) (*pb.StoreResponse, error) {
 	timer := prometheus.NewTimer(metrics.StoreDuration)
 	defer timer.ObserveDuration()
 
@@ -93,7 +93,7 @@ func (s *MemoryService) Store(ctx context.Context, req *StoreRequest) (*StoreRes
 	// Generate and store embedding for vector search.
 	if s.embedder != nil {
 		if vec, err := s.embedder.Embed(mem.Content); err == nil {
-			_ = s.repo.StoreEmbedding(ctx, mem.ID, vec)
+			_ = s.repo.StoreEmbedding(ctx, mem.ID, mem.ProjectID, vec)
 		}
 	}
 
@@ -118,7 +118,7 @@ func (s *MemoryService) Store(ctx context.Context, req *StoreRequest) (*StoreRes
 
 	metrics.MemoriesTotal.WithLabelValues(string(memType)).Inc()
 
-	return &StoreResponse{
+	return &pb.StoreResponse{
 		Memory: memoryToProto(mem),
 	}, nil
 }
@@ -131,7 +131,7 @@ func (s *MemoryService) Store(ctx context.Context, req *StoreRequest) (*StoreRes
 // using the weighted scoring function in the ranking package, and truncated to
 // the requested top-K count. Access counts are incremented for all returned memories
 // so the decay/consolidation pipeline can factor in usage frequency.
-func (s *MemoryService) Query(ctx context.Context, req *QueryRequest) (*QueryResponse, error) {
+func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.QueryResponse, error) {
 	timer := prometheus.NewTimer(metrics.QueryDuration)
 	defer timer.ObserveDuration()
 
@@ -147,8 +147,7 @@ func (s *MemoryService) Query(ctx context.Context, req *QueryRequest) (*QueryRes
 	}
 
 	// Parse query into structured form with time filtering.
-	parsed := ParseQuery(req.Query, req.ProjectId, types, req.MaxDepth, req.TopK)
-	filter := parsed.ToGraphFilter()
+	filter := ParseQuery(req.Query, req.ProjectId, types, req.TopK)
 
 	// --- Hybrid retrieval: graph + vector ---
 	graphResults, err := s.repo.QueryMemories(ctx, filter)
@@ -159,7 +158,7 @@ func (s *MemoryService) Query(ctx context.Context, req *QueryRequest) (*QueryRes
 	var vectorResults []model.MemoryWithContext
 	if s.embedder != nil && req.Query != "" {
 		if queryVec, err := s.embedder.Embed(req.Query); err == nil {
-			vectorResults, _ = s.repo.SearchByVector(ctx, queryVec, req.ProjectId, int(parsed.TopK)*2)
+			vectorResults, _ = s.repo.SearchByVector(ctx, queryVec, req.ProjectId, int(filter.TopK)*2)
 		}
 	}
 
@@ -167,10 +166,19 @@ func (s *MemoryService) Query(ctx context.Context, req *QueryRequest) (*QueryRes
 	results := mergeResults(graphResults, vectorResults)
 
 	// Rank results using scoring function.
-	results = ranking.RankResults(results, ranking.DefaultWeights(), int(parsed.TopK))
+	results = ranking.RankResults(results, int(filter.TopK))
 
-	// Increment access counts for returned results.
-	for _, r := range results {
+	// Populate context edges for the (already truncated) top-K results in a
+	// single round trip, and increment access counts for returned results.
+	ids := make([]uuid.UUID, len(results))
+	for i, r := range results {
+		ids[i] = r.Memory.ID
+	}
+	// Context is supplementary, not required: a failure here degrades
+	// gracefully since a nil map reads as empty for every id.
+	contextEdges, _ := s.repo.GetContextEdges(ctx, ids)
+	for i, r := range results {
+		results[i].Context = contextEdges[r.Memory.ID]
 		_ = s.repo.IncrementAccessCount(ctx, r.Memory.ID)
 	}
 
@@ -181,13 +189,13 @@ func (s *MemoryService) Query(ctx context.Context, req *QueryRequest) (*QueryRes
 		pbResults = append(pbResults, memoryWithContextToProto(r))
 	}
 
-	return &QueryResponse{Results: pbResults}, nil
+	return &pb.QueryResponse{Results: pbResults}, nil
 }
 
 // Connect creates a directed edge between two existing memory nodes. Both nodes
 // must already exist in the graph. If no weight is specified, the edge defaults
 // to a weight of 1.0. The edge relationship type must be a valid RelationshipType.
-func (s *MemoryService) Connect(ctx context.Context, req *ConnectRequest) (*ConnectResponse, error) {
+func (s *MemoryService) Connect(ctx context.Context, req *pb.ConnectRequest) (*pb.ConnectResponse, error) {
 	if req.FromId == "" || req.ToId == "" {
 		return nil, status.Error(codes.InvalidArgument, "from_id and to_id are required")
 	}
@@ -228,19 +236,20 @@ func (s *MemoryService) Connect(ctx context.Context, req *ConnectRequest) (*Conn
 		CreatedAt:    time.Now().UTC(),
 	}
 
-	if err := s.repo.CreateEdge(ctx, edge); err != nil {
+	effective, err := s.repo.CreateEdge(ctx, edge)
+	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create edge: %v", err)
 	}
 
 	metrics.EdgesTotal.WithLabelValues(string(relType)).Inc()
 
-	return &ConnectResponse{
-		Edge: edgeToProto(edge),
+	return &pb.ConnectResponse{
+		Edge: edgeToProto(effective),
 	}, nil
 }
 
 // Delete removes a memory node and its associated edges from the graph.
-func (s *MemoryService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResponse, error) {
+func (s *MemoryService) Delete(ctx context.Context, req *pb.DeleteRequest) (*pb.DeleteResponse, error) {
 	if req.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
@@ -254,12 +263,12 @@ func (s *MemoryService) Delete(ctx context.Context, req *DeleteRequest) (*Delete
 		return nil, status.Errorf(codes.Internal, "failed to delete memory: %v", err)
 	}
 
-	return &DeleteResponse{}, nil
+	return &pb.DeleteResponse{}, nil
 }
 
-// GetGraph returns a subgraph centered on a given memory node, expanding outward
-// to the specified depth. This is used for graph visualization and context exploration.
-func (s *MemoryService) GetGraph(ctx context.Context, req *GetGraphRequest) (*GetGraphResponse, error) {
+// GetGraph returns a subgraph centered on a given memory node. This is used
+// for graph visualization and context exploration.
+func (s *MemoryService) GetGraph(ctx context.Context, req *pb.GetGraphRequest) (*pb.GetGraphResponse, error) {
 	if req.CenterId == "" {
 		return nil, status.Error(codes.InvalidArgument, "center_id is required")
 	}
@@ -269,7 +278,7 @@ func (s *MemoryService) GetGraph(ctx context.Context, req *GetGraphRequest) (*Ge
 		return nil, status.Errorf(codes.InvalidArgument, "invalid center_id: %v", err)
 	}
 
-	nodes, edges, err := s.repo.GetSubgraph(ctx, centerID, req.Depth)
+	nodes, edges, err := s.repo.GetSubgraph(ctx, centerID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get subgraph: %v", err)
 	}
@@ -284,7 +293,7 @@ func (s *MemoryService) GetGraph(ctx context.Context, req *GetGraphRequest) (*Ge
 		pbEdges = append(pbEdges, edgeToProto(e))
 	}
 
-	return &GetGraphResponse{
+	return &pb.GetGraphResponse{
 		Nodes: pbNodes,
 		Edges: pbEdges,
 	}, nil
@@ -302,12 +311,7 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
 
-	extractor := extraction.NewExtractor(nil) // TODO: use configured LLM provider
-	extracted, err := extractor.Extract(ctx, req.Conversation, req.ProjectId)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "extraction failed: %v", err)
-	}
-
+	extracted := extraction.Extract(req.Conversation)
 	memories := extraction.ToMemories(extracted, req.ProjectId)
 	var pbMemories []*pb.Memory
 	relCount := int32(0)
@@ -320,7 +324,7 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 		// Generate and store embedding.
 		if s.embedder != nil {
 			if vec, err := s.embedder.Embed(mem.Content); err == nil {
-				_ = s.repo.StoreEmbedding(ctx, mem.ID, vec)
+				_ = s.repo.StoreEmbedding(ctx, mem.ID, mem.ProjectID, vec)
 			}
 		}
 
@@ -442,7 +446,7 @@ func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory
 			Weight:       c.Confidence,
 			CreatedAt:    time.Now().UTC(),
 		}
-		_ = s.repo.CreateEdge(ctx, edge)
+		_, _ = s.repo.CreateEdge(ctx, edge)
 		metrics.EdgesTotal.WithLabelValues(string(model.RelSupersedes)).Inc()
 	}
 }
@@ -450,10 +454,13 @@ func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory
 // autoLinkByTags finds existing memories in the same project that share at least
 // one tag with the given memory and creates relates_to edges with a default weight
 // of 0.5 to connect them. This builds implicit topic clusters in the graph.
+// Memories already connected to mem by some other edge (e.g. a supersedes edge
+// inferred by detectAndSupersede) are skipped: a generic relates_to edge adds
+// nothing once a more specific relationship has already been recorded between
+// the same pair.
 func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory) {
 	filter := graph.QueryFilter{
 		ProjectID: mem.ProjectID,
-		Tags:      mem.Tags,
 		TopK:      10,
 	}
 
@@ -462,8 +469,15 @@ func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory) {
 		return
 	}
 
+	connected := make(map[uuid.UUID]bool)
+	if edgesByID, err := s.repo.GetContextEdges(ctx, []uuid.UUID{mem.ID}); err == nil {
+		for _, ce := range edgesByID[mem.ID] {
+			connected[ce.TargetID] = true
+		}
+	}
+
 	for _, e := range existing {
-		if e.Memory.ID == mem.ID {
+		if e.Memory.ID == mem.ID || connected[e.Memory.ID] {
 			continue
 		}
 		if hasOverlappingTags(mem.Tags, e.Memory.Tags) {
@@ -475,25 +489,10 @@ func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory) {
 				Weight:       0.5,
 				CreatedAt:    time.Now().UTC(),
 			}
-			_ = s.repo.CreateEdge(ctx, edge)
+			_, _ = s.repo.CreateEdge(ctx, edge)
 		}
 	}
 }
-
-// --- Type aliases for generated proto types ---
-// These aliases allow the service layer to reference proto request/response types
-// without requiring callers to import the generated proto package directly.
-
-type StoreRequest = pb.StoreRequest
-type StoreResponse = pb.StoreResponse
-type QueryRequest = pb.QueryRequest
-type QueryResponse = pb.QueryResponse
-type ConnectRequest = pb.ConnectRequest
-type ConnectResponse = pb.ConnectResponse
-type DeleteRequest = pb.DeleteRequest
-type DeleteResponse = pb.DeleteResponse
-type GetGraphRequest = pb.GetGraphRequest
-type GetGraphResponse = pb.GetGraphResponse
 
 // --- Converters ---
 // The functions below translate between internal domain models and their protobuf
@@ -513,21 +512,21 @@ func memoryToProto(m model.Memory) *pb.Memory {
 	}
 }
 
-// memoryWithContextToProto converts a MemoryWithContext (memory plus its neighboring
-// edges and their target content) to the protobuf representation.
+// memoryWithContextToProto converts a MemoryWithContext to its protobuf
+// representation, including its context edges.
 func memoryWithContextToProto(m model.MemoryWithContext) *pb.MemoryWithContext {
-	var ctxEdges []*pb.ContextEdge
-	for _, c := range m.Context {
-		ctxEdges = append(ctxEdges, &pb.ContextEdge{
-			Relationship:  relTypeToProto(c.Relationship),
-			TargetId:      c.TargetID.String(),
-			TargetContent: c.TargetContent,
-			Weight:        c.Weight,
+	var pbContext []*pb.ContextEdge
+	for _, e := range m.Context {
+		pbContext = append(pbContext, &pb.ContextEdge{
+			Relationship:  relTypeToProto(e.Relationship),
+			TargetId:      e.TargetID.String(),
+			TargetContent: e.TargetContent,
+			Weight:        e.Weight,
 		})
 	}
 	return &pb.MemoryWithContext{
 		Memory:  memoryToProto(m.Memory),
-		Context: ctxEdges,
+		Context: pbContext,
 		Score:   m.Score,
 	}
 }
@@ -599,6 +598,27 @@ func protoToRelType(r pb.RelationshipType) (model.RelationshipType, error) {
 		return model.RelCausedBy, nil
 	default:
 		return "", fmt.Errorf("unknown relationship type: %v", r)
+	}
+}
+
+// ParseQuery converts a raw query string and request parameters into a
+// graph.QueryFilter. It extracts keywords (filtering stop words) and clamps
+// topK to a safe bound.
+func ParseQuery(query string, projectID string, types []model.MemoryType, topK int32) graph.QueryFilter {
+	keywords := extractKeywords(query)
+
+	if topK <= 0 {
+		topK = 5
+	}
+	if topK > 20 {
+		topK = 20
+	}
+
+	return graph.QueryFilter{
+		ProjectID: projectID,
+		Keywords:  keywords,
+		Types:     types,
+		TopK:      topK,
 	}
 }
 

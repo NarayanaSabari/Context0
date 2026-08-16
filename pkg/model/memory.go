@@ -65,26 +65,27 @@ type MemoryWithContext struct {
 	// Memory is the retrieved memory node.
 	Memory Memory `json:"memory"`
 
-	// Context is the set of edges connecting this memory to related nodes,
-	// included to explain the memory's relevance to the query.
-	Context []ContextEdge `json:"context"`
+	// Context lists the edges connecting this memory to related nodes,
+	// explaining its relevance. Populated by the caller after ranking, not
+	// by the repository query itself.
+	Context []ContextEdge `json:"context,omitempty"`
 
 	// Score is the composite relevance score combining vector similarity,
 	// decay, and graph proximity. Higher is more relevant.
 	Score float64 `json:"score"`
 }
 
-// ContextEdge is a simplified edge returned alongside a memory in query results
-// to explain how the memory relates to neighboring nodes.
+// ContextEdge is a simplified edge returned alongside a memory in query
+// results to explain how the memory relates to a neighboring node.
 type ContextEdge struct {
-	// Relationship is the type of connection to the target node.
+	// Relationship is the semantic type of the connection to the target node.
 	Relationship RelationshipType `json:"relationship"`
 
-	// TargetID is the unique identifier of the connected memory node.
+	// TargetID is the identifier of the connected memory node.
 	TargetID uuid.UUID `json:"target_id"`
 
-	// TargetContent is the text content of the connected memory, included
-	// so callers can display context without a separate lookup.
+	// TargetContent is the text content of the connected memory, included to
+	// avoid an extra lookup by the caller.
 	TargetContent string `json:"target_content"`
 
 	// Weight is the strength of this edge, between 0 and 1.

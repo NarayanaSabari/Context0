@@ -13,7 +13,6 @@
 //	CONSOLIDATION_DECAY_HALF_LIFE_DAYS  Half-life for exponential decay (float, days)
 //	CONSOLIDATION_STALE_THRESHOLD       Weight threshold below which memories are pruned (float)
 //	CONSOLIDATION_PRUNE_AGE_DAYS        Minimum age in days before a memory can be pruned (int)
-//	CONSOLIDATION_DRY_RUN               Set to "true" to log actions without modifying data
 package main
 
 import (
@@ -25,7 +24,6 @@ import (
 	"github.com/context0/context0/internal/config"
 	"github.com/context0/context0/internal/graph"
 	"github.com/context0/context0/internal/service"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
@@ -37,15 +35,11 @@ func main() {
 
 	// Connect to the database. The consolidation job only reads and writes
 	// graph data; it does not need embedding support.
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	pool, err := graph.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
 	defer pool.Close()
-
-	if err := pool.Ping(ctx); err != nil {
-		log.Fatalf("failed to ping database: %v", err)
-	}
 
 	// dim=0 tells the repository to use the existing schema dimension.
 	// Consolidation never creates new embeddings, so the actual value
@@ -75,9 +69,6 @@ func main() {
 		if i, err := strconv.Atoi(v); err == nil {
 			consolCfg.PruneAgeDays = i
 		}
-	}
-	if os.Getenv("CONSOLIDATION_DRY_RUN") == "true" {
-		consolCfg.DryRun = true
 	}
 
 	// Execute the consolidation pipeline: merge, decay, prune.

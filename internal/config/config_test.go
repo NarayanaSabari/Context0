@@ -52,39 +52,3 @@ func TestLoad_EnvOverride(t *testing.T) {
 		t.Errorf("Version = %q, want '1.2.3'", cfg.Version)
 	}
 }
-
-func TestSplitString(t *testing.T) {
-	tests := []struct {
-		s, sep string
-		want   int
-	}{
-		{"a,b,c", ",", 3},
-		{"single", ",", 1},
-		{"", ",", 1},
-	}
-
-	for _, tt := range tests {
-		got := splitString(tt.s, tt.sep)
-		if len(got) != tt.want {
-			t.Errorf("splitString(%q, %q) = %d parts, want %d", tt.s, tt.sep, len(got), tt.want)
-		}
-	}
-}
-
-func TestTrimSpace(t *testing.T) {
-	tests := []struct {
-		input, want string
-	}{
-		{"  hello  ", "hello"},
-		{"no-spaces", "no-spaces"},
-		{"\t\n  spaced  \n\t", "spaced"},
-		{"", ""},
-	}
-
-	for _, tt := range tests {
-		got := trimSpace(tt.input)
-		if got != tt.want {
-			t.Errorf("trimSpace(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}

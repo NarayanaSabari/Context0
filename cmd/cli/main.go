@@ -20,9 +20,12 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -40,9 +43,9 @@ func main() {
 	}
 
 	// Read connection settings from environment, falling back to defaults.
-	endpoint := envOrDefault("CONTEXT0_ENDPOINT", "localhost:50051")
-	apiKey := envOrDefault("CONTEXT0_API_KEY", "")
-	projectID := envOrDefault("CONTEXT0_PROJECT", "default")
+	endpoint := cmp.Or(os.Getenv("CONTEXT0_ENDPOINT"), "localhost:50051")
+	apiKey := os.Getenv("CONTEXT0_API_KEY")
+	projectID := cmp.Or(os.Getenv("CONTEXT0_PROJECT"), "default")
 
 	// Establish an insecure gRPC connection to the server.
 	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -94,42 +97,32 @@ func main() {
 // text. Optional flags: --type (semantic|episodic|procedural), --tags
 // (comma-separated), --session (session ID to associate with).
 func cmdStore(ctx context.Context, client pb.Context0Client, projectID string, args []string) {
+	const usage = "usage: context0 store <content> [--type semantic] [--tags db,postgres] [--session <id>]"
 	if len(args) < 1 {
-		fatalf("usage: context0 store <content> [--type semantic] [--tags db,postgres] [--session <id>]")
+		fatalf(usage)
+	}
+	content := args[0]
+
+	fs := flag.NewFlagSet("store", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	typeFlag := fs.String("type", "semantic", "memory type (semantic|episodic|procedural)")
+	tagsFlag := fs.String("tags", "", "comma-separated tags")
+	sessionFlag := fs.String("session", "", "session ID to associate with")
+	if err := fs.Parse(args[1:]); err != nil {
+		fatalf(usage)
 	}
 
-	content := args[0]
-	memType := pb.MemoryType_MEMORY_TYPE_SEMANTIC
 	var tags []string
-	var sessionID string
-
-	// Parse optional flags after the positional content argument.
-	for i := 1; i < len(args); i++ {
-		switch args[i] {
-		case "--type":
-			i++
-			if i < len(args) {
-				memType = parseMemoryType(args[i])
-			}
-		case "--tags":
-			i++
-			if i < len(args) {
-				tags = strings.Split(args[i], ",")
-			}
-		case "--session":
-			i++
-			if i < len(args) {
-				sessionID = args[i]
-			}
-		}
+	if *tagsFlag != "" {
+		tags = strings.Split(*tagsFlag, ",")
 	}
 
 	resp, err := client.Store(ctx, &pb.StoreRequest{
 		Content:   content,
-		Type:      memType,
+		Type:      parseMemoryType(*typeFlag),
 		ProjectId: projectID,
 		Tags:      tags,
-		SessionId: sessionID,
+		SessionId: *sessionFlag,
 	})
 	if err != nil {
 		fatalf("store failed: %v", err)
@@ -142,33 +135,30 @@ func cmdStore(ctx context.Context, client pb.Context0Client, projectID string, a
 // argument is the query text. Optional flags: --top-k (max results, default 5),
 // --type (filter by memory type, may be repeated).
 func cmdQuery(ctx context.Context, client pb.Context0Client, projectID string, args []string) {
+	const usage = "usage: context0 query <question> [--top-k 5] [--type semantic]"
 	if len(args) < 1 {
-		fatalf("usage: context0 query <question> [--top-k 5] [--type semantic]")
+		fatalf(usage)
+	}
+	query := args[0]
+
+	fs := flag.NewFlagSet("query", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	topK := fs.Int("top-k", 5, "maximum number of results")
+	var typeStrs stringSliceFlag
+	fs.Var(&typeStrs, "type", "memory type filter (repeatable)")
+	if err := fs.Parse(args[1:]); err != nil {
+		fatalf(usage)
 	}
 
-	query := args[0]
-	topK := int32(5)
 	var types []pb.MemoryType
-
-	for i := 1; i < len(args); i++ {
-		switch args[i] {
-		case "--top-k":
-			i++
-			if i < len(args) {
-				fmt.Sscanf(args[i], "%d", &topK)
-			}
-		case "--type":
-			i++
-			if i < len(args) {
-				types = append(types, parseMemoryType(args[i]))
-			}
-		}
+	for _, t := range typeStrs {
+		types = append(types, parseMemoryType(t))
 	}
 
 	resp, err := client.Query(ctx, &pb.QueryRequest{
 		Query:     query,
 		ProjectId: projectID,
-		TopK:      topK,
+		TopK:      int32(*topK),
 		Types:     types,
 	})
 	if err != nil {
@@ -199,29 +189,26 @@ func cmdQuery(ctx context.Context, client pb.Context0Client, projectID string, a
 // positional arguments: source ID, target ID, and relationship type
 // (relates_to, supersedes, caused_by). Optional: --weight (float, default 1.0).
 func cmdConnect(ctx context.Context, client pb.Context0Client, args []string) {
+	const usage = "usage: context0 connect <from-id> <to-id> <relationship> [--weight 1.0]"
 	if len(args) < 3 {
-		fatalf("usage: context0 connect <from-id> <to-id> <relationship> [--weight 1.0]")
+		fatalf(usage)
 	}
-
 	fromID := args[0]
 	toID := args[1]
 	rel := parseRelType(args[2])
-	weight := 1.0
 
-	for i := 3; i < len(args); i++ {
-		if args[i] == "--weight" {
-			i++
-			if i < len(args) {
-				fmt.Sscanf(args[i], "%f", &weight)
-			}
-		}
+	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	weight := fs.Float64("weight", 1.0, "edge weight")
+	if err := fs.Parse(args[3:]); err != nil {
+		fatalf(usage)
 	}
 
 	resp, err := client.Connect(ctx, &pb.ConnectRequest{
 		FromId:       fromID,
 		ToId:         toID,
 		Relationship: rel,
-		Weight:       weight,
+		Weight:       *weight,
 	})
 	if err != nil {
 		fatalf("connect failed: %v", err)
@@ -249,31 +236,28 @@ func cmdDelete(ctx context.Context, client pb.Context0Client, args []string) {
 // default 2). Output shows all reachable nodes and edges with truncated
 // content for readability.
 func cmdGraph(ctx context.Context, client pb.Context0Client, args []string) {
+	const usage = "usage: context0 graph <memory-id> [--depth 2]"
 	if len(args) < 1 {
-		fatalf("usage: context0 graph <memory-id> [--depth 2]")
+		fatalf(usage)
 	}
-
 	centerID := args[0]
-	depth := int32(2)
 
-	for i := 1; i < len(args); i++ {
-		if args[i] == "--depth" {
-			i++
-			if i < len(args) {
-				fmt.Sscanf(args[i], "%d", &depth)
-			}
-		}
+	fs := flag.NewFlagSet("graph", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	depth := fs.Int("depth", 2, "traversal depth")
+	if err := fs.Parse(args[1:]); err != nil {
+		fatalf(usage)
 	}
 
 	resp, err := client.GetGraph(ctx, &pb.GetGraphRequest{
 		CenterId: centerID,
-		Depth:    depth,
+		Depth:    int32(*depth),
 	})
 	if err != nil {
 		fatalf("graph failed: %v", err)
 	}
 
-	fmt.Printf("Subgraph around %s (depth=%d):\n", centerID, depth)
+	fmt.Printf("Subgraph around %s (depth=%d):\n", centerID, *depth)
 	fmt.Printf("  Nodes: %d\n", len(resp.Nodes))
 	for _, n := range resp.Nodes {
 		fmt.Printf("    [%s] %s: %s\n", n.Type, n.Id[:8], truncate(n.Content, 60))
@@ -338,6 +322,17 @@ func cmdSessionEnd(ctx context.Context, client pb.SessionServiceClient, args []s
 // Helpers
 // ---------------------------------------------------------------------------
 
+// stringSliceFlag implements flag.Value for a repeatable string flag, e.g.
+// `--type semantic --type episodic`.
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string { return strings.Join(*s, ",") }
+
+func (s *stringSliceFlag) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
 // printUsage prints the CLI usage summary to stdout.
 func printUsage() {
 	fmt.Println(`context0 - Memory engine CLI
@@ -370,15 +365,6 @@ func printJSON(v any) {
 func fatalf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
-}
-
-// envOrDefault reads an environment variable, returning fallback when the
-// variable is unset or empty.
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }
 
 // parseMemoryType converts a human-friendly type string (e.g. "episodic")

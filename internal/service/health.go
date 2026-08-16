@@ -18,13 +18,13 @@ import (
 // statistics about the stored data.
 type HealthService struct {
 	pb.UnimplementedHealthServiceServer
-	repo    graph.Repository
+	repo    *graph.AGERepository
 	version string
 }
 
 // NewHealthService creates a new HealthService with the given graph repository
 // and server version string. The version is returned verbatim in health responses.
-func NewHealthService(repo graph.Repository, version string) *HealthService {
+func NewHealthService(repo *graph.AGERepository, version string) *HealthService {
 	return &HealthService{repo: repo, version: version}
 }
 

@@ -16,7 +16,6 @@ linters-settings:
   errcheck:
     exclude-functions:
       - fmt.Fprintf
-      - fmt.Fprintf
       - (io.Closer).Close
 
 issues:

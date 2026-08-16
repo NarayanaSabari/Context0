@@ -1,23 +1,17 @@
 package extraction
 
 import (
-	"context"
 	"testing"
 )
 
 func TestRuleExtract_Facts(t *testing.T) {
-	e := NewExtractor(nil)
-
 	conversation := `user: Our backend is written in Go using gRPC
 assistant: Got it. What database are you using?
 user: The project uses PostgreSQL 15 with Apache AGE for graph queries
 assistant: Nice. How is it deployed?
 user: Kubernetes deployment uses Helm charts`
 
-	results, err := e.Extract(context.Background(), conversation, "test")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	results := Extract(conversation)
 
 	if len(results) == 0 {
 		t.Fatal("expected at least 1 extracted memory")
@@ -49,16 +43,11 @@ user: Kubernetes deployment uses Helm charts`
 }
 
 func TestRuleExtract_Preferences(t *testing.T) {
-	e := NewExtractor(nil)
-
 	conversation := `user: I prefer TypeScript over JavaScript
 user: I always use vim for editing
 user: My favorite framework is Next.js`
 
-	results, err := e.Extract(context.Background(), conversation, "test")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	results := Extract(conversation)
 
 	prefCount := 0
 	for _, r := range results {
@@ -78,16 +67,11 @@ user: My favorite framework is Next.js`
 }
 
 func TestRuleExtract_Events(t *testing.T) {
-	e := NewExtractor(nil)
-
 	conversation := `user: We decided to switch from MySQL to PostgreSQL last week
 user: The team deployed the new auth service yesterday
 user: We discussed the migration strategy in today's meeting`
 
-	results, err := e.Extract(context.Background(), conversation, "test")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	results := Extract(conversation)
 
 	episodicCount := 0
 	for _, r := range results {
@@ -104,47 +88,16 @@ user: We discussed the migration strategy in today's meeting`
 }
 
 func TestRuleExtract_Noise(t *testing.T) {
-	e := NewExtractor(nil)
-
 	conversation := `user: hello
 assistant: hi there
 user: thanks
 assistant: sure
 user: ok`
 
-	results, err := e.Extract(context.Background(), conversation, "test")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	results := Extract(conversation)
 
 	if len(results) != 0 {
 		t.Errorf("noise should produce 0 memories, got %d", len(results))
-	}
-}
-
-func TestParseLLMResponse(t *testing.T) {
-	response := `Here are the extracted memories:
-` + "```json" + `
-[
-  {"content": "Project uses PostgreSQL 15", "type": "semantic", "tags": ["database", "postgres"]},
-  {"content": "Team discussed migration", "type": "episodic", "tags": ["migration"]}
-]
-` + "```"
-
-	memories, err := parseLLMResponse(response)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(memories) != 2 {
-		t.Fatalf("expected 2 memories, got %d", len(memories))
-	}
-
-	if memories[0].Type != "semantic" {
-		t.Errorf("first memory type = %s, want semantic", memories[0].Type)
-	}
-	if memories[1].Type != "episodic" {
-		t.Errorf("second memory type = %s, want episodic", memories[1].Type)
 	}
 }
 

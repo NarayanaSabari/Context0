@@ -15,7 +15,7 @@
 //     forwards the X-API-Key header into gRPC metadata.
 //  9. Start the HTTP server that mounts /metrics (Prometheus) and /v1/*
 //     (REST gateway), wrapped in the auth middleware.
-// 10. Wait for SIGINT or SIGTERM, then gracefully drain both servers
+//  10. Wait for SIGINT or SIGTERM, then gracefully drain both servers
 //     and close the database pool.
 package main
 
@@ -38,7 +38,6 @@ import (
 	"github.com/context0/context0/internal/metrics"
 	"github.com/context0/context0/internal/service"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -54,15 +53,11 @@ func main() {
 
 	// Step 2: Establish a PostgreSQL connection pool and verify reachability.
 	log.Printf("connecting to database...")
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	pool, err := graph.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
 	defer pool.Close()
-
-	if err := pool.Ping(ctx); err != nil {
-		log.Fatalf("failed to ping database: %v", err)
-	}
 	log.Printf("database connected")
 
 	// Step 3: Initialise the embedding provider. This must happen before the

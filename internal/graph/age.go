@@ -1,3 +1,9 @@
+// Package graph implements graph-backed persistence for Context0's memory
+// storage using Apache AGE, a PostgreSQL extension that adds openCypher graph
+// query support. Graph data (nodes and edges) lives inside AGE's internal
+// storage, while vector embeddings are stored in a separate pgvector-backed
+// table (public.memory_embeddings) to leverage HNSW indexing for fast
+// approximate nearest neighbor search.
 package graph
 
 import (
@@ -13,13 +19,61 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// AGERepository implements the Repository interface using Apache AGE, a
-// PostgreSQL extension that adds openCypher graph query support. Graph data
-// (nodes and edges) lives inside AGE's internal storage, while vector
-// embeddings are stored in a separate pgvector-backed table
-// (public.memory_embeddings) to leverage HNSW indexing for fast approximate
-// nearest neighbor search.
+// GraphName is the name of the Apache AGE graph instance that stores all
+// Context0 nodes (Memory, Session) and their relationships. This constant is
+// referenced in every Cypher query executed via AGERepository.
+const GraphName = "context0"
+
+// searchPath puts ag_catalog ahead of the default schemas so AGE's custom
+// types (agtype, graphid) resolve unqualified.
+const searchPath = `SET search_path = ag_catalog, "$user", public`
+
+// NewPool opens a connection pool configured for Apache AGE.
 //
+// search_path is session state, so it must be set on EVERY pooled connection,
+// not once at startup: a pool that opens a second connection under concurrency,
+// or recycles the first one after an idle timeout, would otherwise hand out
+// connections where `agtype` does not resolve and every Cypher query fails with
+// `type "agtype" does not exist`. The AfterConnect hook makes that impossible.
+func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, searchPath)
+		return err
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("connect to database: %w", err)
+	}
+
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("ping database: %w", err)
+	}
+
+	return pool, nil
+}
+
+// QueryFilter defines filters for graph traversal queries. Callers combine
+// multiple filter fields to narrow down which Memory nodes are returned.
+// All non-zero fields are AND-ed together; Keywords are OR-ed within the group.
+type QueryFilter struct {
+	// ProjectID restricts results to memories belonging to this project.
+	ProjectID string
+	// Keywords are matched case-insensitively against memory content and tags.
+	Keywords []string
+	// Types restricts results to specific memory types (e.g. fact, episode).
+	Types []model.MemoryType
+	// TopK caps the number of results returned. Defaults to 5 if zero.
+	TopK int32
+}
+
+// AGERepository stores and queries Context0's memory graph using Apache AGE.
 // All Cypher queries are executed through AGE's ag_catalog.cypher() SQL
 // function, which wraps a Cypher string inside a standard PostgreSQL query.
 // Results come back as agtype values (a JSON-like format specific to AGE)
@@ -53,13 +107,17 @@ func (r *AGERepository) Close() {
 // the AGE graph. The order matters:
 //  1. pgvector extension and embeddings table (in the public schema)
 //  2. HNSW index on the embedding column for cosine similarity search
-//  3. AGE extension and search_path configuration
+//  3. AGE extension
 //  4. AGE graph creation (idempotent -- ignores "already exists" errors)
+//
+// search_path is not set here: NewPool applies it to every pooled connection,
+// which is the only way it can hold for connections opened later.
 //
 // This method is safe to call on every startup.
 func (r *AGERepository) InitSchema(ctx context.Context) error {
-	// --- pgvector setup (must happen BEFORE setting search_path to ag_catalog) ---
-	if _, err := r.pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`); err != nil {
+	// SCHEMA public is explicit because NewPool puts ag_catalog first on the
+	// search_path, and an unqualified CREATE EXTENSION would follow it there.
+	if _, err := r.pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector SCHEMA public`); err != nil {
 		return fmt.Errorf("create vector extension: %w", err)
 	}
 
@@ -93,12 +151,6 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 		return fmt.Errorf("create age extension: %w", err)
 	}
 
-	// AGE requires ag_catalog on the search_path so that its custom types
-	// (agtype, graphid) and functions (cypher, create_graph) are resolvable.
-	if _, err := r.pool.Exec(ctx, `SET search_path = ag_catalog, "$user", public`); err != nil {
-		return fmt.Errorf("set search_path: %w", err)
-	}
-
 	// Create the named graph. AGE does not support IF NOT EXISTS, so we
 	// catch and ignore the "already exists" error.
 	_, err := r.pool.Exec(ctx, `SELECT * FROM ag_catalog.create_graph('`+GraphName+`')`)
@@ -113,56 +165,18 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 // The Cypher string is embedded in a dollar-quoted block ($$ ... $$) to avoid
 // escaping issues with single quotes inside the query. The result column is
 // typed as agtype, which is AGE's JSON-like data format. Callers must scan
-// each row as a string and parse it with the appropriate parseXxx helper.
+// each row as a string and parsed via scanAgtype/scanOne into a typed value.
 func (r *AGERepository) cypher(ctx context.Context, query string, args ...any) (pgx.Rows, error) {
-	sql := fmt.Sprintf(`SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result agtype)`, GraphName, query)
+	sql := fmt.Sprintf(`SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result ag_catalog.agtype)`, GraphName, query)
 	return r.pool.Query(ctx, sql, args...)
 }
 
 // cypherExec executes a Cypher query that returns no meaningful rows (e.g.
 // CREATE, DELETE, SET). It discards any result and returns only the error.
 func (r *AGERepository) cypherExec(ctx context.Context, query string) error {
-	sql := fmt.Sprintf(`SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result agtype)`, GraphName, query)
+	sql := fmt.Sprintf(`SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result ag_catalog.agtype)`, GraphName, query)
 	_, err := r.pool.Exec(ctx, sql)
 	return err
-}
-
-// --- Project ---
-
-// CreateProject creates a :Project vertex in the AGE graph with id, name,
-// and created_at properties. The Cypher CREATE clause is used because
-// projects are created once and identified by their string ID.
-func (r *AGERepository) CreateProject(ctx context.Context, project model.Project) error {
-	q := fmt.Sprintf(
-		`CREATE (p:Project {id: '%s', name: '%s', created_at: '%s'}) RETURN p`,
-		escapeCypher(project.ID),
-		escapeCypher(project.Name),
-		project.CreatedAt.Format(time.RFC3339),
-	)
-	return r.cypherExec(ctx, q)
-}
-
-// GetProject retrieves a project by its string ID. The Cypher MATCH clause
-// filters on the id property, and properties(p) returns all vertex properties
-// as an agtype map that is parsed by parseProject.
-func (r *AGERepository) GetProject(ctx context.Context, id string) (model.Project, error) {
-	q := fmt.Sprintf(`MATCH (p:Project {id: '%s'}) RETURN properties(p)`, escapeCypher(id))
-	rows, err := r.cypher(ctx, q)
-	if err != nil {
-		return model.Project{}, fmt.Errorf("get project: %w", err)
-	}
-	defer rows.Close()
-
-	if !rows.Next() {
-		return model.Project{}, fmt.Errorf("project not found: %s", id)
-	}
-
-	var raw string
-	if err := rows.Scan(&raw); err != nil {
-		return model.Project{}, fmt.Errorf("scan project: %w", err)
-	}
-
-	return parseProject(raw)
 }
 
 // --- Memory ---
@@ -193,18 +207,16 @@ func (r *AGERepository) GetMemory(ctx context.Context, id uuid.UUID) (model.Memo
 	if err != nil {
 		return model.Memory{}, fmt.Errorf("get memory: %w", err)
 	}
-	defer rows.Close()
 
-	if !rows.Next() {
+	props, found, err := scanOne[memoryProps](rows)
+	if err != nil {
+		return model.Memory{}, fmt.Errorf("scan memory: %w", err)
+	}
+	if !found {
 		return model.Memory{}, fmt.Errorf("memory not found: %s", id)
 	}
 
-	var raw string
-	if err := rows.Scan(&raw); err != nil {
-		return model.Memory{}, fmt.Errorf("scan memory: %w", err)
-	}
-
-	return parseMemory(raw)
+	return props.toModel(), nil
 }
 
 // DeleteMemory removes a memory node and all its connected edges using
@@ -225,75 +237,73 @@ func (r *AGERepository) IncrementAccessCount(ctx context.Context, id uuid.UUID) 
 	return r.cypherExec(ctx, q)
 }
 
+// UpdateDecayScore sets a memory's decay_score property to the given value.
+// Called by the consolidation pipeline's decay phase after recomputing scores.
+func (r *AGERepository) UpdateDecayScore(ctx context.Context, id uuid.UUID, score float64) error {
+	q := fmt.Sprintf(
+		`MATCH (m:Memory {id: '%s'}) SET m.decay_score = %f RETURN m`,
+		id.String(),
+		score,
+	)
+	return r.cypherExec(ctx, q)
+}
+
 // --- Edge ---
 
-// CreateEdge creates a directed, labeled relationship between two nodes.
-// The Cypher MATCH clause finds both endpoints by id (label-agnostic), then
-// CREATE adds the edge with the relationship type as its label (e.g.
-// relates_to, supersedes, caused_by) and weight/created_at as properties.
-func (r *AGERepository) CreateEdge(ctx context.Context, edge model.Edge) error {
+// CreateEdge idempotently asserts a directed, labeled relationship between
+// two nodes. The Cypher MATCH clause finds both endpoints by id
+// (label-agnostic), then MERGE matches or creates the edge keyed on
+// (from, relationship, to) -- AGE's MERGE on a relationship pattern is
+// idempotent, so re-asserting the same triple is a no-op rather than piling
+// up duplicate edges. coalesce() in the SET clause makes property writes
+// first-writer-wins: on the first assert the caller's id/weight/created_at
+// are stored, and on every subsequent re-assert of the same triple the
+// existing values are kept. The RETURN clause reports the effective edge --
+// the one now actually in the graph -- so callers observe what was really
+// stored (their own values on first write, the pre-existing ones on a
+// re-assert) rather than blindly echoing their input back.
+func (r *AGERepository) CreateEdge(ctx context.Context, edge model.Edge) (model.Edge, error) {
 	relLabel := toEdgeLabel(edge.Relationship)
 	q := fmt.Sprintf(
-		`MATCH (a {id: '%s'}), (b {id: '%s'}) CREATE (a)-[e:%s {id: '%s', weight: %f, created_at: '%s'}]->(b) RETURN e`,
+		`MATCH (a {id: '%s'}), (b {id: '%s'}) `+
+			`MERGE (a)-[e:%s]->(b) `+
+			`SET e.id = coalesce(e.id, '%s'), e.weight = coalesce(e.weight, %f), e.created_at = coalesce(e.created_at, '%s') `+
+			`RETURN {edge_id: e.id, from_id: '%s', to_id: '%s', relationship: '%s', weight: e.weight, created_at: e.created_at}`,
 		edge.FromID.String(),
 		edge.ToID.String(),
 		relLabel,
 		edge.ID.String(),
 		edge.Weight,
 		edge.CreatedAt.Format(time.RFC3339),
+		edge.FromID.String(),
+		edge.ToID.String(),
+		relLabel,
 	)
-	return r.cypherExec(ctx, q)
-}
 
-// GetEdgesFrom returns all outgoing edges from the node with the given ID.
-// The Cypher pattern (a)-[e]->(b) matches only outbound relationships.
-func (r *AGERepository) GetEdgesFrom(ctx context.Context, nodeID uuid.UUID) ([]model.Edge, error) {
-	q := fmt.Sprintf(
-		`MATCH (a {id: '%s'})-[e]->(b) RETURN properties(e), label(e), a.id, b.id`,
-		nodeID.String(),
-	)
-	return r.queryEdges(ctx, q)
-}
-
-// GetEdgesTo returns all incoming edges to the node with the given ID.
-// The Cypher pattern (a)-[e]->(b {id: ...}) matches only inbound relationships.
-func (r *AGERepository) GetEdgesTo(ctx context.Context, nodeID uuid.UUID) ([]model.Edge, error) {
-	q := fmt.Sprintf(
-		`MATCH (a)-[e]->(b {id: '%s'}) RETURN properties(e), label(e), a.id, b.id`,
-		nodeID.String(),
-	)
-	return r.queryEdges(ctx, q)
-}
-
-// DeleteEdgesForNode removes all edges (both directions) connected to the
-// given node without deleting the node itself. The undirected Cypher pattern
-// (n)-[e]-() matches edges in both directions.
-func (r *AGERepository) DeleteEdgesForNode(ctx context.Context, nodeID uuid.UUID) error {
-	q := fmt.Sprintf(`MATCH (n {id: '%s'})-[e]-() DELETE e`, nodeID.String())
-	return r.cypherExec(ctx, q)
-}
-
-// queryEdges is a shared helper for GetEdgesFrom and GetEdgesTo. It executes
-// the given Cypher query and attempts to parse each row into a model.Edge.
-// NOTE: This is a simplified implementation. AGE returns multi-column agtype
-// results that require more sophisticated parsing for full edge hydration.
-func (r *AGERepository) queryEdges(ctx context.Context, q string) ([]model.Edge, error) {
 	rows, err := r.cypher(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("query edges: %w", err)
+		return model.Edge{}, fmt.Errorf("create edge: %w", err)
 	}
-	defer rows.Close()
 
-	var edges []model.Edge
-	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			return nil, fmt.Errorf("scan edge: %w", err)
-		}
-		// TODO: parse multi-column agtype response into Edge
-		_ = raw
+	er, found, err := scanOne[edgeRow](rows)
+	if err != nil {
+		return model.Edge{}, fmt.Errorf("scan edge: %w", err)
 	}
-	return edges, rows.Err()
+	if !found {
+		return model.Edge{}, fmt.Errorf("create edge: no endpoints matched for %s -> %s", edge.FromID, edge.ToID)
+	}
+
+	edgeID, _ := uuid.Parse(er.EdgeID)
+	createdAt, _ := time.Parse(time.RFC3339, er.CreatedAt)
+
+	return model.Edge{
+		ID:           edgeID,
+		FromID:       edge.FromID,
+		ToID:         edge.ToID,
+		Relationship: edge.Relationship,
+		Weight:       er.Weight,
+		CreatedAt:    createdAt,
+	}, nil
 }
 
 // --- Session ---
@@ -346,18 +356,16 @@ func (r *AGERepository) EndSession(ctx context.Context, id uuid.UUID) (model.Ses
 	if err != nil {
 		return model.Session{}, fmt.Errorf("end session: %w", err)
 	}
-	defer rows.Close()
 
-	if !rows.Next() {
+	props, found, err := scanOne[sessionProps](rows)
+	if err != nil {
+		return model.Session{}, fmt.Errorf("scan session: %w", err)
+	}
+	if !found {
 		return model.Session{}, fmt.Errorf("session not found: %s", id)
 	}
 
-	var raw string
-	if err := rows.Scan(&raw); err != nil {
-		return model.Session{}, fmt.Errorf("scan session: %w", err)
-	}
-
-	return parseSession(raw)
+	return props.toModel(), nil
 }
 
 // LinkMemoryToSession creates a :contains edge from a Session to a Memory,
@@ -430,43 +438,25 @@ func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) (
 	if err != nil {
 		return nil, fmt.Errorf("query memories: %w", err)
 	}
-	defer rows.Close()
 
+	props, err := scanAgtype[memoryProps](rows)
 	var results []model.MemoryWithContext
-	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			return nil, fmt.Errorf("scan memory: %w", err)
-		}
-		mem, err := parseMemory(raw)
-		if err != nil {
-			continue
-		}
+	for _, p := range props {
 		results = append(results, model.MemoryWithContext{
-			Memory: mem,
+			Memory: p.toModel(),
 			Score:  1.0, // Scoring will be enhanced in ranking layer.
 		})
 	}
 
-	return results, rows.Err()
+	return results, err
 }
 
-// GetSubgraph returns all unique Memory nodes reachable from a center node
-// within the given hop depth. Depth is clamped to [1, 5] to prevent
-// unbounded traversals. Currently performs a 1-hop neighbor lookup because
-// AGE has limited support for variable-length path patterns; deeper traversals
-// will be added iteratively.
-func (r *AGERepository) GetSubgraph(ctx context.Context, centerID uuid.UUID, depth int32) ([]model.Memory, []model.Edge, error) {
-	if depth <= 0 {
-		depth = 2
-	}
-	if depth > 5 {
-		depth = 5
-	}
-
+// GetSubgraph returns all unique Memory nodes directly connected to a center
+// node, along with the edges connecting them. AGE has limited support for
+// variable-length path patterns, so this performs a 1-hop neighbor lookup.
+func (r *AGERepository) GetSubgraph(ctx context.Context, centerID uuid.UUID) ([]model.Memory, []model.Edge, error) {
 	// Get direct neighbors. AGE has limited variable-length path support,
-	// so for MVP we do 1-hop and iterate if depth > 1 is needed later.
-	_ = depth
+	// so this is a 1-hop lookup.
 	q := fmt.Sprintf(
 		`MATCH (center {id: '%s'})-[e]-(neighbor) RETURN properties(neighbor)`,
 		centerID.String(),
@@ -476,27 +466,187 @@ func (r *AGERepository) GetSubgraph(ctx context.Context, centerID uuid.UUID, dep
 	if err != nil {
 		return nil, nil, fmt.Errorf("get subgraph: %w", err)
 	}
-	defer rows.Close()
+
+	props, err := scanAgtype[memoryProps](rows)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get subgraph: %w", err)
+	}
 
 	seen := make(map[string]bool)
 	var memories []model.Memory
-	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			continue
-		}
-		mem, err := parseMemory(raw)
-		if err != nil {
-			continue
-		}
+	for _, p := range props {
+		mem := p.toModel()
 		if !seen[mem.ID.String()] {
 			seen[mem.ID.String()] = true
 			memories = append(memories, mem)
 		}
 	}
 
-	// TODO: also return edges between the discovered nodes.
-	return memories, nil, rows.Err()
+	edges, err := r.getEdgesAround(ctx, centerID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get subgraph edges: %w", err)
+	}
+
+	return memories, edges, nil
+}
+
+// edgeRow is the wire shape of a single edge returned by the map literal in
+// getEdgesAround and the context-edge queries below. AGE's cypher() helper
+// hardcodes a single `agtype` result column, so multi-value Cypher RETURN
+// clauses are collapsed into one map literal here and unmarshalled as JSON.
+type edgeRow struct {
+	EdgeID       string  `json:"edge_id"`
+	FromID       string  `json:"from_id"`
+	ToID         string  `json:"to_id"`
+	Relationship string  `json:"relationship"`
+	Weight       float64 `json:"weight"`
+	CreatedAt    string  `json:"created_at"`
+}
+
+// contextEdgeRow is the wire shape of a single context edge returned by the
+// map literal in GetContextEdges.
+type contextEdgeRow struct {
+	MemoryID      string  `json:"memory_id"`
+	Relationship  string  `json:"relationship"`
+	Weight        float64 `json:"weight"`
+	TargetID      string  `json:"target_id"`
+	TargetContent string  `json:"target_content"`
+}
+
+// scanAgtype scans every row as an agtype JSON string and unmarshals it into
+// T. A row that fails to scan or unmarshal is skipped rather than treated as
+// fatal, so one malformed node doesn't fail an entire query; rows.Err() is
+// still returned once the loop ends.
+func scanAgtype[T any](rows pgx.Rows) ([]T, error) {
+	defer rows.Close()
+
+	var results []T
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			continue
+		}
+		var v T
+		if err := json.Unmarshal([]byte(raw), &v); err != nil {
+			continue
+		}
+		results = append(results, v)
+	}
+
+	return results, rows.Err()
+}
+
+// scanOne scans a single row as an agtype JSON string and unmarshals it into
+// T. The returned bool reports whether a row existed at all; callers decide
+// whether a missing row is an error or a valid zero value.
+func scanOne[T any](rows pgx.Rows) (T, bool, error) {
+	defer rows.Close()
+
+	var zero T
+	if !rows.Next() {
+		return zero, false, rows.Err()
+	}
+
+	var raw string
+	if err := rows.Scan(&raw); err != nil {
+		return zero, false, err
+	}
+	var v T
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return zero, false, err
+	}
+
+	return v, true, nil
+}
+
+// getEdgesAround returns every edge with at least one endpoint at centerID,
+// deduplicated by edge id. startNode()/endNode() recover the true directed
+// endpoints of each relationship even though the MATCH pattern itself is
+// undirected.
+func (r *AGERepository) getEdgesAround(ctx context.Context, centerID uuid.UUID) ([]model.Edge, error) {
+	q := fmt.Sprintf(
+		`MATCH (center {id: '%s'})-[e]-() RETURN {edge_id: e.id, from_id: startNode(e).id, to_id: endNode(e).id, relationship: label(e), weight: e.weight, created_at: e.created_at}`,
+		centerID.String(),
+	)
+
+	rows, err := r.cypher(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+
+	ers, err := scanAgtype[edgeRow](rows)
+
+	seen := make(map[string]bool)
+	var edges []model.Edge
+	for _, er := range ers {
+		if seen[er.EdgeID] {
+			continue
+		}
+		seen[er.EdgeID] = true
+
+		edgeID, _ := uuid.Parse(er.EdgeID)
+		fromID, _ := uuid.Parse(er.FromID)
+		toID, _ := uuid.Parse(er.ToID)
+		createdAt, _ := time.Parse(time.RFC3339, er.CreatedAt)
+
+		edges = append(edges, model.Edge{
+			ID:           edgeID,
+			FromID:       fromID,
+			ToID:         toID,
+			Relationship: model.RelationshipType(er.Relationship),
+			Weight:       er.Weight,
+			CreatedAt:    createdAt,
+		})
+	}
+
+	return edges, err
+}
+
+// GetContextEdges returns, for each of the given memory ids, the edges
+// connecting it to its neighbors -- used to explain why a query result was
+// returned. A single Cypher query handles all ids at once (bounded by
+// WHERE m.id IN [...]) so callers issue one round trip regardless of how
+// many memories are being explained.
+func (r *AGERepository) GetContextEdges(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID][]model.ContextEdge, error) {
+	result := make(map[uuid.UUID][]model.ContextEdge)
+	if len(ids) == 0 {
+		return result, nil
+	}
+
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = fmt.Sprintf("'%s'", id.String())
+	}
+
+	q := fmt.Sprintf(
+		`MATCH (m:Memory)-[e]-(n:Memory) WHERE m.id IN [%s] RETURN {memory_id: m.id, relationship: label(e), weight: e.weight, target_id: n.id, target_content: n.content}`,
+		strings.Join(idStrs, ", "),
+	)
+
+	rows, err := r.cypher(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+
+	crs, err := scanAgtype[contextEdgeRow](rows)
+	for _, cr := range crs {
+		memID, perr := uuid.Parse(cr.MemoryID)
+		if perr != nil {
+			continue
+		}
+		targetID, perr := uuid.Parse(cr.TargetID)
+		if perr != nil {
+			continue
+		}
+		result[memID] = append(result[memID], model.ContextEdge{
+			Relationship:  model.RelationshipType(cr.Relationship),
+			TargetID:      targetID,
+			TargetContent: cr.TargetContent,
+			Weight:        cr.Weight,
+		})
+	}
+
+	return result, err
 }
 
 // --- Embeddings (pgvector) ---
@@ -504,15 +654,16 @@ func (r *AGERepository) GetSubgraph(ctx context.Context, centerID uuid.UUID, dep
 // StoreEmbedding upserts a vector embedding for a memory node into the
 // public.memory_embeddings table. The embedding is converted to pgvector's
 // text format ([0.1,0.2,...]) and cast to the vector type. ON CONFLICT
-// performs an upsert so re-embedding a memory replaces the old vector.
-func (r *AGERepository) StoreEmbedding(ctx context.Context, memoryID uuid.UUID, embedding []float32) error {
+// performs an upsert so re-embedding a memory replaces both the vector and
+// the project_id, repairing any stale scoping from a prior write.
+func (r *AGERepository) StoreEmbedding(ctx context.Context, memoryID uuid.UUID, projectID string, embedding []float32) error {
 	// Convert []float32 to pgvector string format: [0.1,0.2,0.3,...]
 	vecStr := float32SliceToVectorString(embedding)
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO public.memory_embeddings (memory_id, project_id, embedding)
-		 VALUES ($1, (SELECT 'default'), $2::vector)
-		 ON CONFLICT (memory_id) DO UPDATE SET embedding = $2::vector`,
-		memoryID.String(), vecStr)
+		 VALUES ($1, $2, $3::vector)
+		 ON CONFLICT (memory_id) DO UPDATE SET embedding = $3::vector, project_id = $2`,
+		memoryID.String(), projectID, vecStr)
 	if err != nil {
 		return fmt.Errorf("store embedding: %w", err)
 	}
@@ -601,54 +752,35 @@ func float32SliceToVectorString(v []float32) string {
 
 // --- Stats ---
 
-// NodeCount returns the total number of vertices in the AGE graph by running
-// MATCH (n) RETURN count(n). The agtype result is a JSON number string.
-func (r *AGERepository) NodeCount(ctx context.Context) (int64, error) {
-	q := `MATCH (n) RETURN count(n)`
-	rows, err := r.cypher(ctx, q)
+// count runs a Cypher count(...) query and unmarshals the resulting agtype
+// number. label is used only to name the entity in error messages (e.g.
+// "node", "edge"). Absence of a row is not an error -- an empty graph counts
+// as zero.
+func (r *AGERepository) count(ctx context.Context, query, label string) (int64, error) {
+	rows, err := r.cypher(ctx, query)
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
 
-	if !rows.Next() {
+	// agtype returns numbers as strings like "42".
+	count, found, err := scanOne[int64](rows)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s count: %w", label, err)
+	}
+	if !found {
 		return 0, nil
-	}
-
-	var raw string
-	if err := rows.Scan(&raw); err != nil {
-		return 0, err
-	}
-	// agtype returns numbers as strings like "42"
-	var count int64
-	if err := json.Unmarshal([]byte(raw), &count); err != nil {
-		return 0, fmt.Errorf("parse node count: %w", err)
 	}
 	return count, nil
 }
 
+// NodeCount returns the total number of vertices in the AGE graph.
+func (r *AGERepository) NodeCount(ctx context.Context) (int64, error) {
+	return r.count(ctx, `MATCH (n) RETURN count(n)`, "node")
+}
+
 // EdgeCount returns the total number of directed edges in the AGE graph.
 func (r *AGERepository) EdgeCount(ctx context.Context) (int64, error) {
-	q := `MATCH ()-[e]->() RETURN count(e)`
-	rows, err := r.cypher(ctx, q)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-
-	if !rows.Next() {
-		return 0, nil
-	}
-
-	var raw string
-	if err := rows.Scan(&raw); err != nil {
-		return 0, err
-	}
-	var count int64
-	if err := json.Unmarshal([]byte(raw), &count); err != nil {
-		return 0, fmt.Errorf("parse edge count: %w", err)
-	}
-	return count, nil
+	return r.count(ctx, `MATCH ()-[e]->() RETURN count(e)`, "edge")
 }
 
 // --- Helpers ---
@@ -666,107 +798,79 @@ func toEdgeLabel(rel model.RelationshipType) string {
 	return string(rel) // e.g. "relates_to", "supersedes", "caused_by"
 }
 
-// parseMemory deserializes an agtype JSON properties map (returned by
-// Cypher's properties() function) into a model.Memory. Tags are stored as
-// a JSON-encoded string and decoded back into a []string slice.
-func parseMemory(raw string) (model.Memory, error) {
-	var props map[string]any
-	if err := json.Unmarshal([]byte(raw), &props); err != nil {
-		return model.Memory{}, fmt.Errorf("parse memory json: %w", err)
-	}
+// memoryProps is the wire shape of a :Memory vertex's properties as returned
+// by Cypher's properties() function. AGE encodes every property as JSON, so
+// numeric and list-typed fields still need conversion after unmarshalling:
+// tags arrives as a JSON-encoded string holding a []string, and timestamps
+// arrive as RFC3339 strings.
+type memoryProps struct {
+	ID          string  `json:"id"`
+	Content     string  `json:"content"`
+	Type        string  `json:"type"`
+	ProjectID   string  `json:"project_id"`
+	Tags        string  `json:"tags"`
+	CreatedAt   string  `json:"created_at"`
+	AccessCount int64   `json:"access_count"`
+	DecayScore  float64 `json:"decay_score"`
+}
 
-	id, _ := uuid.Parse(getString(props, "id"))
-	createdAt, _ := time.Parse(time.RFC3339, getString(props, "created_at"))
+// toModel converts already-unmarshalled memory properties into a
+// model.Memory. Tags are stored as a JSON-encoded string and decoded back
+// into a []string slice; decay_score defaults to 1.0 when unset.
+func (p memoryProps) toModel() model.Memory {
+	id, _ := uuid.Parse(p.ID)
+	createdAt, _ := time.Parse(time.RFC3339, p.CreatedAt)
 
 	var tags []string
-	if tagsStr := getString(props, "tags"); tagsStr != "" {
-		_ = json.Unmarshal([]byte(tagsStr), &tags)
+	if p.Tags != "" {
+		_ = json.Unmarshal([]byte(p.Tags), &tags)
 	}
 
-	accessCount := int64(getFloat(props, "access_count"))
-	decayScore := getFloat(props, "decay_score")
+	decayScore := p.DecayScore
 	if decayScore == 0 {
 		decayScore = 1.0
 	}
 
 	return model.Memory{
 		ID:          id,
-		Content:     getString(props, "content"),
-		Type:        model.MemoryType(getString(props, "type")),
-		ProjectID:   getString(props, "project_id"),
+		Content:     p.Content,
+		Type:        model.MemoryType(p.Type),
+		ProjectID:   p.ProjectID,
 		Tags:        tags,
 		CreatedAt:   createdAt,
-		AccessCount: accessCount,
+		AccessCount: p.AccessCount,
 		DecayScore:  decayScore,
-	}, nil
+	}
 }
 
-// parseProject deserializes an agtype JSON properties map into a model.Project.
-func parseProject(raw string) (model.Project, error) {
-	var props map[string]any
-	if err := json.Unmarshal([]byte(raw), &props); err != nil {
-		return model.Project{}, fmt.Errorf("parse project json: %w", err)
-	}
-
-	createdAt, _ := time.Parse(time.RFC3339, getString(props, "created_at"))
-
-	return model.Project{
-		ID:        getString(props, "id"),
-		Name:      getString(props, "name"),
-		CreatedAt: createdAt,
-	}, nil
+// sessionProps is the wire shape of a :Session vertex's properties as
+// returned by Cypher's properties() function.
+type sessionProps struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	AgentID   string `json:"agent_id"`
+	StartedAt string `json:"started_at"`
+	EndedAt   string `json:"ended_at"`
 }
 
-// parseSession deserializes an agtype JSON properties map into a model.Session.
-// The ended_at field is optional and only populated if the session has ended.
-func parseSession(raw string) (model.Session, error) {
-	var props map[string]any
-	if err := json.Unmarshal([]byte(raw), &props); err != nil {
-		return model.Session{}, fmt.Errorf("parse session json: %w", err)
-	}
-
-	id, _ := uuid.Parse(getString(props, "id"))
-	startedAt, _ := time.Parse(time.RFC3339, getString(props, "started_at"))
+// toModel converts already-unmarshalled session properties into a
+// model.Session. The ended_at field is optional and only populated if the
+// session has ended.
+func (p sessionProps) toModel() model.Session {
+	id, _ := uuid.Parse(p.ID)
+	startedAt, _ := time.Parse(time.RFC3339, p.StartedAt)
 
 	sess := model.Session{
 		ID:        id,
-		ProjectID: getString(props, "project_id"),
-		AgentID:   getString(props, "agent_id"),
+		ProjectID: p.ProjectID,
+		AgentID:   p.AgentID,
 		StartedAt: startedAt,
 	}
 
-	if endedStr := getString(props, "ended_at"); endedStr != "" {
-		endedAt, _ := time.Parse(time.RFC3339, endedStr)
+	if p.EndedAt != "" {
+		endedAt, _ := time.Parse(time.RFC3339, p.EndedAt)
 		sess.EndedAt = &endedAt
 	}
 
-	return sess, nil
-}
-
-// getString extracts a string value from an agtype properties map.
-// Non-string values are converted via fmt.Sprintf. Missing keys return "".
-func getString(m map[string]any, key string) string {
-	v, ok := m[key]
-	if !ok {
-		return ""
-	}
-	s, ok := v.(string)
-	if !ok {
-		return fmt.Sprintf("%v", v)
-	}
-	return s
-}
-
-// getFloat extracts a float64 value from an agtype properties map.
-// Returns 0 if the key is missing or the value is not a float64.
-func getFloat(m map[string]any, key string) float64 {
-	v, ok := m[key]
-	if !ok {
-		return 0
-	}
-	f, ok := v.(float64)
-	if !ok {
-		return 0
-	}
-	return f
+	return sess
 }

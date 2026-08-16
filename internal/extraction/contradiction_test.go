@@ -57,10 +57,10 @@ func TestContradiction_SameSubjectDifferentValue(t *testing.T) {
 
 func TestContradiction_ReplacementSignals(t *testing.T) {
 	tests := []struct {
-		name       string
-		old        string
-		new_       string
-		wantConf   float64
+		name     string
+		old      string
+		new_     string
+		wantConf float64
 	}{
 		{"switched to", "Project uses MySQL for data", "We switched to PostgreSQL for data", 0.9},
 		{"migrated to", "Backend runs on AWS for hosting", "We migrated to GCP for hosting", 0.9},

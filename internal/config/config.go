@@ -27,13 +27,6 @@
 //	CONTEXT0_EMBEDDING_BASE_URL Base URL override for Ollama or any OpenAI-compatible endpoint (default: "")
 //	CONTEXT0_EMBEDDING_DIM      Vector dimension; auto-detected from the provider when 0 (default: 0)
 //
-// LLM (used for entity/relationship extraction):
-//
-//	CONTEXT0_LLM_PROVIDER       LLM backend: "rule-based" | "ollama" | "openai" (default: rule-based)
-//	CONTEXT0_LLM_MODEL          Model name for the LLM provider (default: "")
-//	CONTEXT0_LLM_API_KEY        API key for cloud LLM providers (default: "")
-//	CONTEXT0_LLM_BASE_URL       Base URL override for the LLM endpoint (default: "")
-//
 // Metadata:
 //
 //	CONTEXT0_VERSION            Reported engine version string (default: "0.1.0-dev")
@@ -43,6 +36,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Config holds all configuration for the Context0 engine. Each field maps
@@ -86,23 +80,6 @@ type Config struct {
 	// Env: CONTEXT0_EMBEDDING_DIM (default: 0)
 	EmbeddingDim int
 
-	// LLMProvider selects the LLM backend used for entity/relationship extraction.
-	// Accepted values: "rule-based", "ollama", "openai".
-	// Env: CONTEXT0_LLM_PROVIDER (default: "rule-based")
-	LLMProvider string
-
-	// LLMModel is the model name passed to the LLM provider.
-	// Env: CONTEXT0_LLM_MODEL
-	LLMModel string
-
-	// LLMAPIKey is the API key for cloud LLM providers.
-	// Env: CONTEXT0_LLM_API_KEY
-	LLMAPIKey string
-
-	// LLMBaseURL overrides the default endpoint for the LLM provider.
-	// Env: CONTEXT0_LLM_BASE_URL
-	LLMBaseURL string
-
 	// Version is the engine version string reported by the health endpoint.
 	// Env: CONTEXT0_VERSION (default: "0.1.0-dev")
 	Version string
@@ -123,11 +100,6 @@ func Load() Config {
 		EmbeddingAPIKey:   getEnv("CONTEXT0_EMBEDDING_API_KEY", ""),
 		EmbeddingBaseURL:  getEnv("CONTEXT0_EMBEDDING_BASE_URL", ""),
 		EmbeddingDim:      getEnvInt("CONTEXT0_EMBEDDING_DIM", 0),
-
-		LLMProvider: getEnv("CONTEXT0_LLM_PROVIDER", "rule-based"),
-		LLMModel:    getEnv("CONTEXT0_LLM_MODEL", ""),
-		LLMAPIKey:   getEnv("CONTEXT0_LLM_API_KEY", ""),
-		LLMBaseURL:  getEnv("CONTEXT0_LLM_BASE_URL", ""),
 
 		Version: getEnv("CONTEXT0_VERSION", "0.1.0-dev"),
 	}
@@ -172,56 +144,11 @@ func splitEnv(key, sep string) []string {
 		return nil
 	}
 	var parts []string
-	for _, s := range splitString(v, sep) {
-		s = trimSpace(s)
+	for _, s := range strings.Split(v, sep) {
+		s = strings.TrimSpace(s)
 		if s != "" {
 			parts = append(parts, s)
 		}
 	}
 	return parts
-}
-
-// splitString splits s by the given separator. If sep is empty, the entire
-// string is returned as a single element. This is a minimal, dependency-free
-// alternative to strings.Split.
-func splitString(s, sep string) []string {
-	if sep == "" {
-		return []string{s}
-	}
-	var result []string
-	for {
-		i := indexOf(s, sep)
-		if i < 0 {
-			result = append(result, s)
-			break
-		}
-		result = append(result, s[:i])
-		s = s[i+len(sep):]
-	}
-	return result
-}
-
-// indexOf returns the index of the first occurrence of sub in s, or -1 if
-// sub is not present.
-func indexOf(s, sub string) int {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
-}
-
-// trimSpace strips leading and trailing ASCII whitespace (space, tab,
-// newline, carriage return) from s.
-func trimSpace(s string) string {
-	start := 0
-	for start < len(s) && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r') {
-		start++
-	}
-	end := len(s)
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r') {
-		end--
-	}
-	return s[start:end]
 }

@@ -8,7 +8,7 @@
 //   - GoogleEmbedder: cloud-based via Google Generative AI API
 //
 // Use NewFromConfig to create an Embedder from runtime configuration. The
-// resulting vectors are stored in pgvector via the graph.Repository and used
+// resulting vectors are stored in pgvector via the graph repository and used
 // for approximate nearest neighbor search during memory retrieval.
 package embedding
 

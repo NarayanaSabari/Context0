@@ -30,7 +30,9 @@ service Context0 {
     };
   }
 
-  // Connect creates a relationship between two memories.
+  // Connect creates a relationship between two memories. It is idempotent
+  // per (from_id, to_id, relationship): re-connecting the same triple does
+  // not create a duplicate edge, and instead returns the existing edge.
   rpc Connect(ConnectRequest) returns (ConnectResponse) {
     option (google.api.http) = {
       post: "/v1/memories/connect"
