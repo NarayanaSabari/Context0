@@ -1,13 +1,14 @@
-"""High-level Python client for Context0 gRPC API."""
+"""High-level Python client for the Context0 REST API."""
 
 from __future__ import annotations
 
 import json
+import urllib.error
+import urllib.parse
+import urllib.request
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Generator, Optional
-
-import grpc
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,18 @@ _REL_TYPES = {
     "caused_by": 3,
 }
 
+# Maps each SDK operation to its REST verb and path template.
+_ROUTES: dict[str, tuple[str, str]] = {
+    "store": ("POST", "/v1/memories"),
+    "query": ("GET", "/v1/memories/query"),
+    "connect": ("POST", "/v1/memories/connect"),
+    "delete": ("DELETE", "/v1/memories/{id}"),
+    "get_graph": ("GET", "/v1/memories/{center_id}/graph"),
+    "start_session": ("POST", "/v1/sessions"),
+    "end_session": ("POST", "/v1/sessions/{id}/end"),
+    "health": ("GET", "/v1/health"),
+}
+
 
 class Context0Client:
     """Python client for the Context0 memory engine.
@@ -113,23 +126,7 @@ class Context0Client:
         self._endpoint = endpoint
         self._api_key = api_key
         self._project = project
-        self._channel = grpc.insecure_channel(endpoint)
-
-        # Lazy import generated stubs — they may not exist until proto-gen runs.
-        # For the SDK, we use the REST API via grpc as a transport.
-        self._metadata: list[tuple[str, str]] = []
-        if api_key:
-            self._metadata.append(("x-api-key", api_key))
-
-    def close(self) -> None:
-        """Close the gRPC channel."""
-        self._channel.close()
-
-    def __enter__(self) -> "Context0Client":
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()
+        self._base = f"http://{endpoint.replace(':50051', ':8080')}"
 
     def store(
         self,
@@ -146,7 +143,7 @@ class Context0Client:
             "tags": tags or [],
             "session_id": session_id,
         }
-        response = self._call("/context0.v1.Context0/Store", request)
+        response = self._request("store", request)
         return _parse_memory(response.get("memory", {}))
 
     def query(
@@ -165,7 +162,7 @@ class Context0Client:
             "max_depth": max_depth,
             "types": type_values,
         }
-        response = self._call("/context0.v1.Context0/Query", request)
+        response = self._request("query", request)
         results = []
         for r in response.get("results", []):
             mem = _parse_memory(r.get("memory", {}))
@@ -195,7 +192,7 @@ class Context0Client:
             "relationship": _REL_TYPES.get(relationship, 1),
             "weight": weight,
         }
-        response = self._call("/context0.v1.Context0/Connect", request)
+        response = self._request("connect", request)
         e = response.get("edge", {})
         return Edge(
             id=e.get("id", ""),
@@ -208,22 +205,22 @@ class Context0Client:
 
     def delete(self, memory_id: str) -> None:
         """Delete a memory and its edges."""
-        self._call("/context0.v1.Context0/Delete", {"id": memory_id})
+        self._request("delete", {"id": memory_id})
 
     def get_graph(self, center_id: str, depth: int = 2) -> dict:
         """Get a subgraph around a memory."""
         request = {"center_id": center_id, "depth": depth}
-        return self._call("/context0.v1.Context0/GetGraph", request)
+        return self._request("get_graph", request)
 
     def start_session(self, agent_id: str = "python-sdk") -> Session:
         """Start a new agent session."""
         request = {"project_id": self._project, "agent_id": agent_id}
-        response = self._call("/context0.v1.SessionService/StartSession", request)
+        response = self._request("start_session", request)
         return _parse_session(response.get("session", {}))
 
     def end_session(self, session_id: str) -> Session:
         """End an active session."""
-        response = self._call("/context0.v1.SessionService/EndSession", {"id": session_id})
+        response = self._request("end_session", {"id": session_id})
         return _parse_session(response.get("session", {}))
 
     @contextmanager
@@ -237,7 +234,7 @@ class Context0Client:
 
     def health(self) -> HealthStatus:
         """Get engine health status."""
-        response = self._call("/context0.v1.HealthService/Health", {})
+        response = self._request("health", {})
         return HealthStatus(
             status=response.get("status", ""),
             version=response.get("version", ""),
@@ -245,46 +242,10 @@ class Context0Client:
             edge_count=int(response.get("edgeCount", 0)),
         )
 
-    def _call(self, method: str, request: dict) -> dict:
-        """Make a gRPC call using JSON codec for simplicity.
-
-        In production, this would use generated protobuf stubs.
-        For the MVP SDK, we use a lightweight JSON-based approach
-        that works without requiring proto codegen on the Python side.
-        The REST gateway accepts JSON, so we use HTTP as transport.
-        """
-        import urllib.request
-        import urllib.error
-
-        # Convert gRPC method to REST path.
-        rest_url = self._grpc_to_rest(method, request)
-        if rest_url:
-            return self._rest_call(*rest_url, request)
-
-        # Fallback: direct gRPC would require generated stubs.
-        raise NotImplementedError(f"gRPC method {method} not mapped to REST")
-
-    def _grpc_to_rest(self, method: str, request: dict) -> Optional[tuple[str, str]]:
-        """Map gRPC methods to REST endpoints."""
-        base = f"http://{self._endpoint.replace(':50051', ':8080')}"
-
-        mapping = {
-            "/context0.v1.Context0/Store": ("POST", f"{base}/v1/memories"),
-            "/context0.v1.Context0/Query": ("GET", f"{base}/v1/memories/query"),
-            "/context0.v1.Context0/Connect": ("POST", f"{base}/v1/memories/connect"),
-            "/context0.v1.Context0/Delete": ("DELETE", f"{base}/v1/memories/{request.get('id', '')}"),
-            "/context0.v1.Context0/GetGraph": ("GET", f"{base}/v1/memories/{request.get('center_id', '')}/graph"),
-            "/context0.v1.SessionService/StartSession": ("POST", f"{base}/v1/sessions"),
-            "/context0.v1.SessionService/EndSession": ("POST", f"{base}/v1/sessions/{request.get('id', '')}/end"),
-            "/context0.v1.HealthService/Health": ("GET", f"{base}/v1/health"),
-        }
-
-        return mapping.get(method)
-
-    def _rest_call(self, http_method: str, url: str, request: dict) -> dict:
-        """Make an HTTP REST call."""
-        import urllib.request
-        import urllib.error
+    def _request(self, op: str, request: dict) -> dict:
+        """Make an HTTP call to the REST gateway for the named operation."""
+        http_method, path = _ROUTES[op]
+        url = self._base + path.format(**request)
 
         headers = {"Content-Type": "application/json"}
         if self._api_key:
@@ -292,7 +253,9 @@ class Context0Client:
 
         if http_method == "GET":
             # Append query params for GET requests.
-            params = "&".join(f"{k}={v}" for k, v in request.items() if v)
+            params = urllib.parse.urlencode(
+                {k: v for k, v in request.items() if v}, doseq=True
+            )
             if params:
                 url = f"{url}?{params}"
             req = urllib.request.Request(url, headers=headers, method="GET")

@@ -9,11 +9,7 @@ description = "Python SDK for Context0 — memory engine for AI agents"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.9"
-dependencies = [
-    "grpcio>=1.60.0",
-    "grpcio-tools>=1.60.0",
-    "protobuf>=4.25.0",
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
