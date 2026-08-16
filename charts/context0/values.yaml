@@ -17,11 +17,11 @@ api:
       memory: "512Mi"
       cpu: "500m"
 
-# PostgreSQL + Apache AGE
+# PostgreSQL + Apache AGE + pgvector
 postgres:
   image:
-    repository: apache/age
-    tag: latest
+    repository: context0/postgres-age-vector
+    tag: dev
     pullPolicy: IfNotPresent
   database: context0
   user: context0
@@ -42,7 +42,25 @@ consolidation:
   decayHalfLifeDays: "30"
   staleThreshold: "0.1"
   pruneAgeDays: "30"
-  dryRun: "false"
+
+# Web UI
+web:
+  enabled: true
+  replicas: 1
+  image:
+    repository: context0/web
+    tag: dev
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "32Mi"
+      cpu: "10m"
+    limits:
+      memory: "64Mi"
+      cpu: "100m"
+  service:
+    type: NodePort
+    nodePort: 30000
 
 # Authentication
 auth:

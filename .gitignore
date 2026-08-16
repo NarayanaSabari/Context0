@@ -29,7 +29,6 @@ bench/src/types/*
 !bench/src/utils/
 bench/src/utils/*
 !bench/src/utils/config.ts
-bench/node_modules/
 bench/data/
 bench/ui/
 

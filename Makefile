@@ -14,15 +14,9 @@ build:
 	go build -o $(BINARY_CONSOLIDATE) ./cmd/consolidate
 	go build -o $(BINARY_CLI) ./cmd/cli
 
-build-server:
-	go build -o $(BINARY_SERVER) ./cmd/server
-
 # Test
 test:
 	go test ./... -v -race -cover
-
-test-short:
-	go test ./... -short -race
 
 test-coverage:
 	go test ./... -coverprofile=coverage.out -covermode=atomic
@@ -31,10 +25,6 @@ test-coverage:
 # Lint
 lint:
 	golangci-lint run ./...
-
-fmt:
-	gofmt -s -w .
-	goimports -w .
 
 # Proto generation
 proto-gen:
@@ -51,9 +41,6 @@ proto-gen:
 # Docker
 docker-build:
 	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
-
-docker-push:
-	docker push $(DOCKER_IMAGE):$(DOCKER_TAG)
 
 # Run locally (requires PostgreSQL + AGE running)
 run:
@@ -72,15 +59,11 @@ kind-load: docker-build
 
 # Deploy to kind cluster
 deploy: kind-load
-	kubectl apply -f deploy/namespace.yaml
-	kubectl apply -f deploy/postgres-age.yaml
-	kubectl apply -f deploy/context0.yaml
+	helm upgrade --install context0 ./charts/context0 -n context0 --create-namespace
 	@echo "Context0 deployed to kind cluster"
 
 undeploy:
-	kubectl delete -f deploy/context0.yaml --ignore-not-found
-	kubectl delete -f deploy/postgres-age.yaml --ignore-not-found
-	kubectl delete -f deploy/namespace.yaml --ignore-not-found
+	helm uninstall context0 -n context0
 
 # Clean
 clean:

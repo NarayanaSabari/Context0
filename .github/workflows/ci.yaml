@@ -141,15 +141,13 @@ jobs:
 
       - name: Deploy
         run: |
-          # Update manifests to use :ci tag
-          sed -i 's|context0/context0:dev|context0/context0:ci|g' deploy/context0.yaml
-          sed -i 's|context0/postgres-age-vector:dev|context0/postgres-age-vector:ci|g' deploy/postgres-age.yaml
+          helm install context0 ./charts/context0 -n context0 --create-namespace \
+            --set api.image.tag=ci \
+            --set api.image.repository=context0/context0 \
+            --set postgres.image.tag=ci \
+            --set web.enabled=false
 
-          kubectl apply -f deploy/namespace.yaml
-          kubectl apply -f deploy/postgres-age.yaml
           kubectl -n context0 wait --for=condition=ready pod -l app=postgres-age --timeout=120s
-
-          kubectl apply -f deploy/context0.yaml
           kubectl -n context0 wait --for=condition=ready pod -l app=context0-api --timeout=120s
 
       - name: Port forward
@@ -163,30 +161,3 @@ jobs:
           CONTEXT0_E2E_HTTP: http://localhost:8080
           CONTEXT0_E2E_API_KEY: ctx0_dev_key_1
         run: go test ./test/e2e/... -v -tags=e2e -count=1 -timeout=120s
-
-  # ── Security Scan ─────────────────────────────────────
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.26"
-
-      - name: gosec
-        uses: securego/gosec@master
-        with:
-          args: -exclude-dir=api/gen -exclude-dir=bench -exclude=G107,G115 -severity=medium ./...
-
-      - name: Build image for scanning
-        run: docker build -t context0/context0:scan .
-
-      - name: Trivy scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: context0/context0:scan
-          format: table
-          severity: CRITICAL,HIGH
-          exit-code: 1

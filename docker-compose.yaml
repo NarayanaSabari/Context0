@@ -51,7 +51,6 @@ services:
       CONTEXT0_HTTP_PORT: "8080"
       CONTEXT0_API_KEYS: "ctx0_dev_key_1,ctx0_dev_key_2"
       CONTEXT0_EMBEDDING_PROVIDER: "bag-of-words"
-      CONTEXT0_LLM_PROVIDER: "rule-based"
       # To use Ollama (if running on host):
       # CONTEXT0_EMBEDDING_PROVIDER: ollama
       # CONTEXT0_EMBEDDING_BASE_URL: http://host.docker.internal:11434
@@ -96,7 +95,6 @@ services:
       CONSOLIDATION_DECAY_HALF_LIFE_DAYS: "30"
       CONSOLIDATION_STALE_THRESHOLD: "0.1"
       CONSOLIDATION_PRUNE_AGE_DAYS: "30"
-      CONSOLIDATION_DRY_RUN: "false"
     profiles:
       - tools  # Only runs when explicitly invoked
 

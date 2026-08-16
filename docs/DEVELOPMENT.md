@@ -331,7 +331,6 @@ steps:
 | **Unit** | `*_test.go` in each package | Pure logic: ranking, parsing, extraction, auth, config | Every PR | 80%+ |
 | **Integration** | `test/integration/` | Real PostgreSQL + AGE: graph CRUD, vector search, schema init | Every PR (with DB service) | 60%+ |
 | **E2E** | `test/e2e/` | Full system on kind: store → extract → query → profile flow | Main branch + release | All API endpoints covered |
-| **Benchmark** | `bench/` | MemoryBench (LoCoMo, LongMemEval) performance comparison | Manual + release | Track score over time |
 
 ### Coverage Requirements
 
@@ -410,7 +409,6 @@ context0/
 ├── api/
 │   ├── proto/                   # Proto definitions (source of truth)
 │   └── gen/                     # Generated Go code (gitignored)
-├── bench/                       # MemoryBench fork with Context0 provider
 ├── charts/
 │   └── context0/
 │       ├── values.yaml          # Default values
@@ -420,7 +418,6 @@ context0/
 │   ├── server/                  # API server
 │   ├── consolidate/             # Consolidation CronJob
 │   └── cli/                     # CLI tool
-├── deploy/                      # Raw K8s manifests for kind/dev
 ├── docker/
 │   └── postgres-age-vector/     # Custom PG image
 ├── docs/

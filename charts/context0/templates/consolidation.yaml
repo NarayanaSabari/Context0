@@ -33,8 +33,6 @@ spec:
                   value: {{ .Values.consolidation.staleThreshold | quote }}
                 - name: CONSOLIDATION_PRUNE_AGE_DAYS
                   value: {{ .Values.consolidation.pruneAgeDays | quote }}
-                - name: CONSOLIDATION_DRY_RUN
-                  value: {{ .Values.consolidation.dryRun | quote }}
               resources:
                 requests:
                   memory: "128Mi"

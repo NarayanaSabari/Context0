@@ -34,25 +34,25 @@ Context0 solves this with a **graph-based memory engine** that runs in your Kube
 ### Install with Helm
 
 ```bash
-# Local development (single replica, no auth, built-in embeddings)
-helm install context0 ./charts/context0 \
-  -f charts/context0/values-local.yaml \
-  -n context0 --create-namespace
-
-# Production (HA, auth, Ollama embeddings, monitoring)
-helm install context0 ./charts/context0 \
-  -f charts/context0/values-production.yaml \
-  -n context0 --create-namespace
+helm install context0 ./charts/context0 -n context0 --create-namespace
 ```
 
-### Try it with kind
+### Try it with Docker Compose
 
 ```bash
-# One command to spin up everything
-./scripts/demo.sh
+docker compose up
 ```
 
-This creates a kind cluster, deploys PostgreSQL + Apache AGE + pgvector, Context0 API, and runs E2E tests.
+This builds and starts PostgreSQL + Apache AGE + pgvector, the Context0 API, and the web UI. See [docker-compose.yaml](docker-compose.yaml) for service details.
+
+### Try it on kind
+
+```bash
+make kind-up
+make deploy
+```
+
+This creates a local kind cluster and installs the Helm chart into it.
 
 ## Usage
 
@@ -251,11 +251,10 @@ context0/
 │   ├── llm/                # LLM providers (Ollama, OpenAI-compat)
 │   ├── ranking/            # Scoring and ranking
 │   └── service/            # gRPC service handlers
-├── charts/context0/        # Helm chart
+├── charts/context0/        # Helm chart (deployment topology)
 ├── web/                    # React web UI
 ├── sdk/python/             # Python SDK
-├── test/e2e/               # End-to-end tests
-└── bench/                  # MemoryBench integration
+└── test/e2e/               # End-to-end tests
 ```
 
 ## Development

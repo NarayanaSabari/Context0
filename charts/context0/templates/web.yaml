@@ -1,12 +1,13 @@
+{{- if .Values.web.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: context0-web
-  namespace: context0
+  namespace: {{ .Release.Namespace }}
   labels:
     app: context0-web
 spec:
-  replicas: 1
+  replicas: {{ .Values.web.replicas }}
   selector:
     matchLabels:
       app: context0-web
@@ -17,18 +18,13 @@ spec:
     spec:
       containers:
         - name: web
-          image: context0/web:dev
-          imagePullPolicy: IfNotPresent
+          image: "{{ .Values.web.image.repository }}:{{ .Values.web.image.tag }}"
+          imagePullPolicy: {{ .Values.web.image.pullPolicy }}
           ports:
             - containerPort: 80
               name: http
           resources:
-            requests:
-              memory: "32Mi"
-              cpu: "10m"
-            limits:
-              memory: "64Mi"
-              cpu: "100m"
+            {{- toYaml .Values.web.resources | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /
@@ -40,15 +36,18 @@ apiVersion: v1
 kind: Service
 metadata:
   name: context0-web
-  namespace: context0
+  namespace: {{ .Release.Namespace }}
   labels:
     app: context0-web
 spec:
-  type: NodePort
+  type: {{ .Values.web.service.type }}
   ports:
     - port: 80
       targetPort: 80
-      nodePort: 30000
+      {{- if eq .Values.web.service.type "NodePort" }}
+      nodePort: {{ .Values.web.service.nodePort }}
+      {{- end }}
       name: http
   selector:
     app: context0-web
+{{- end }}
