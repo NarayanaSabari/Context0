@@ -6,16 +6,10 @@
  * graph view and returns null when no memory is selected.
  */
 
-import { X, Brain, Clock, Wrench, Hash, Activity, TrendingDown } from 'lucide-react'
+import { X, Hash, Activity, TrendingDown } from 'lucide-react'
 import type { Memory } from '../lib/types'
 import { parseType } from '../lib/types'
-
-/** Display metadata (icon, color, description) for each memory type. */
-const TYPE_META: Record<string, { icon: typeof Brain; color: string; label: string }> = {
-  semantic:   { icon: Brain, color: 'text-green-400', label: 'Semantic — a known fact' },
-  episodic:   { icon: Clock, color: 'text-amber-400', label: 'Episodic — something that happened' },
-  procedural: { icon: Wrench, color: 'text-purple-400', label: 'Procedural — a learned pattern' },
-}
+import { MEMORY_TYPES } from '../lib/memory-types'
 
 /** Props for the {@link DetailPanel} component. */
 interface Props {
@@ -36,7 +30,7 @@ export default function DetailPanel({ memory, onClose }: Props) {
   if (!memory) return null
 
   const t = parseType(memory.type)
-  const meta = TYPE_META[t] ?? TYPE_META.semantic
+  const meta = MEMORY_TYPES[t] ?? MEMORY_TYPES.semantic
   const Icon = meta.icon
 
   return (
@@ -44,14 +38,14 @@ export default function DetailPanel({ memory, onClose }: Props) {
       {/* Header */}
       <div className="flex items-start justify-between p-5 pb-0">
         <div className="flex items-center gap-2">
-          <Icon size={16} className={meta.color} />
-          <span className={`text-xs font-bold uppercase tracking-wide ${meta.color}`}>{t}</span>
+          <Icon size={16} className={meta.detailColorClassName} />
+          <span className={`text-xs font-bold uppercase tracking-wide ${meta.detailColorClassName}`}>{t}</span>
         </div>
         <button onClick={onClose} className="text-[#6b6e82] hover:text-white transition-colors">
           <X size={16} />
         </button>
       </div>
-      <div className="px-5 mt-1 text-[11px] text-[#4b4f64]">{meta.label}</div>
+      <div className="px-5 mt-1 text-[11px] text-[#4b4f64]">{meta.description}</div>
 
       {/* Content */}
       <div className="p-5 space-y-4">

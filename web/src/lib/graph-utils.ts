@@ -8,6 +8,7 @@
 import type { Node, Edge as FlowEdge } from '@xyflow/react'
 import type { Memory, Edge, MemoryResult } from './types'
 import { parseType, parseRel } from './types'
+import { MEMORY_TYPES } from './memory-types'
 
 /** Data payload attached to each React Flow memory node. */
 export interface MemoryNodeData {
@@ -19,13 +20,6 @@ export interface MemoryNodeData {
   label: string
   /** Index signature required by React Flow's generic node data type. */
   [key: string]: unknown
-}
-
-/** Background, border, and text colors for each memory type. */
-const TYPE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  semantic:   { bg: '#162316', border: '#9ece6a', text: '#9ece6a' },
-  episodic:   { bg: '#261e10', border: '#e0af68', text: '#e0af68' },
-  procedural: { bg: '#1e1528', border: '#bb9af7', text: '#bb9af7' },
 }
 
 /** Stroke colors for each relationship type on graph edges. */
@@ -69,11 +63,11 @@ export function memoriesToNodes(
         label: m.content.length > 50 ? m.content.slice(0, 50) + '...' : m.content,
       },
       style: {
-        background: TYPE_COLORS[t]?.bg ?? '#1a1b26',
-        borderColor: TYPE_COLORS[t]?.border ?? '#555',
+        background: MEMORY_TYPES[t].graph.bg,
+        borderColor: MEMORY_TYPES[t].graph.border,
         borderWidth: isCenter ? 3 : 2,
         borderStyle: 'solid' as const,
-        color: TYPE_COLORS[t]?.text ?? '#e1e2e8',
+        color: MEMORY_TYPES[t].graph.border,
         borderRadius: 12,
         padding: 12,
         fontSize: 13,

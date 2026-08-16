@@ -6,12 +6,12 @@
  */
 
 import { useState, useCallback, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { ReactFlowProvider } from '@xyflow/react'
 import { Network, RefreshCw, LayoutGrid } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import GraphView from './components/GraphView'
 import { fetchHealth, fetchMemories, fetchSubgraph } from './lib/api'
+import { usePoll } from './lib/use-poll'
 import { memoriesToNodes, edgesToFlowEdges, resultsToFullGraph } from './lib/graph-utils'
 import type { Memory, SubgraphResponse } from './lib/types'
 import type { Node, Edge } from '@xyflow/react'
@@ -34,22 +34,14 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('focus')
   const [refreshKey, setRefreshKey] = useState(0)
 
-  const health = useQuery({
-    queryKey: ['health', refreshKey],
-    queryFn: fetchHealth,
-  })
-
-  const memories = useQuery({
-    queryKey: ['memories', refreshKey],
-    queryFn: () => fetchMemories(200),
-  })
+  const health = usePoll(fetchHealth, refreshKey)
+  const memories = usePoll(() => fetchMemories(200), refreshKey)
 
   const results = useMemo(() => memories.data ?? [], [memories.data])
 
   /**
    * Handles selecting a memory from the sidebar.
    * Fetches the subgraph for the selected memory and builds graph nodes/edges.
-   * Falls back to implicit neighbor edges when the API returns no explicit edges.
    */
   const handleSelect = useCallback(
     async (id: string) => {
@@ -67,24 +59,6 @@ export default function App() {
         ]
         const nodes = memoriesToNodes(allMems, id)
         const edges = edgesToFlowEdges(sub.edges ?? [])
-
-        // If no edges from API, create implicit edges from neighbors to center
-        if (edges.length === 0 && sub.nodes?.length) {
-          for (const n of sub.nodes) {
-            if (n.id === id) continue
-            edges.push({
-              id: `imp-${id.slice(0, 8)}-${n.id.slice(0, 8)}`,
-              source: id,
-              target: n.id,
-              type: 'smoothstep',
-              animated: false,
-              style: { stroke: '#7aa2f7', strokeWidth: 1.5, opacity: 0.4 },
-              label: 'neighbor',
-              labelStyle: { fill: '#7aa2f7', fontSize: 9 },
-              labelBgStyle: { fill: '#0a0a0f', fillOpacity: 0.9 },
-            })
-          }
-        }
 
         setGraphNodes(nodes)
         setGraphEdges(edges)

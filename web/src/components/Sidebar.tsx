@@ -6,10 +6,11 @@
  */
 
 import { useState } from 'react'
-import { Search, Brain, Clock, Wrench, Key } from 'lucide-react'
+import { Search, Key } from 'lucide-react'
 import type { MemoryResult, MemoryType } from '../lib/types'
 import { parseType } from '../lib/types'
 import { setApiKey, getApiKey } from '../lib/api'
+import { MEMORY_TYPES } from '../lib/memory-types'
 
 /** Available filter options for the memory type pill buttons. */
 const FILTERS: { label: string; value: MemoryType | 'all' }[] = [
@@ -18,13 +19,6 @@ const FILTERS: { label: string; value: MemoryType | 'all' }[] = [
   { label: 'Episodic', value: 'episodic' },
   { label: 'Procedural', value: 'procedural' },
 ]
-
-/** Visual badge config (icon + Tailwind classes) for each memory type. */
-const TYPE_BADGE: Record<string, { icon: typeof Brain; cls: string }> = {
-  semantic:   { icon: Brain, cls: 'bg-green-500/10 text-green-400 border-green-500/20' },
-  episodic:   { icon: Clock, cls: 'bg-amber-500/10 text-amber-400 border-amber-500/20' },
-  procedural: { icon: Wrench, cls: 'bg-purple-500/10 text-purple-400 border-purple-500/20' },
-}
 
 /** Props for the {@link Sidebar} component. */
 interface Props {
@@ -129,7 +123,7 @@ export default function Sidebar({ results, selectedId, onSelect, onRefresh }: Pr
         ) : (
           filtered.map((r) => {
             const t = parseType(r.memory.type)
-            const badge = TYPE_BADGE[t] ?? TYPE_BADGE.semantic
+            const badge = MEMORY_TYPES[t] ?? MEMORY_TYPES.semantic
             const Icon = badge.icon
             const date = new Date(r.memory.createdAt).toLocaleDateString()
             const isSelected = r.memory.id === selectedId
@@ -145,7 +139,7 @@ export default function Sidebar({ results, selectedId, onSelect, onRefresh }: Pr
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide border ${badge.cls}`}>
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide border ${badge.badgeClassName}`}>
                     <Icon size={10} /> {t}
                   </span>
                   <span className="text-[10px] text-[#4b4f64]">{date}</span>
