@@ -1,5 +1,11 @@
 # Context0 — MVP Scope
 
+> **Status: historical.**
+> This plan is complete — the engine, API, retrieval, Helm chart, SDK, and CLI
+> it describes have all shipped. The unchecked boxes below reflect the document's
+> age, not outstanding work. Kept for the record of why each piece of the stack
+> was chosen. See [README](README.md) for current state and the live roadmap.
+
 ## MVP Goal
 
 Ship a working, K8s-deployable memory engine that a single agent can use to store, retrieve, and relate memories via a graph database. Prove that graph-first retrieval is meaningfully better than flat vector search.

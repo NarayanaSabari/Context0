@@ -8,6 +8,11 @@ Detailed architecture diagrams for the Context0 memory engine.
 
 How Context0 fits into an AI agent ecosystem.
 
+> **Partly aspirational.** The engine, PostgreSQL + AGE, the consolidation
+> CronJob, and the Prometheus `/metrics` endpoint all ship today. The Context0
+> Operator, the agent-pod sidecar cache, and the Prometheus ServiceMonitor in
+> the diagram below do not exist yet — see §7 and §9.
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                          EXTERNAL WORLD                                      │
@@ -515,6 +520,11 @@ Background process that keeps the memory graph clean and efficient.
 
 ## 7. Kubernetes Resource Model — CRDs and Operator
 
+> **Status: design sketch, not implemented.**
+> No CRDs and no operator exist in this repo today.
+> Deployment is via the Helm chart in `charts/context0/`.
+> Everything below describes intended future shape, not current behaviour.
+
 How Context0 is managed as Kubernetes-native resources.
 
 ```
@@ -693,6 +703,12 @@ How multiple agents share and isolate memory within the graph.
 ---
 
 ## 9. Deployment Topology — Production Setup
+
+> **Status: target topology, not implemented.**
+> The shipped chart runs a single-replica Postgres StatefulSet, one API
+> Deployment, a consolidation CronJob, and the web UI. CloudNativePG,
+> read replicas, HPA, the sidecar cache, the embedding worker, and the
+> OTel collector below are all future work.
 
 ```
 ┌─── Region: us-east-1 ────────────────────────────────────────────────────┐
