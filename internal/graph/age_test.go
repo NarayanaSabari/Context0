@@ -152,9 +152,20 @@ func TestGetMemory_NotFound(t *testing.T) {
 }
 
 // TestCreateMemory_HostileContent is the regression test for the Cypher
-// injection hole. Every payload here would have broken out of the old
-// single-quote-escaped string interpolation; with parameters they must all
-// round-trip byte for byte, and the graph must be intact afterwards.
+// injection hole.
+//
+// The old code interpolated content into the query text and defended it by
+// replacing ' with \'. That escaping is not sound -- it inverts on a backslash,
+// since content ending in \ turns the code's own closing quote into an escaped
+// one -- and the payloads below are the values that broke it.
+//
+// The observed impact against the pre-fix code was denial and corruption
+// rather than executed Cypher: six of these payloads made the generated query
+// unparseable, so a legitimate memory simply could not be stored. Attempts to
+// get an appended statement to run were not successful against AGE's parser
+// (see TestCreateMemory_InjectedCypherDoesNotExecute, which asserts that
+// directly). Either way the property is the same and worth pinning: content is
+// data, and must round-trip byte for byte without touching the graph.
 func TestCreateMemory_HostileContent(t *testing.T) {
 	repo, ctx := testRepo(t)
 	projectID := newProjectID(t)
@@ -174,6 +185,10 @@ func TestCreateMemory_HostileContent(t *testing.T) {
 		{"newlines", "line one\nline two"},
 		{"cypher keywords", "MATCH (n) DETACH DELETE n"},
 		{"dollar quoting", "$$ RETURN 1 $$"},
+		// Closes the property map and appends a second statement, keeping the
+		// quote count balanced so the whole thing still parses.
+		{"map escape with balanced quotes",
+			`x', decay_score: 1.0}) CREATE (z:Memory {id: 'INJECTED', content: 'PWNED'`},
 		{"parameter lookalike", "$id and $content"},
 		{"unicode and emoji", "café 日本語 🎉"},
 		{"null-ish literal", `\u0000 not really null`},
@@ -200,6 +215,79 @@ func TestCreateMemory_HostileContent(t *testing.T) {
 	// The canary proves no payload executed as Cypher.
 	if _, err := repo.GetMemory(ctx, canary.ID); err != nil {
 		t.Fatalf("canary memory was destroyed, injection payload executed: %v", err)
+	}
+}
+
+// TestCreateMemory_InjectedCypherDoesNotExecute asserts the property that
+// actually matters for an injection fix: no attacker-supplied content can add,
+// delete, or rewrite a node it does not own.
+//
+// The old code emitted:
+//
+//	CREATE (m:Memory {id: '...', content: 'CONTENT', type: '...', ...}) RETURN m
+//
+// so content that closes the property map and re-balances its quotes produces
+// a statement that parses. Against AGE these attempts did not execute -- the
+// appended clause landed inside a later string literal rather than as syntax --
+// but that outcome depended on the exact shape of the surrounding query, which
+// is a property no one should have to re-derive after every edit to it.
+//
+// The check is node count rather than a surviving canary, because this payload
+// class adds nodes; a survivor-style assertion would not notice an extra one.
+func TestCreateMemory_InjectedCypherDoesNotExecute(t *testing.T) {
+	repo, ctx := testRepo(t)
+	projectID := newProjectID(t)
+
+	before, err := repo.NodeCount(ctx)
+	if err != nil {
+		t.Fatalf("node count: %v", err)
+	}
+
+	payloads := []string{
+		// Append a second CREATE.
+		`x', decay_score: 1.0}) CREATE (z:Memory {id: 'INJECTED', content: 'PWNED'`,
+		// Append a mass delete.
+		`y', decay_score: 1.0}) WITH 1 AS n MATCH (v:Memory) DETACH DELETE v RETURN count(v`,
+		// Append a property overwrite across the whole label.
+		`z', decay_score: 1.0}) WITH 1 AS n MATCH (v:Memory) SET v.content = 'CORRUPTED' RETURN count(v`,
+	}
+
+	for _, p := range payloads {
+		mem := newMemory(projectID, p, "injection")
+		storeMemory(t, repo, ctx, mem)
+
+		got, err := repo.GetMemory(ctx, mem.ID)
+		if err != nil {
+			t.Fatalf("stored memory unreadable: %v", err)
+		}
+		if got.Content != p {
+			t.Errorf("payload was not stored verbatim:\n got %q\nwant %q", got.Content, p)
+		}
+	}
+
+	after, err := repo.NodeCount(ctx)
+	if err != nil {
+		t.Fatalf("node count: %v", err)
+	}
+
+	// Exactly one node per stored memory: no injected extras, nothing deleted.
+	if delta := after - before; delta != int64(len(payloads)) {
+		t.Errorf("node count changed by %d, want %d -- injected Cypher executed",
+			delta, len(payloads))
+	}
+
+	// And nothing was mass-overwritten.
+	all, err := repo.QueryMemories(ctx, QueryFilter{ProjectID: projectID, TopK: 100})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(all) != len(payloads) {
+		t.Errorf("project holds %d memories, want %d", len(all), len(payloads))
+	}
+	for _, r := range all {
+		if r.Memory.Content == "CORRUPTED" || r.Memory.Content == "PWNED" {
+			t.Errorf("injected Cypher executed: found memory with content %q", r.Memory.Content)
+		}
 	}
 }
 
