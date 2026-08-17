@@ -314,8 +314,8 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 - [x] React web UI with graph visualization
 - [x] Python SDK + CLI
 - [x] Helm chart + kind deployment
-- [ ] Ollama embedding integration
-- [ ] Contradiction detection
+- [x] Ollama embedding integration
+- [x] Contradiction detection
 - [ ] Content ingestion (PDF, URLs, code)
 - [ ] Framework SDKs (LangChain, CrewAI, MCP)
 - [ ] Connectors (GitHub, Google Drive, Notion)

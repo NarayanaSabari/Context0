@@ -329,8 +329,30 @@ steps:
 | Category | Directory | What | Runs on | Coverage target |
 |----------|-----------|------|---------|----------------|
 | **Unit** | `*_test.go` in each package | Pure logic: ranking, parsing, extraction, auth, config | Every PR | 80%+ |
-| **Integration** | `test/integration/` | Real PostgreSQL + AGE: graph CRUD, vector search, schema init | Every PR (with DB service) | 60%+ |
+| **Integration** | `internal/graph/age_test.go` | Real PostgreSQL + AGE: graph CRUD, Cypher injection resistance, vector search, schema init | Every PR (with DB service) | 60%+ |
 | **E2E** | `test/e2e/` | Full system on kind: store → extract → query → profile flow | Main branch + release | All API endpoints covered |
+
+### Running the integration tests
+
+The graph repository builds Cypher by hand, so its tests run against a real
+Apache AGE instance rather than a mock. A query can be valid Go and malformed
+openCypher, and only the real parser will say so.
+
+```bash
+make test-integration
+```
+
+That starts the Compose `postgres` service, waits for it, and runs the suite.
+To point at a database you already have running:
+
+```bash
+CONTEXT0_TEST_DATABASE_URL="postgres://context0:context0@localhost:5432/context0?sslmode=disable" \
+  go test ./internal/graph/... -count=1
+```
+
+Without `CONTEXT0_TEST_DATABASE_URL` the suite skips, so plain `go test ./...`
+needs no database. Each test scopes its data to a unique project id and cleans
+up after itself, so runs are repeatable against a persistent database.
 
 ### Coverage Requirements
 

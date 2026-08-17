@@ -70,6 +70,40 @@ jobs:
           name: coverage
           path: coverage.out
 
+  # ── Integration Tests ─────────────────────────────────
+  # The graph repository writes Cypher by hand, so its tests run against a real
+  # Apache AGE instance. A query can be valid Go and malformed openCypher, and
+  # only the real parser catches that.
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Start PostgreSQL + AGE + pgvector
+        run: |
+          docker compose up -d postgres
+          for _ in $(seq 1 60); do
+            if docker compose exec -T postgres pg_isready -U context0 >/dev/null 2>&1; then
+              echo "postgres ready"; exit 0
+            fi
+            sleep 2
+          done
+          echo "postgres did not become ready"; docker compose logs postgres; exit 1
+
+      - name: Run graph integration tests
+        env:
+          CONTEXT0_TEST_DATABASE_URL: postgres://context0:context0@localhost:5432/context0?sslmode=disable
+        run: go test ./internal/graph/... -race -count=1 -v
+
+      - name: Stop services
+        if: always()
+        run: docker compose down -v
+
   # ── Build ─────────────────────────────────────────────
   build:
     name: Build

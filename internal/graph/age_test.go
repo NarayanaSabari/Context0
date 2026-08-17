@@ -25,6 +25,7 @@ import (
 
 	"github.com/context0/context0/pkg/model"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // testEmbeddingDim must match the width of the memory_embeddings column that
@@ -33,6 +34,11 @@ const testEmbeddingDim = 384
 
 // testRepo connects to the test database and returns a repository with the
 // schema initialized. It skips the test when no database is configured.
+//
+// Connecting is retried briefly. A container that has just started accepts TCP
+// connections before it is ready to serve queries, and CI starts PostgreSQL
+// moments before this runs, so a single attempt turns a cold start into a
+// spurious failure.
 func testRepo(t *testing.T) (*AGERepository, context.Context) {
 	t.Helper()
 
@@ -42,9 +48,19 @@ func testRepo(t *testing.T) (*AGERepository, context.Context) {
 	}
 
 	ctx := context.Background()
-	pool, err := NewPool(ctx, dsn)
+
+	var pool *pgxpool.Pool
+	var err error
+	for attempt := 0; attempt < 10; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Second)
+		}
+		if pool, err = NewPool(ctx, dsn); err == nil {
+			break
+		}
+	}
 	if err != nil {
-		t.Fatalf("connect to test database: %v", err)
+		t.Fatalf("connect to test database after retries: %v", err)
 	}
 	t.Cleanup(pool.Close)
 
