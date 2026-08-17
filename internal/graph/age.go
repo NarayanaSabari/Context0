@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -263,7 +264,7 @@ func (r *AGERepository) UpdateDecayScore(ctx context.Context, id uuid.UUID, scor
 // stored (their own values on first write, the pre-existing ones on a
 // re-assert) rather than blindly echoing their input back.
 func (r *AGERepository) CreateEdge(ctx context.Context, edge model.Edge) (model.Edge, error) {
-	relLabel := toEdgeLabel(edge.Relationship)
+	relLabel := string(edge.Relationship)
 	q := fmt.Sprintf(
 		`MATCH (a {id: '%s'}), (b {id: '%s'}) `+
 			`MERGE (a)-[e:%s]->(b) `+
@@ -735,19 +736,21 @@ func (r *AGERepository) SearchByVector(ctx context.Context, embedding []float32,
 }
 
 // float32SliceToVectorString converts a Go float32 slice to pgvector's text
-// input format: "[0.100000,0.200000,...]". This string can be cast to the
-// vector type in SQL via $1::vector.
+// input format: "[0.1,0.2,...]". This string can be cast to the vector type
+// in SQL via $1::vector. Each component is formatted with strconv's shortest
+// round-tripping representation for a 32-bit float, rather than truncating to
+// six decimal places.
 func float32SliceToVectorString(v []float32) string {
-	var b strings.Builder
-	b.WriteByte('[')
+	buf := make([]byte, 0, len(v)*12+2)
+	buf = append(buf, '[')
 	for i, f := range v {
 		if i > 0 {
-			b.WriteByte(',')
+			buf = append(buf, ',')
 		}
-		b.WriteString(fmt.Sprintf("%f", f))
+		buf = strconv.AppendFloat(buf, float64(f), 'f', -1, 32)
 	}
-	b.WriteByte(']')
-	return b.String()
+	buf = append(buf, ']')
+	return string(buf)
 }
 
 // --- Stats ---
@@ -790,12 +793,6 @@ func (r *AGERepository) EdgeCount(ctx context.Context) (int64, error) {
 // AGE adds support for them.
 func escapeCypher(s string) string {
 	return strings.ReplaceAll(s, "'", "\\'")
-}
-
-// toEdgeLabel converts a model.RelationshipType to a Cypher-compatible edge
-// label string (e.g. "relates_to", "supersedes", "caused_by").
-func toEdgeLabel(rel model.RelationshipType) string {
-	return string(rel) // e.g. "relates_to", "supersedes", "caused_by"
 }
 
 // memoryProps is the wire shape of a :Memory vertex's properties as returned

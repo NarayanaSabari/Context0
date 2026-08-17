@@ -79,6 +79,34 @@ export function memoriesToNodes(
 }
 
 /**
+ * Builds a styled React Flow edge for a relationship type, shared by the
+ * focus-mode subgraph path and the overview path so styling stays consistent.
+ */
+function relEdge(id: string, source: string, target: string, rel: string, weight: number): FlowEdge {
+  return {
+    id,
+    source,
+    target,
+    label: rel.replace('_', ' '),
+    type: 'smoothstep',
+    animated: rel === 'supersedes',
+    style: {
+      stroke: REL_COLORS[rel] ?? '#444',
+      strokeWidth: Math.max(1.5, (weight ?? 1) * 2),
+    },
+    labelStyle: {
+      fill: REL_COLORS[rel] ?? '#888',
+      fontSize: 10,
+      fontWeight: 600,
+    },
+    labelBgStyle: {
+      fill: '#0a0a0f',
+      fillOpacity: 0.9,
+    },
+  }
+}
+
+/**
  * Converts Context0 graph edges into React Flow edge objects with
  * relationship-based styling (color, width, animation).
  *
@@ -86,38 +114,15 @@ export function memoriesToNodes(
  * @returns An array of styled React Flow {@link FlowEdge} objects.
  */
 export function edgesToFlowEdges(edges: Edge[]): FlowEdge[] {
-  return edges.map((e) => {
-    const rel = parseRel(e.relationship)
-    return {
-      id: e.id,
-      source: e.fromId,
-      target: e.toId,
-      label: rel.replace('_', ' '),
-      type: 'smoothstep',
-      animated: rel === 'supersedes',
-      style: {
-        stroke: REL_COLORS[rel] ?? '#444',
-        strokeWidth: Math.max(1.5, (e.weight ?? 1) * 2),
-      },
-      labelStyle: {
-        fill: REL_COLORS[rel] ?? '#888',
-        fontSize: 10,
-        fontWeight: 600,
-      },
-      labelBgStyle: {
-        fill: '#0a0a0f',
-        fillOpacity: 0.9,
-      },
-    }
-  })
+  return edges.map((e) => relEdge(e.id, e.fromId, e.toId, parseRel(e.relationship), e.weight))
 }
 
 /**
  * Transforms all memory query results into a full graph for overview mode.
- * Lays out nodes in a grid and creates edges between memories that share tags.
+ * Lays out nodes in a grid and creates edges from each result's real context edges.
  *
  * @param results - All memory query results to display.
- * @returns An object containing the positioned nodes and tag-based edges.
+ * @returns An object containing the positioned nodes and their real relationship edges.
  */
 export function resultsToFullGraph(
   results: MemoryResult[],
@@ -134,25 +139,19 @@ export function resultsToFullGraph(
     }
   })
 
-  // Connect memories that share tags
+  // Connect memories using their real context edges, deduplicating since the
+  // backend reports an undirected A-B relationship from both A's and B's context.
+  const displayedIds = new Set(memories.map((m) => m.id))
+  const seen = new Set<string>()
   const edges: FlowEdge[] = []
-  for (let i = 0; i < memories.length; i++) {
-    for (let j = i + 1; j < memories.length; j++) {
-      const shared = (memories[i].tags ?? []).filter((t) =>
-        (memories[j].tags ?? []).includes(t),
-      )
-      if (shared.length > 0) {
-        edges.push({
-          id: `tag-${memories[i].id.slice(0, 8)}-${memories[j].id.slice(0, 8)}`,
-          source: memories[i].id,
-          target: memories[j].id,
-          label: shared[0],
-          type: 'smoothstep',
-          style: { stroke: '#7aa2f7', strokeWidth: 1.5, opacity: 0.5 },
-          labelStyle: { fill: '#7aa2f7', fontSize: 9 },
-          labelBgStyle: { fill: '#0a0a0f', fillOpacity: 0.9 },
-        })
-      }
+  for (const r of results) {
+    for (const ctx of r.context ?? []) {
+      if (!displayedIds.has(ctx.targetId)) continue
+      const rel = parseRel(ctx.relationship)
+      const key = [r.memory.id, ctx.targetId].sort().join('|') + '|' + rel
+      if (seen.has(key)) continue
+      seen.add(key)
+      edges.push(relEdge(key, r.memory.id, ctx.targetId, rel, ctx.weight))
     }
   }
 

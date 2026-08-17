@@ -56,7 +56,7 @@ func RunConsolidation(ctx context.Context, repo *graph.AGERepository, cfg Consol
 	var result ConsolidationResult
 
 	log.Println("consolidation: starting merge phase...")
-	merged, err := phaseMerge(ctx, repo, cfg)
+	merged, err := phaseMerge(ctx, repo)
 	if err != nil {
 		return result, fmt.Errorf("merge phase: %w", err)
 	}
@@ -89,8 +89,7 @@ func RunConsolidation(ctx context.Context, repo *graph.AGERepository, cfg Consol
 //
 // NOTE: The current implementation uses exact content matching. A future version
 // should incorporate content similarity scoring for near-duplicate detection.
-func phaseMerge(ctx context.Context, repo *graph.AGERepository, cfg ConsolidationConfig) (int, error) {
-
+func phaseMerge(ctx context.Context, repo *graph.AGERepository) (int, error) {
 	filter := graph.QueryFilter{
 		Types: []model.MemoryType{model.MemoryTypeSemantic},
 		TopK:  100,
