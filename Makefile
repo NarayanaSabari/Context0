@@ -1,4 +1,4 @@
-.PHONY: build test lint clean docker-build proto-gen run kind-up kind-down deploy
+.PHONY: build test test-integration lint clean docker-build proto-gen run kind-up kind-down deploy
 
 # Variables
 BINARY_SERVER = bin/context0-server
@@ -17,6 +17,16 @@ build:
 # Test
 test:
 	go test ./... -v -race -cover
+
+# Integration tests for the graph repository. These run real Cypher against a
+# real Apache AGE instance, which is the only way to catch queries that compile
+# in Go but are malformed openCypher. Skipped by `make test`, which stays
+# hermetic.
+test-integration:
+	docker compose up -d postgres
+	@until docker compose exec -T postgres pg_isready -U context0 >/dev/null 2>&1; do sleep 1; done
+	CONTEXT0_TEST_DATABASE_URL="postgres://context0:context0@localhost:5432/context0?sslmode=disable" \
+		go test ./internal/graph/... -count=1 -race -v
 
 test-coverage:
 	go test ./... -coverprofile=coverage.out -covermode=atomic

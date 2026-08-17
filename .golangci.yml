@@ -1,31 +1,48 @@
+# golangci-lint v2 configuration.
+#
+# The CI workflow installs golangci-lint at "latest", which moved to v2 and
+# rejects the v1 schema outright, so this file tracks the v2 format.
+version: "2"
+
 run:
-  timeout: 5m
   tests: true
 
 linters:
+  # These five are golangci-lint's defaults; listing them explicitly keeps the
+  # enabled set visible rather than implied by the tool's version.
+  default: none
   enable:
     - errcheck
     - govet
     - ineffassign
     - staticcheck
     - unused
-  disable:
-    - depguard
 
-linters-settings:
-  errcheck:
-    exclude-functions:
-      - fmt.Fprintf
-      - (io.Closer).Close
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprintf
+        - (io.Closer).Close
 
-issues:
-  exclude-dirs:
-    - api/gen
-    - bench
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-    - path: cmd/cli/
-      linters:
-        - errcheck
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Tests favour readability over checking every teardown error.
+      - linters:
+          - errcheck
+        path: _test\.go
+      # The CLI writes to stdout, where a failed write is not actionable.
+      - linters:
+          - errcheck
+        path: cmd/cli/
+    paths:
+      - api/gen
+
+formatters:
+  enable:
+    - gofmt

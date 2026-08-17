@@ -33,6 +33,26 @@ const (
 	RelCausedBy RelationshipType = "caused_by"
 )
 
+// relationshipTypes is the closed set of edge labels Context0 recognizes.
+var relationshipTypes = map[RelationshipType]bool{
+	RelBelongsTo:  true,
+	RelContains:   true,
+	RelRelatesTo:  true,
+	RelSupersedes: true,
+	RelCausedBy:   true,
+}
+
+// Valid reports whether the relationship is one of the defined edge types.
+//
+// This matters beyond input hygiene: a relationship becomes a Cypher edge
+// label, and openCypher has no parameter slot for labels, so the value is
+// necessarily interpolated into the query text. Checking membership in this
+// closed set is what makes that interpolation safe -- an arbitrary string
+// could otherwise close the pattern and append clauses.
+func (r RelationshipType) Valid() bool {
+	return relationshipTypes[r]
+}
+
 // Edge represents a directed, weighted relationship between two memory nodes
 // in the Context0 knowledge graph. Edges are created explicitly via the
 // Connect RPC or automatically during extraction.

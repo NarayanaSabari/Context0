@@ -137,6 +137,15 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 		return fmt.Errorf("create public.memory_embeddings table: %w", err)
 	}
 
+	// CREATE TABLE IF NOT EXISTS keeps whatever width an earlier run chose, so
+	// a changed embedding provider would leave the column too narrow and every
+	// insert would fail at write time -- where StoreEmbedding's error is
+	// discarded, silently leaving memories unsearchable by vector. Detect the
+	// mismatch here instead, while it can still be reported.
+	if err := r.verifyEmbeddingDim(ctx); err != nil {
+		return err
+	}
+
 	// HNSW index enables sub-linear approximate nearest neighbor queries.
 	// vector_cosine_ops is chosen because cosine similarity is the standard
 	// metric for text embedding comparison.
@@ -162,21 +171,105 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 	return nil
 }
 
-// cypher executes a Cypher query via AGE's ag_catalog.cypher() SQL wrapper.
-// The Cypher string is embedded in a dollar-quoted block ($$ ... $$) to avoid
-// escaping issues with single quotes inside the query. The result column is
-// typed as agtype, which is AGE's JSON-like data format. Callers must scan
-// each row as a string and parsed via scanAgtype/scanOne into a typed value.
-func (r *AGERepository) cypher(ctx context.Context, query string, args ...any) (pgx.Rows, error) {
-	sql := fmt.Sprintf(`SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result ag_catalog.agtype)`, GraphName, query)
-	return r.pool.Query(ctx, sql, args...)
+// verifyEmbeddingDim checks that the existing memory_embeddings column matches
+// the configured embedding dimension, returning an actionable error when an
+// earlier run created the table at a different width.
+func (r *AGERepository) verifyEmbeddingDim(ctx context.Context) error {
+	// atttypmod carries the declared dimension of a pgvector column.
+	const q = `SELECT atttypmod FROM pg_attribute
+	           WHERE attrelid = 'public.memory_embeddings'::regclass
+	             AND attname = 'embedding'`
+
+	var actual int
+	if err := r.pool.QueryRow(ctx, q).Scan(&actual); err != nil {
+		return fmt.Errorf("read embedding column dimension: %w", err)
+	}
+
+	if actual > 0 && actual != r.embeddingDim {
+		return fmt.Errorf(
+			"embedding dimension mismatch: public.memory_embeddings stores %d-dimensional "+
+				"vectors but the configured embedder produces %d. The embedding provider or "+
+				"model changed since the table was created. Re-embed the corpus against the new "+
+				"model, or set CONTEXT0_EMBEDDING_DIM=%d to keep the previous one",
+			actual, r.embeddingDim, actual,
+		)
+	}
+
+	return nil
+}
+
+// params holds the values bound to a Cypher query's $named placeholders.
+//
+// AGE takes query parameters as a single agtype object rather than as
+// positional arguments: the whole map is passed as one SQL argument, and each
+// key becomes a $name usable inside the Cypher text. Values are carried as
+// ordinary Go types and marshalled to JSON at execution time, so quotes,
+// backslashes, and newlines in memory content never reach the parser as
+// syntax.
+type params map[string]any
+
+// cypherSQL builds the SQL wrapper around a Cypher query.
+//
+// GraphName is a compile-time constant, so interpolating it carries no
+// injection risk. Everything caller-supplied travels through the parameter
+// object instead of the query text. The Cypher body sits in a dollar-quoted
+// block because AGE requires a literal there.
+func cypherSQL(query string, parameterized bool) string {
+	if parameterized {
+		return fmt.Sprintf(
+			`SELECT * FROM ag_catalog.cypher('%s', $$ %s $$, $1) AS (result ag_catalog.agtype)`,
+			GraphName, query,
+		)
+	}
+	return fmt.Sprintf(
+		`SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result ag_catalog.agtype)`,
+		GraphName, query,
+	)
+}
+
+// encodeParams marshals a parameter map into the single JSON argument AGE
+// expects. A nil or empty map means the query is a constant with no bound
+// values, signalled by the false return.
+func encodeParams(p params) (string, bool, error) {
+	if len(p) == 0 {
+		return "", false, nil
+	}
+	encoded, err := json.Marshal(map[string]any(p))
+	if err != nil {
+		return "", false, fmt.Errorf("encode cypher parameters: %w", err)
+	}
+	return string(encoded), true, nil
+}
+
+// cypher executes a Cypher query via AGE's ag_catalog.cypher() SQL wrapper and
+// returns its rows. Caller-supplied values must be passed in p and referenced
+// as $name inside query -- never formatted into the query string. The result
+// column is typed as agtype, AGE's JSON-like format; callers scan each row as
+// a string and parse it via scanAgtype/scanOne into a typed value.
+func (r *AGERepository) cypher(ctx context.Context, query string, p params) (pgx.Rows, error) {
+	encoded, ok, err := encodeParams(p)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return r.pool.Query(ctx, cypherSQL(query, false))
+	}
+	return r.pool.Query(ctx, cypherSQL(query, true), encoded)
 }
 
 // cypherExec executes a Cypher query that returns no meaningful rows (e.g.
 // CREATE, DELETE, SET). It discards any result and returns only the error.
-func (r *AGERepository) cypherExec(ctx context.Context, query string) error {
-	sql := fmt.Sprintf(`SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result ag_catalog.agtype)`, GraphName, query)
-	_, err := r.pool.Exec(ctx, sql)
+// The same parameter rules as cypher apply.
+func (r *AGERepository) cypherExec(ctx context.Context, query string, p params) error {
+	encoded, ok, err := encodeParams(p)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		_, err = r.pool.Exec(ctx, cypherSQL(query, false))
+		return err
+	}
+	_, err = r.pool.Exec(ctx, cypherSQL(query, true), encoded)
 	return err
 }
 
@@ -188,23 +281,23 @@ func (r *AGERepository) cypherExec(ctx context.Context, query string) error {
 // is 0 and decay_score is 1.0 (no decay).
 func (r *AGERepository) CreateMemory(ctx context.Context, mem model.Memory) error {
 	tagsJSON, _ := json.Marshal(mem.Tags)
-	q := fmt.Sprintf(
-		`CREATE (m:Memory {id: '%s', content: '%s', type: '%s', project_id: '%s', tags: '%s', created_at: '%s', access_count: 0, decay_score: 1.0}) RETURN m`,
-		mem.ID.String(),
-		escapeCypher(mem.Content),
-		escapeCypher(string(mem.Type)),
-		escapeCypher(mem.ProjectID),
-		escapeCypher(string(tagsJSON)),
-		mem.CreatedAt.Format(time.RFC3339),
-	)
-	return r.cypherExec(ctx, q)
+	const q = `CREATE (m:Memory {id: $id, content: $content, type: $type, project_id: $project_id, ` +
+		`tags: $tags, created_at: $created_at, access_count: 0, decay_score: 1.0}) RETURN m`
+	return r.cypherExec(ctx, q, params{
+		"id":         mem.ID.String(),
+		"content":    mem.Content,
+		"type":       string(mem.Type),
+		"project_id": mem.ProjectID,
+		"tags":       string(tagsJSON),
+		"created_at": mem.CreatedAt.Format(time.RFC3339),
+	})
 }
 
 // GetMemory retrieves a single memory node by its UUID. Returns an error
 // if the node does not exist.
 func (r *AGERepository) GetMemory(ctx context.Context, id uuid.UUID) (model.Memory, error) {
-	q := fmt.Sprintf(`MATCH (m:Memory {id: '%s'}) RETURN properties(m)`, id.String())
-	rows, err := r.cypher(ctx, q)
+	const q = `MATCH (m:Memory {id: $id}) RETURN properties(m)`
+	rows, err := r.cypher(ctx, q, params{"id": id.String()})
 	if err != nil {
 		return model.Memory{}, fmt.Errorf("get memory: %w", err)
 	}
@@ -223,30 +316,23 @@ func (r *AGERepository) GetMemory(ctx context.Context, id uuid.UUID) (model.Memo
 // DeleteMemory removes a memory node and all its connected edges using
 // Cypher's DETACH DELETE, which automatically deletes relationships first.
 func (r *AGERepository) DeleteMemory(ctx context.Context, id uuid.UUID) error {
-	q := fmt.Sprintf(`MATCH (m:Memory {id: '%s'}) DETACH DELETE m`, id.String())
-	return r.cypherExec(ctx, q)
+	const q = `MATCH (m:Memory {id: $id}) DETACH DELETE m`
+	return r.cypherExec(ctx, q, params{"id": id.String()})
 }
 
 // IncrementAccessCount atomically increases a memory's access_count by 1.
 // This counter feeds into the ranking layer to prioritize frequently accessed
 // memories during retrieval.
 func (r *AGERepository) IncrementAccessCount(ctx context.Context, id uuid.UUID) error {
-	q := fmt.Sprintf(
-		`MATCH (m:Memory {id: '%s'}) SET m.access_count = m.access_count + 1 RETURN m`,
-		id.String(),
-	)
-	return r.cypherExec(ctx, q)
+	const q = `MATCH (m:Memory {id: $id}) SET m.access_count = m.access_count + 1 RETURN m`
+	return r.cypherExec(ctx, q, params{"id": id.String()})
 }
 
 // UpdateDecayScore sets a memory's decay_score property to the given value.
 // Called by the consolidation pipeline's decay phase after recomputing scores.
 func (r *AGERepository) UpdateDecayScore(ctx context.Context, id uuid.UUID, score float64) error {
-	q := fmt.Sprintf(
-		`MATCH (m:Memory {id: '%s'}) SET m.decay_score = %f RETURN m`,
-		id.String(),
-		score,
-	)
-	return r.cypherExec(ctx, q)
+	const q = `MATCH (m:Memory {id: $id}) SET m.decay_score = $score RETURN m`
+	return r.cypherExec(ctx, q, params{"id": id.String(), "score": score})
 }
 
 // --- Edge ---
@@ -263,25 +349,35 @@ func (r *AGERepository) UpdateDecayScore(ctx context.Context, id uuid.UUID, scor
 // the one now actually in the graph -- so callers observe what was really
 // stored (their own values on first write, the pre-existing ones on a
 // re-assert) rather than blindly echoing their input back.
+//
+// The relationship label is the one value that cannot be a query parameter,
+// since openCypher has no parameter slot for labels. It is validated against
+// the closed set of known relationship types before being interpolated, so
+// only a fixed vocabulary of identifiers can ever reach the query text.
 func (r *AGERepository) CreateEdge(ctx context.Context, edge model.Edge) (model.Edge, error) {
+	if !edge.Relationship.Valid() {
+		return model.Edge{}, fmt.Errorf("create edge: unknown relationship type %q", edge.Relationship)
+	}
 	relLabel := string(edge.Relationship)
+
 	q := fmt.Sprintf(
-		`MATCH (a {id: '%s'}), (b {id: '%s'}) `+
+		`MATCH (a {id: $from_id}), (b {id: $to_id}) `+
 			`MERGE (a)-[e:%s]->(b) `+
-			`SET e.id = coalesce(e.id, '%s'), e.weight = coalesce(e.weight, %f), e.created_at = coalesce(e.created_at, '%s') `+
-			`RETURN {edge_id: e.id, from_id: '%s', to_id: '%s', relationship: '%s', weight: e.weight, created_at: e.created_at}`,
-		edge.FromID.String(),
-		edge.ToID.String(),
-		relLabel,
-		edge.ID.String(),
-		edge.Weight,
-		edge.CreatedAt.Format(time.RFC3339),
-		edge.FromID.String(),
-		edge.ToID.String(),
+			`SET e.id = coalesce(e.id, $edge_id), e.weight = coalesce(e.weight, $weight), `+
+			`e.created_at = coalesce(e.created_at, $created_at) `+
+			`RETURN {edge_id: e.id, from_id: $from_id, to_id: $to_id, relationship: $relationship, `+
+			`weight: e.weight, created_at: e.created_at}`,
 		relLabel,
 	)
 
-	rows, err := r.cypher(ctx, q)
+	rows, err := r.cypher(ctx, q, params{
+		"from_id":      edge.FromID.String(),
+		"to_id":        edge.ToID.String(),
+		"edge_id":      edge.ID.String(),
+		"weight":       edge.Weight,
+		"created_at":   edge.CreatedAt.Format(time.RFC3339),
+		"relationship": relLabel,
+	})
 	if err != nil {
 		return model.Edge{}, fmt.Errorf("create edge: %w", err)
 	}
@@ -313,14 +409,13 @@ func (r *AGERepository) CreateEdge(ctx context.Context, edge model.Edge) (model.
 // to the parent :Project vertex. This two-step operation ensures every session
 // is connected to its project in the graph for traversal queries.
 func (r *AGERepository) CreateSession(ctx context.Context, sess model.Session) error {
-	q := fmt.Sprintf(
-		`CREATE (s:Session {id: '%s', project_id: '%s', agent_id: '%s', started_at: '%s'}) RETURN s`,
-		sess.ID.String(),
-		escapeCypher(sess.ProjectID),
-		escapeCypher(sess.AgentID),
-		sess.StartedAt.Format(time.RFC3339),
-	)
-	if err := r.cypherExec(ctx, q); err != nil {
+	const q = `CREATE (s:Session {id: $id, project_id: $project_id, agent_id: $agent_id, started_at: $started_at}) RETURN s`
+	if err := r.cypherExec(ctx, q, params{
+		"id":         sess.ID.String(),
+		"project_id": sess.ProjectID,
+		"agent_id":   sess.AgentID,
+		"started_at": sess.StartedAt.Format(time.RFC3339),
+	}); err != nil {
 		return err
 	}
 
@@ -333,14 +428,14 @@ func (r *AGERepository) CreateSession(ctx context.Context, sess model.Session) e
 		Weight:       1.0,
 		CreatedAt:    sess.StartedAt,
 	}
-	belongsQ := fmt.Sprintf(
-		`MATCH (s:Session {id: '%s'}), (p:Project {id: '%s'}) CREATE (s)-[e:belongs_to {id: '%s', weight: 1.0, created_at: '%s'}]->(p) RETURN e`,
-		sess.ID.String(),
-		escapeCypher(sess.ProjectID),
-		edge.ID.String(),
-		sess.StartedAt.Format(time.RFC3339),
-	)
-	return r.cypherExec(ctx, belongsQ)
+	const belongsQ = `MATCH (s:Session {id: $session_id}), (p:Project {id: $project_id}) ` +
+		`CREATE (s)-[e:belongs_to {id: $edge_id, weight: 1.0, created_at: $created_at}]->(p) RETURN e`
+	return r.cypherExec(ctx, belongsQ, params{
+		"session_id": sess.ID.String(),
+		"project_id": sess.ProjectID,
+		"edge_id":    edge.ID.String(),
+		"created_at": sess.StartedAt.Format(time.RFC3339),
+	})
 }
 
 // EndSession sets the ended_at timestamp on a session node to the current
@@ -348,12 +443,11 @@ func (r *AGERepository) CreateSession(ctx context.Context, sess model.Session) e
 // an in-place property update on the matched vertex.
 func (r *AGERepository) EndSession(ctx context.Context, id uuid.UUID) (model.Session, error) {
 	now := time.Now().UTC()
-	q := fmt.Sprintf(
-		`MATCH (s:Session {id: '%s'}) SET s.ended_at = '%s' RETURN properties(s)`,
-		id.String(),
-		now.Format(time.RFC3339),
-	)
-	rows, err := r.cypher(ctx, q)
+	const q = `MATCH (s:Session {id: $id}) SET s.ended_at = $ended_at RETURN properties(s)`
+	rows, err := r.cypher(ctx, q, params{
+		"id":       id.String(),
+		"ended_at": now.Format(time.RFC3339),
+	})
 	if err != nil {
 		return model.Session{}, fmt.Errorf("end session: %w", err)
 	}
@@ -372,15 +466,14 @@ func (r *AGERepository) EndSession(ctx context.Context, id uuid.UUID) (model.Ses
 // LinkMemoryToSession creates a :contains edge from a Session to a Memory,
 // recording that the memory was produced or accessed during that session.
 func (r *AGERepository) LinkMemoryToSession(ctx context.Context, sessionID, memoryID uuid.UUID) error {
-	edgeID := uuid.New()
-	q := fmt.Sprintf(
-		`MATCH (s:Session {id: '%s'}), (m:Memory {id: '%s'}) CREATE (s)-[e:contains {id: '%s', weight: 1.0, created_at: '%s'}]->(m) RETURN e`,
-		sessionID.String(),
-		memoryID.String(),
-		edgeID.String(),
-		time.Now().UTC().Format(time.RFC3339),
-	)
-	return r.cypherExec(ctx, q)
+	const q = `MATCH (s:Session {id: $session_id}), (m:Memory {id: $memory_id}) ` +
+		`CREATE (s)-[e:contains {id: $edge_id, weight: 1.0, created_at: $created_at}]->(m) RETURN e`
+	return r.cypherExec(ctx, q, params{
+		"session_id": sessionID.String(),
+		"memory_id":  memoryID.String(),
+		"edge_id":    uuid.New().String(),
+		"created_at": time.Now().UTC().Format(time.RFC3339),
+	})
 }
 
 // --- Query ---
@@ -392,26 +485,47 @@ func (r *AGERepository) LinkMemoryToSession(ctx context.Context, sessionID, memo
 // Results are ordered by created_at DESC and capped at filter.TopK (default 5).
 // Each result gets a placeholder Score of 1.0; real scoring is deferred to
 // the ranking layer.
+// QueryMemories builds a dynamic Cypher MATCH query from the given filter.
+// Filter conditions are AND-ed: project_id, memory types, and keywords.
+// Keywords use Cypher's toLower() + CONTAINS for case-insensitive substring
+// matching against both content and tags (OR-ed within the keyword group).
+// Results are ordered by created_at DESC and capped at filter.TopK (default 5).
+//
+// Only the shape of the query varies with the filter; every filter value is
+// bound as a parameter. The generated Cypher text therefore depends solely on
+// how many keywords and types were supplied, never on their contents.
+//
+// Each result gets a placeholder Score of 1.0; real scoring is deferred to
+// the ranking layer.
 func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) ([]model.MemoryWithContext, error) {
 	var conditions []string
+	p := params{}
+
 	if filter.ProjectID != "" {
-		conditions = append(conditions, fmt.Sprintf("m.project_id = '%s'", escapeCypher(filter.ProjectID)))
+		conditions = append(conditions, `m.project_id = $project_id`)
+		p["project_id"] = filter.ProjectID
 	}
 
 	if len(filter.Types) > 0 {
-		var typeStrs []string
-		for _, t := range filter.Types {
-			typeStrs = append(typeStrs, fmt.Sprintf("'%s'", escapeCypher(string(t))))
+		types := make([]string, len(filter.Types))
+		for i, t := range filter.Types {
+			types[i] = string(t)
 		}
-		conditions = append(conditions, fmt.Sprintf("m.type IN [%s]", strings.Join(typeStrs, ", ")))
+		conditions = append(conditions, `m.type IN $types`)
+		p["types"] = types
 	}
 
-	// For MVP: keyword search via CONTAINS on content and tags.
+	// Keyword search via CONTAINS on content and tags. Each keyword gets its
+	// own numbered parameter; only the placeholder names are built into the
+	// query text.
 	if len(filter.Keywords) > 0 {
 		var keywordConds []string
-		for _, kw := range filter.Keywords {
-			kw = escapeCypher(strings.ToLower(kw))
-			keywordConds = append(keywordConds, fmt.Sprintf("(toLower(m.content) CONTAINS '%s' OR toLower(m.tags) CONTAINS '%s')", kw, kw))
+		for i, kw := range filter.Keywords {
+			name := fmt.Sprintf("kw%d", i)
+			keywordConds = append(keywordConds, fmt.Sprintf(
+				`(toLower(m.content) CONTAINS $%s OR toLower(m.tags) CONTAINS $%s)`, name, name,
+			))
+			p[name] = strings.ToLower(kw)
 		}
 		conditions = append(conditions, "("+strings.Join(keywordConds, " OR ")+")")
 	}
@@ -420,22 +534,17 @@ func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) (
 	if topK <= 0 {
 		topK = 5
 	}
+	p["top_k"] = topK
 
-	var q string
+	q := `MATCH (m:Memory) RETURN properties(m) ORDER BY m.created_at DESC LIMIT $top_k`
 	if len(conditions) > 0 {
 		q = fmt.Sprintf(
-			`MATCH (m:Memory) WHERE %s RETURN properties(m) ORDER BY m.created_at DESC LIMIT %d`,
+			`MATCH (m:Memory) WHERE %s RETURN properties(m) ORDER BY m.created_at DESC LIMIT $top_k`,
 			strings.Join(conditions, " AND "),
-			topK,
-		)
-	} else {
-		q = fmt.Sprintf(
-			`MATCH (m:Memory) RETURN properties(m) ORDER BY m.created_at DESC LIMIT %d`,
-			topK,
 		)
 	}
 
-	rows, err := r.cypher(ctx, q)
+	rows, err := r.cypher(ctx, q, p)
 	if err != nil {
 		return nil, fmt.Errorf("query memories: %w", err)
 	}
@@ -458,12 +567,9 @@ func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) (
 func (r *AGERepository) GetSubgraph(ctx context.Context, centerID uuid.UUID) ([]model.Memory, []model.Edge, error) {
 	// Get direct neighbors. AGE has limited variable-length path support,
 	// so this is a 1-hop lookup.
-	q := fmt.Sprintf(
-		`MATCH (center {id: '%s'})-[e]-(neighbor) RETURN properties(neighbor)`,
-		centerID.String(),
-	)
+	const q = `MATCH (center {id: $center_id})-[e]-(neighbor) RETURN properties(neighbor)`
 
-	rows, err := r.cypher(ctx, q)
+	rows, err := r.cypher(ctx, q, params{"center_id": centerID.String()})
 	if err != nil {
 		return nil, nil, fmt.Errorf("get subgraph: %w", err)
 	}
@@ -565,12 +671,11 @@ func scanOne[T any](rows pgx.Rows) (T, bool, error) {
 // endpoints of each relationship even though the MATCH pattern itself is
 // undirected.
 func (r *AGERepository) getEdgesAround(ctx context.Context, centerID uuid.UUID) ([]model.Edge, error) {
-	q := fmt.Sprintf(
-		`MATCH (center {id: '%s'})-[e]-() RETURN {edge_id: e.id, from_id: startNode(e).id, to_id: endNode(e).id, relationship: label(e), weight: e.weight, created_at: e.created_at}`,
-		centerID.String(),
-	)
+	const q = `MATCH (center {id: $center_id})-[e]-() ` +
+		`RETURN {edge_id: e.id, from_id: startNode(e).id, to_id: endNode(e).id, ` +
+		`relationship: label(e), weight: e.weight, created_at: e.created_at}`
 
-	rows, err := r.cypher(ctx, q)
+	rows, err := r.cypher(ctx, q, params{"center_id": centerID.String()})
 	if err != nil {
 		return nil, err
 	}
@@ -616,15 +721,14 @@ func (r *AGERepository) GetContextEdges(ctx context.Context, ids []uuid.UUID) (m
 
 	idStrs := make([]string, len(ids))
 	for i, id := range ids {
-		idStrs[i] = fmt.Sprintf("'%s'", id.String())
+		idStrs[i] = id.String()
 	}
 
-	q := fmt.Sprintf(
-		`MATCH (m:Memory)-[e]-(n:Memory) WHERE m.id IN [%s] RETURN {memory_id: m.id, relationship: label(e), weight: e.weight, target_id: n.id, target_content: n.content}`,
-		strings.Join(idStrs, ", "),
-	)
+	const q = `MATCH (m:Memory)-[e]-(n:Memory) WHERE m.id IN $ids ` +
+		`RETURN {memory_id: m.id, relationship: label(e), weight: e.weight, ` +
+		`target_id: n.id, target_content: n.content}`
 
-	rows, err := r.cypher(ctx, q)
+	rows, err := r.cypher(ctx, q, params{"ids": idStrs})
 	if err != nil {
 		return nil, err
 	}
@@ -760,7 +864,7 @@ func float32SliceToVectorString(v []float32) string {
 // "node", "edge"). Absence of a row is not an error -- an empty graph counts
 // as zero.
 func (r *AGERepository) count(ctx context.Context, query, label string) (int64, error) {
-	rows, err := r.cypher(ctx, query)
+	rows, err := r.cypher(ctx, query, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -787,13 +891,6 @@ func (r *AGERepository) EdgeCount(ctx context.Context) (int64, error) {
 }
 
 // --- Helpers ---
-
-// escapeCypher escapes single quotes in strings to prevent Cypher injection.
-// This is a minimal defense; parameterized queries should be preferred when
-// AGE adds support for them.
-func escapeCypher(s string) string {
-	return strings.ReplaceAll(s, "'", "\\'")
-}
 
 // memoryProps is the wire shape of a :Memory vertex's properties as returned
 // by Cypher's properties() function. AGE encodes every property as JSON, so
