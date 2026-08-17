@@ -25,9 +25,14 @@ jobs:
         run: go vet ./...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        # Pinned deliberately. The action major version and the linter major
+        # version must agree: v6 installs golangci-lint v1, which rejects the
+        # v2 .golangci.yml schema outright. "latest" for the linter is also
+        # avoided so a future major bump breaks on a version bump we control
+        # rather than on an unrelated PR.
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.12.2
           install-mode: goinstall
 
       - name: Proto lint (buf)
