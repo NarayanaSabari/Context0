@@ -351,6 +351,30 @@ What happens when an agent stores a memory.
 
 What happens when an agent queries for memories.
 
+> **Ranking, as implemented.** Retrieval runs two strategies in parallel -- graph
+> keyword/tag matching and pgvector similarity -- and merges them. Each candidate
+> carries a `relevance` score in [0, 1]: cosine similarity for vector hits, the
+> fraction of query keywords matched for graph hits, combined with a bounded
+> boost when both strategies find the same memory.
+>
+> The final score is a weighted sum of four normalized signals:
+>
+> ```
+> score = 0.55 × relevance     # does it answer the query
+>       + 0.25 × recency       # exp decay, 7-day half-life
+>       + 0.10 × frequency     # log(access_count), saturating
+>       + 0.10 × type_priority # semantic 1.0 > procedural 0.9 > episodic 0.6
+> ```
+>
+> The weights sum to 1.0, so scores are in [0, 1] and comparable across queries.
+> Relevance dominates deliberately: recency, frequency, and type only separate
+> memories that already answer the query. Ties break by memory ID, so identical
+> queries return identical orderings. See `internal/ranking`.
+>
+> `decay_score` and edge weight are stored and shown in results, but do not
+> currently feed the retrieval score; decay drives the consolidation pipeline
+> in §6 instead.
+
 ```
   Agent                  API Server         Query Service        Graph Service       PG + AGE
     │                       │                    │                    │                 │
@@ -390,11 +414,10 @@ What happens when an agent queries for memories.
     │                       │                    │◀───────────────────│                 │
     │                       │                    │                    │                 │
     │                       │                    │  3. Rank results   │                 │
-    │                       │                    │     • edge weight  │                 │
+    │                       │                    │     • relevance    │                 │
     │                       │                    │     • recency      │                 │
     │                       │                    │     • access_count │                 │
-    │                       │                    │     • decay_score  │                 │
-    │                       │                    │     • confidence   │                 │
+    │                       │                    │     • type         │                 │
     │                       │                    │                    │                 │
     │                       │                    │  4. Top-K results  │                 │
     │                       │                    │     with context   │                 │
