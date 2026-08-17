@@ -785,6 +785,35 @@ func TestInitSchema_RejectsDimensionMismatch(t *testing.T) {
 	}
 }
 
+// TestInitSchema_ZeroDimAdoptsExistingSchema is the counterpart to the guard
+// above, and guards a regression the guard itself introduced.
+//
+// Callers that never produce embeddings pass dimension 0 to mean "whatever the
+// database already uses" -- cmd/consolidate does exactly this, because a
+// maintenance job has no business knowing which embedding model the server runs.
+// When 0 was coerced to the 384 default, the mismatch check then aborted that
+// job on any deployment using a different model, taking down decay and pruning
+// for the whole cluster.
+func TestInitSchema_ZeroDimAdoptsExistingSchema(t *testing.T) {
+	repo, ctx := testRepo(t)
+
+	// testRepo has already created the table at testEmbeddingDim.
+	adopting := NewAGERepository(repo.pool, 0)
+	if err := adopting.InitSchema(ctx); err != nil {
+		t.Fatalf("InitSchema with dimension 0 must adopt the existing schema, got: %v", err)
+	}
+	if adopting.embeddingDim != testEmbeddingDim {
+		t.Errorf("adopted dimension = %d, want %d", adopting.embeddingDim, testEmbeddingDim)
+	}
+
+	// Adoption must not weaken the guard: an explicit, wrong dimension is
+	// still an error.
+	wrong := NewAGERepository(repo.pool, testEmbeddingDim*2)
+	if err := wrong.InitSchema(ctx); err == nil {
+		t.Error("an explicit mismatched dimension must still be rejected")
+	}
+}
+
 // TestConcurrentWritesUseDistinctConnections exercises the AfterConnect hook
 // that sets search_path. A pool that applied it only to the first connection
 // would fail here as soon as a second connection is opened.

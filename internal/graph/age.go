@@ -9,6 +9,7 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -28,6 +29,11 @@ const GraphName = "context0"
 // searchPath puts ag_catalog ahead of the default schemas so AGE's custom
 // types (agtype, graphid) resolve unqualified.
 const searchPath = `SET search_path = ag_catalog, "$user", public`
+
+// defaultEmbeddingDim is the width used when creating memory_embeddings for a
+// database that has none yet and the caller did not specify one. It matches
+// the bag-of-words embedder and common small transformer models.
+const defaultEmbeddingDim = 384
 
 // NewPool opens a connection pool configured for Apache AGE.
 //
@@ -91,10 +97,14 @@ type AGERepository struct {
 //   - 768: nomic-embed-text / text-embedding-004
 //   - 1536: text-embedding-3-small (OpenAI)
 //
-// If embeddingDim is zero or negative, it defaults to 384.
+// Pass zero to mean "whatever the database already uses". Callers that never
+// produce embeddings -- the consolidation job, for instance -- do that, so they
+// can run against any deployment without knowing which model the server is
+// configured with. When the table does not exist yet, a zero dimension creates
+// it at defaultEmbeddingDim.
 func NewAGERepository(pool *pgxpool.Pool, embeddingDim int) *AGERepository {
-	if embeddingDim <= 0 {
-		embeddingDim = 384
+	if embeddingDim < 0 {
+		embeddingDim = 0
 	}
 	return &AGERepository{pool: pool, embeddingDim: embeddingDim}
 }
@@ -125,6 +135,19 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 	// Embeddings table: bridges AGE memory nodes (by UUID string) to their
 	// dense vector representations. The project_id column enables scoped
 	// similarity search without joining back into the AGE graph.
+	//
+	// A zero embeddingDim means the caller has no opinion, so adopt whatever
+	// the database already uses and fall back to the default only when the
+	// table has yet to be created.
+	if r.embeddingDim == 0 {
+		r.embeddingDim = defaultEmbeddingDim
+		if existing, err := r.existingEmbeddingDim(ctx); err != nil {
+			return err
+		} else if existing > 0 {
+			r.embeddingDim = existing
+		}
+	}
+
 	createTable := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS public.memory_embeddings (
 			memory_id TEXT PRIMARY KEY,
@@ -175,14 +198,9 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 // the configured embedding dimension, returning an actionable error when an
 // earlier run created the table at a different width.
 func (r *AGERepository) verifyEmbeddingDim(ctx context.Context) error {
-	// atttypmod carries the declared dimension of a pgvector column.
-	const q = `SELECT atttypmod FROM pg_attribute
-	           WHERE attrelid = 'public.memory_embeddings'::regclass
-	             AND attname = 'embedding'`
-
-	var actual int
-	if err := r.pool.QueryRow(ctx, q).Scan(&actual); err != nil {
-		return fmt.Errorf("read embedding column dimension: %w", err)
+	actual, err := r.existingEmbeddingDim(ctx)
+	if err != nil {
+		return err
 	}
 
 	if actual > 0 && actual != r.embeddingDim {
@@ -196,6 +214,31 @@ func (r *AGERepository) verifyEmbeddingDim(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// existingEmbeddingDim reports the declared width of the memory_embeddings
+// vector column, or 0 when the table does not exist yet.
+func (r *AGERepository) existingEmbeddingDim(ctx context.Context) (int, error) {
+	// atttypmod carries the declared dimension of a pgvector column. to_regclass
+	// returns NULL rather than erroring when the table is absent, which is the
+	// normal state on a first run.
+	const q = `SELECT atttypmod FROM pg_attribute
+	           WHERE attrelid = to_regclass('public.memory_embeddings')
+	             AND attname = 'embedding'`
+
+	var dim int
+	err := r.pool.QueryRow(ctx, q).Scan(&dim)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read embedding column dimension: %w", err)
+	}
+	if dim < 0 {
+		// An unparameterized vector column reports -1.
+		return 0, nil
+	}
+	return dim, nil
 }
 
 // params holds the values bound to a Cypher query's $named placeholders.
