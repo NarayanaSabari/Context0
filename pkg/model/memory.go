@@ -70,8 +70,20 @@ type MemoryWithContext struct {
 	// by the repository query itself.
 	Context []ContextEdge `json:"context,omitempty"`
 
-	// Score is the composite relevance score combining vector similarity,
-	// decay, and graph proximity. Higher is more relevant.
+	// Relevance is the retrieval-stage match quality in [0, 1]: how well this
+	// memory answers the query text itself, independent of when it was created
+	// or how often it has been read. Vector retrieval sets it from cosine
+	// similarity; graph retrieval sets it from lexical keyword overlap. A query
+	// with no search terms leaves it at 1.0 for every candidate, making it a
+	// constant that cannot distort the remaining signals.
+	//
+	// Ranking consumes this field; it is the only channel through which
+	// retrieval can influence the final order.
+	Relevance float64 `json:"relevance"`
+
+	// Score is the composite relevance score combining query relevance,
+	// recency, access frequency, and memory type. Higher is more relevant.
+	// Assigned by the ranking layer, which overwrites whatever was here.
 	Score float64 `json:"score"`
 }
 

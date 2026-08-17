@@ -2,6 +2,9 @@ package service
 
 import (
 	"testing"
+
+	"github.com/context0/context0/pkg/model"
+	"github.com/google/uuid"
 )
 
 func TestExtractKeywords(t *testing.T) {
@@ -71,5 +74,73 @@ func TestHasOverlappingTags(t *testing.T) {
 				t.Errorf("hasOverlappingTags(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestMergeResults_CarriesRelevanceForward guards the contract between
+// retrieval and ranking: whatever the two retrievers determined about query
+// match quality must survive the merge in the Relevance field, because that is
+// the only channel ranking reads.
+func TestMergeResults_CarriesRelevanceForward(t *testing.T) {
+	graphOnly := uuid.New()
+	vectorOnly := uuid.New()
+	both := uuid.New()
+
+	graphResults := []model.MemoryWithContext{
+		{Memory: model.Memory{ID: graphOnly}, Relevance: 0.8},
+		{Memory: model.Memory{ID: both}, Relevance: 0.6},
+	}
+	// The repository reports cosine similarity in Score, not Relevance.
+	vectorResults := []model.MemoryWithContext{
+		{Memory: model.Memory{ID: vectorOnly}, Score: 0.7},
+		{Memory: model.Memory{ID: both}, Score: 0.5},
+	}
+
+	merged := mergeResults(graphResults, vectorResults)
+
+	if len(merged) != 3 {
+		t.Fatalf("expected 3 deduplicated results, got %d", len(merged))
+	}
+
+	byID := make(map[uuid.UUID]model.MemoryWithContext, len(merged))
+	for _, m := range merged {
+		byID[m.Memory.ID] = m
+	}
+
+	if got := byID[graphOnly].Relevance; got != 0.8 {
+		t.Errorf("graph-only relevance = %f, want 0.8", got)
+	}
+	if got := byID[vectorOnly].Relevance; got != 0.7 {
+		t.Errorf("vector-only relevance = %f, want 0.7 (cosine similarity promoted)", got)
+	}
+
+	// Agreement between retrievers must lift the memory above either input.
+	if got := byID[both].Relevance; got <= 0.6 {
+		t.Errorf("cross-retriever agreement should boost relevance above 0.6, got %f", got)
+	} else if got > 1.0 {
+		t.Errorf("merged relevance %f exceeds 1.0", got)
+	}
+}
+
+// TestMergeResults_IsDeterministic pins the ordering guarantee. Merging happens
+// through a map, and Go randomizes map iteration, so without an explicit sort
+// the candidate order would vary between identical queries.
+func TestMergeResults_IsDeterministic(t *testing.T) {
+	var graphResults []model.MemoryWithContext
+	for i := 0; i < 10; i++ {
+		graphResults = append(graphResults, model.MemoryWithContext{
+			Memory:    model.Memory{ID: uuid.New()},
+			Relevance: 0.5,
+		})
+	}
+
+	first := mergeResults(graphResults, nil)
+	for i := 0; i < 20; i++ {
+		got := mergeResults(graphResults, nil)
+		for j := range got {
+			if got[j].Memory.ID != first[j].Memory.ID {
+				t.Fatalf("mergeResults order varies between identical calls at %d", j)
+			}
+		}
 	}
 }

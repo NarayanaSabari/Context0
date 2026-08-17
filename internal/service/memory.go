@@ -19,6 +19,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -155,6 +156,16 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 		return nil, status.Errorf(codes.Internal, "graph query failed: %v", err)
 	}
 
+	// The graph retriever matches keywords with a boolean CONTAINS, so grade
+	// each hit lexically here to recover a comparable relevance signal.
+	for i := range graphResults {
+		graphResults[i].Relevance = ranking.LexicalRelevance(
+			graphResults[i].Memory.Content,
+			graphResults[i].Memory.Tags,
+			filter.Keywords,
+		)
+	}
+
 	var vectorResults []model.MemoryWithContext
 	if s.embedder != nil && req.Query != "" {
 		if queryVec, err := s.embedder.Embed(req.Query); err == nil {
@@ -162,10 +173,11 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 		}
 	}
 
-	// Merge: deduplicate by ID, boost memories found by both methods.
+	// Merge: deduplicate by ID, boosting memories both retrievers agree on.
 	results := mergeResults(graphResults, vectorResults)
 
-	// Rank results using scoring function.
+	// Rank results using scoring function. This consumes the Relevance set
+	// above, so retrieval quality drives the final order.
 	results = ranking.RankResults(results, int(filter.TopK))
 
 	// Populate context edges for the (already truncated) top-K results in a
@@ -651,36 +663,49 @@ func extractKeywords(query string) []string {
 	return keywords
 }
 
-// mergeResults combines graph-retrieved and vector-retrieved results into a single
-// deduplicated slice. When a memory appears in both result sets, its score is
-// boosted by 50% of the vector score, rewarding memories that are relevant across
-// both retrieval strategies.
+// mergeResults combines graph-retrieved and vector-retrieved results into a
+// single deduplicated slice, carrying each candidate's retrieval relevance
+// forward for the ranking layer.
+//
+// Graph hits arrive with a lexical Relevance already assigned by the caller;
+// vector hits carry cosine similarity in Score, which is normalized into
+// Relevance here. When a memory is found by both retrievers the two signals are
+// combined via ranking.CombineRelevance, so cross-strategy agreement raises the
+// memory above what either retriever claimed alone.
+//
+// The returned slice is sorted by memory ID. Merging happens through a map, and
+// Go randomizes map iteration, so without this the candidate order (and
+// therefore the resolution of any score tie downstream) would vary between
+// identical queries.
 func mergeResults(graph, vector []model.MemoryWithContext) []model.MemoryWithContext {
-	seen := make(map[uuid.UUID]*model.MemoryWithContext)
+	seen := make(map[uuid.UUID]*model.MemoryWithContext, len(graph)+len(vector))
 
-	// Add all graph results.
+	// Add all graph results, whose Relevance was set by the caller.
 	for i := range graph {
-		id := graph[i].Memory.ID
 		r := graph[i]
-		seen[id] = &r
+		seen[r.Memory.ID] = &r
 	}
 
-	// Merge vector results — boost score if already found by graph.
+	// Merge vector results. The repository reports cosine similarity in Score;
+	// promote it to Relevance so both retrievers speak the same language.
 	for i := range vector {
-		id := vector[i].Memory.ID
-		if existing, ok := seen[id]; ok {
-			// Found by both methods — boost by 50%.
-			existing.Score += vector[i].Score * 0.5
-		} else {
-			r := vector[i]
-			seen[id] = &r
+		r := vector[i]
+		r.Relevance = r.Score
+		if existing, ok := seen[r.Memory.ID]; ok {
+			// Found by both retrievers: agreement is evidence of relevance.
+			existing.Relevance = ranking.CombineRelevance(existing.Relevance, r.Relevance)
+			continue
 		}
+		seen[r.Memory.ID] = &r
 	}
 
 	results := make([]model.MemoryWithContext, 0, len(seen))
 	for _, r := range seen {
 		results = append(results, *r)
 	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Memory.ID.String() < results[j].Memory.ID.String()
+	})
 	return results
 }
 
