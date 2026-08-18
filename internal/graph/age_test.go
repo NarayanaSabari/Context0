@@ -861,20 +861,24 @@ func TestPoolRequiresValidDSN(t *testing.T) {
 // Several query shapes in this package look interchangeable but are not: AGE
 // silently falls back to a sequential scan over the whole label for some of
 // them, which is invisible in a correctness test and only shows up as latency
-// that grows with the corpus. Each case below was measured during the 2026-08
+// that grows with the corpus. Each shape below was measured during the 2026-08
 // performance audit; see docs/research/performance-audit-2026-08.md.
 //
-// The plans are captured through pgx rather than psql because AGE requires the
+// The assertion is index *capability*, not the planner's choice: with
+// enable_seqscan off, a shape that can reach the index will, and one that
+// cannot still won't. Asserting on the unmodified plan would make the test a
+// function of table size -- on a small table a sequential scan is genuinely
+// cheapest, so the test would fail on a fresh CI database while passing
+// locally against a large one.
+//
+// Plans are captured through pgx rather than psql because AGE requires the
 // third cypher() argument to be a real bind parameter, so psql cannot reproduce
 // the parameterized plans the server actually runs.
 func TestQueryPlansUseIndexes(t *testing.T) {
 	repo, ctx := testRepo(t)
 	projectID := newProjectID(t)
 
-	// Enough rows that the planner prefers an index when one is usable. With a
-	// nearly empty table a sequential scan is legitimately cheapest, and the
-	// test would pass for the wrong reason.
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 50; i++ {
 		storeMemory(t, repo, ctx, newMemory(projectID, fmt.Sprintf("plan probe %d", i), "plan"))
 	}
 	if _, err := repo.pool.Exec(ctx, fmt.Sprintf(`ANALYZE %s."Memory"`, GraphName)); err != nil {
@@ -890,21 +894,21 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 	}{
 		{
 			// GetMemory, DeleteMemory, IncrementAccessCount, UpdateDecayScore.
-			"lookup by id uses the property index",
+			"lookup by id",
 			`MATCH (m:Memory) WHERE m.id = $id RETURN properties(m)`,
 			`{"id": "` + idA + `"}`,
 		},
 		{
 			// QueryMemories: the filter on nearly every read.
-			"project filter uses the property index",
+			"project filter",
 			`MATCH (m:Memory) WHERE m.project_id = $project_id RETURN properties(m) ORDER BY m.created_at DESC LIMIT $top_k`,
 			`{"project_id": "` + projectID + `", "top_k": 5}`,
 		},
 		{
-			// GetContextEdges and IncrementAccessCounts. A parameterized
-			// `WHERE m.id IN $ids` measured a full sequential scan here;
-			// UNWIND over the same parameter drives an index scan per element.
-			"UNWIND over an id list uses the property index",
+			// GetContextEdges and IncrementAccessCounts. The equivalent-looking
+			// `WHERE m.id IN $ids` cannot reach the index at all, which is why
+			// both callers use UNWIND.
+			"UNWIND over an id list",
 			`UNWIND $ids AS wanted MATCH (m:Memory) WHERE m.id = wanted RETURN properties(m)`,
 			`{"ids": ["` + idA + `", "` + idB + `"]}`,
 		},
@@ -912,31 +916,85 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			sql := fmt.Sprintf(
-				`EXPLAIN SELECT * FROM ag_catalog.cypher('%s', $$ %s $$, $1) AS (result ag_catalog.agtype)`,
-				GraphName, c.query,
-			)
-			rows, err := repo.pool.Query(ctx, sql, c.args)
-			if err != nil {
-				t.Fatalf("explain failed: %v", err)
-			}
-			var plan []string
-			for rows.Next() {
-				var line string
-				if err := rows.Scan(&line); err != nil {
-					t.Fatalf("scan plan: %v", err)
-				}
-				plan = append(plan, line)
-			}
-			rows.Close()
-			if err := rows.Err(); err != nil {
-				t.Fatalf("read plan: %v", err)
-			}
-
-			joined := strings.Join(plan, "\n")
-			if !strings.Contains(joined, "Index Scan") && !strings.Contains(joined, "Bitmap Index Scan") {
-				t.Errorf("query planned without an index scan, so it will degrade as the corpus grows:\n%s", joined)
+			plan := explainWithoutSeqScan(t, repo, ctx, c.query, c.args)
+			if !strings.Contains(plan, "Index Scan") && !strings.Contains(plan, "Bitmap Index Scan") {
+				t.Errorf("query cannot use an index, so it will degrade as the corpus grows:\n%s", plan)
 			}
 		})
 	}
+}
+
+// TestParameterizedInListCannotUseIndex documents, and pins, the reason
+// GetContextEdges and IncrementAccessCounts are written with UNWIND.
+//
+// A parameterized `WHERE m.id IN $ids` reads as the obvious way to batch by id,
+// and it is the shape a future contributor is most likely to "simplify" back
+// to. It cannot reach the property index even with sequential scans disabled,
+// and measured 30.9ms against 2.3ms for UNWIND at 50k vertices.
+//
+// If AGE ever fixes this, this test fails and the UNWIND workaround can go.
+func TestParameterizedInListCannotUseIndex(t *testing.T) {
+	repo, ctx := testRepo(t)
+	projectID := newProjectID(t)
+
+	for i := 0; i < 50; i++ {
+		storeMemory(t, repo, ctx, newMemory(projectID, fmt.Sprintf("in-list probe %d", i), "plan"))
+	}
+	if _, err := repo.pool.Exec(ctx, fmt.Sprintf(`ANALYZE %s."Memory"`, GraphName)); err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+
+	plan := explainWithoutSeqScan(t, repo, ctx,
+		`MATCH (m:Memory) WHERE m.id IN $ids RETURN properties(m)`,
+		`{"ids": ["`+uuid.NewString()+`"]}`)
+
+	if strings.Contains(plan, "Index Scan") || strings.Contains(plan, "Bitmap Index Scan") {
+		t.Logf("AGE now plans a parameterized IN list against the index:\n%s", plan)
+		t.Error("parameterized IN can now use the index; the UNWIND workaround in " +
+			"GetContextEdges and IncrementAccessCounts is no longer needed")
+	}
+}
+
+// explainWithoutSeqScan returns the plan for a parameterized Cypher query with
+// sequential scans disabled, which reveals whether the shape can reach an index
+// at all rather than whether the planner happened to prefer one.
+func explainWithoutSeqScan(t *testing.T, repo *AGERepository, ctx context.Context, query, args string) string {
+	t.Helper()
+
+	conn, err := repo.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire connection: %v", err)
+	}
+	defer conn.Release()
+
+	// Scoped to this pooled connection and reset before release, so it cannot
+	// leak into another test.
+	if _, err := conn.Exec(ctx, `SET enable_seqscan = off`); err != nil {
+		t.Fatalf("disable seqscan: %v", err)
+	}
+	defer func() { _, _ = conn.Exec(ctx, `SET enable_seqscan = on`) }()
+
+	sql := fmt.Sprintf(
+		`EXPLAIN SELECT * FROM ag_catalog.cypher('%s', $$ %s $$, $1) AS (result ag_catalog.agtype)`,
+		GraphName, query,
+	)
+	rows, err := conn.Query(ctx, sql, args)
+	if err != nil {
+		t.Fatalf("explain failed: %v", err)
+	}
+	defer rows.Close()
+
+	var plan []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatalf("scan plan: %v", err)
+		}
+		plan = append(plan, line)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+
+	return strings.Join(plan, "\n")
 }
