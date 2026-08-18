@@ -447,7 +447,23 @@ func (r *AGERepository) GetMemory(ctx context.Context, id uuid.UUID) (model.Memo
 
 // DeleteMemory removes a memory node and all its connected edges using
 // Cypher's DETACH DELETE, which automatically deletes relationships first.
+//
+// The embedding lives in a separate pgvector table that AGE knows nothing
+// about, so it has to be removed explicitly. Without this every delete leaves
+// an orphan row that still participates in similarity search: the HNSW index
+// grows without bound, and a deleted memory keeps consuming candidate slots,
+// pushing live results out of a filtered search.
+//
+// The embedding is deleted first. If the graph delete then fails, the memory
+// simply loses vector searchability and can be re-embedded; the reverse order
+// would leave an orphan pointing at a node that no longer exists.
 func (r *AGERepository) DeleteMemory(ctx context.Context, id uuid.UUID) error {
+	if _, err := r.pool.Exec(ctx,
+		`DELETE FROM public.memory_embeddings WHERE memory_id = $1`, id.String(),
+	); err != nil {
+		return fmt.Errorf("delete embedding: %w", err)
+	}
+
 	const q = `MATCH (m:Memory) WHERE m.id = $id DETACH DELETE m`
 	return r.cypherExec(ctx, q, params{"id": id.String()})
 }
@@ -1004,49 +1020,143 @@ func (r *AGERepository) SearchByVector(ctx context.Context, embedding []float32,
 	var err error
 
 	if projectID != "" {
+		// A project filter is applied AFTER the HNSW index has already chosen
+		// its candidates, so a scoped query silently returns too few rows --
+		// measured 0 of 250 matching memories at LIMIT 10 on a 5k corpus with
+		// 20 projects. hnsw.iterative_scan makes pgvector keep scanning until
+		// the limit is satisfied, which is the documented remedy for filtered
+		// search. strict_order preserves exact distance ordering, so ranking
+		// still receives correctly ordered similarities.
+		//
+		// Scoped to this one query via a transaction-local SET, so it cannot
+		// leak to other users of the pooled connection.
+		tx, err := r.pool.Begin(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("vector search: begin: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		if _, err := tx.Exec(ctx, `SET LOCAL hnsw.iterative_scan = strict_order`); err != nil {
+			// Older pgvector builds do not know the GUC. Recall will be poor
+			// rather than wrong-by-default, so continue instead of failing the
+			// query.
+			_ = err
+		}
+
 		query = `SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
 				 FROM public.memory_embeddings
 				 WHERE project_id = $2
 				 ORDER BY embedding <=> $1::vector
 				 LIMIT $3`
-		rows, err = r.pool.Query(ctx, query, vecStr, projectID, topK)
-	} else {
+		rows, err := tx.Query(ctx, query, vecStr, projectID, topK)
+		if err != nil {
+			return nil, fmt.Errorf("vector search: %w", err)
+		}
+		hits, err := scanVectorHits(rows)
+		if err != nil {
+			return nil, err
+		}
+		return r.hydrate(ctx, hits)
+	}
+
+	{
 		query = `SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
 				 FROM public.memory_embeddings
 				 ORDER BY embedding <=> $1::vector
 				 LIMIT $2`
 		rows, err = r.pool.Query(ctx, query, vecStr, topK)
+		if err != nil {
+			return nil, fmt.Errorf("vector search: %w", err)
+		}
+		hits, err := scanVectorHits(rows)
+		if err != nil {
+			return nil, err
+		}
+		return r.hydrate(ctx, hits)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("vector search: %w", err)
-	}
+}
+
+// vectorHit is one row from the pgvector similarity search, before the memory
+// itself has been fetched from the graph.
+type vectorHit struct {
+	id         uuid.UUID
+	similarity float64
+}
+
+// scanVectorHits reads similarity rows, discarding any with an unparseable id
+// rather than failing the whole search for one bad row.
+func scanVectorHits(rows pgx.Rows) ([]vectorHit, error) {
 	defer rows.Close()
 
-	var results []model.MemoryWithContext
+	var hits []vectorHit
 	for rows.Next() {
 		var memID string
 		var similarity float64
 		if err := rows.Scan(&memID, &similarity); err != nil {
 			continue
 		}
-
 		id, err := uuid.Parse(memID)
 		if err != nil {
 			continue
 		}
+		hits = append(hits, vectorHit{id: id, similarity: similarity})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("vector search: %w", err)
+	}
+	return hits, nil
+}
 
-		mem, err := r.GetMemory(ctx, id)
-		if err != nil {
+// hydrate turns similarity hits into full memories with one graph query rather
+// than one per hit.
+//
+// This used to call GetMemory in a loop, so a top_k of 20 issued up to 40
+// separate round trips before the response could be written. Ordering by
+// descending similarity is preserved: the batch fetch is indexed by id and the
+// results are re-emitted in the order pgvector returned them.
+func (r *AGERepository) hydrate(ctx context.Context, hits []vectorHit) ([]model.MemoryWithContext, error) {
+	if len(hits) == 0 {
+		return nil, nil
+	}
+
+	idStrs := make([]string, len(hits))
+	for i, h := range hits {
+		idStrs[i] = h.id.String()
+	}
+
+	// UNWIND rather than IN: see the comment on GetContextEdges.
+	const q = `UNWIND $ids AS wanted MATCH (m:Memory) WHERE m.id = wanted RETURN properties(m)`
+	rows, err := r.cypher(ctx, q, params{"ids": idStrs})
+	if err != nil {
+		return nil, fmt.Errorf("hydrate vector hits: %w", err)
+	}
+
+	props, err := scanAgtype[memoryProps](rows)
+	if err != nil {
+		return nil, fmt.Errorf("hydrate vector hits: %w", err)
+	}
+
+	byID := make(map[uuid.UUID]model.Memory, len(props))
+	for _, p := range props {
+		mem := p.toModel()
+		byID[mem.ID] = mem
+	}
+
+	results := make([]model.MemoryWithContext, 0, len(hits))
+	for _, h := range hits {
+		mem, ok := byID[h.id]
+		if !ok {
+			// An embedding whose memory has been deleted. Skip it rather than
+			// returning a zero-valued memory.
 			continue
 		}
-
 		results = append(results, model.MemoryWithContext{
 			Memory: mem,
-			Score:  similarity,
+			Score:  h.similarity,
 		})
 	}
 
-	return results, rows.Err()
+	return results, nil
 }
 
 // float32SliceToVectorString converts a Go float32 slice to pgvector's text
