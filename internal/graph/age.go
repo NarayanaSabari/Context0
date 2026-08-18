@@ -1083,66 +1083,64 @@ func (r *AGERepository) SearchByVector(ctx context.Context, embedding []float32,
 
 	vecStr := float32SliceToVectorString(embedding)
 
-	// Use cosine distance for similarity search.
-	var query string
-	var rows pgx.Rows
-	var err error
+	hits, err := r.nearestNeighbours(ctx, vecStr, projectID, topK)
+	if err != nil {
+		return nil, err
+	}
 
-	if projectID != "" {
-		// A project filter is applied AFTER the HNSW index has already chosen
-		// its candidates, so a scoped query silently returns too few rows --
-		// measured 0 of 250 matching memories at LIMIT 10 on a 5k corpus with
-		// 20 projects. hnsw.iterative_scan makes pgvector keep scanning until
-		// the limit is satisfied, which is the documented remedy for filtered
-		// search. strict_order preserves exact distance ordering, so ranking
-		// still receives correctly ordered similarities.
-		//
-		// Scoped to this one query via a transaction-local SET, so it cannot
-		// leak to other users of the pooled connection.
-		tx, err := r.pool.Begin(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("vector search: begin: %w", err)
-		}
-		defer func() { _ = tx.Rollback(ctx) }()
+	// Hydration runs after the similarity search has fully released its
+	// connection. Doing it inline would hold two pool connections per call --
+	// one for the search, one for the graph fetch -- and deadlock the pool as
+	// soon as concurrency reached MaxConns.
+	return r.hydrate(ctx, hits)
+}
 
-		if _, err := tx.Exec(ctx, `SET LOCAL hnsw.iterative_scan = strict_order`); err != nil {
-			// Older pgvector builds do not know the GUC. Recall will be poor
-			// rather than wrong-by-default, so continue instead of failing the
-			// query.
-			_ = err
-		}
-
-		query = `SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
-				 FROM public.memory_embeddings
-				 WHERE project_id = $2
-				 ORDER BY embedding <=> $1::vector
-				 LIMIT $3`
-		rows, err := tx.Query(ctx, query, vecStr, projectID, topK)
+// nearestNeighbours runs the pgvector similarity search and returns the raw
+// hits, holding at most one pool connection and releasing it before returning.
+func (r *AGERepository) nearestNeighbours(ctx context.Context, vecStr, projectID string, topK int) ([]vectorHit, error) {
+	if projectID == "" {
+		const q = `SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
+				   FROM public.memory_embeddings
+				   ORDER BY embedding <=> $1::vector
+				   LIMIT $2`
+		rows, err := r.pool.Query(ctx, q, vecStr, topK)
 		if err != nil {
 			return nil, fmt.Errorf("vector search: %w", err)
 		}
-		hits, err := scanVectorHits(rows)
-		if err != nil {
-			return nil, err
-		}
-		return r.hydrate(ctx, hits)
+		return scanVectorHits(rows)
 	}
 
-	{
-		query = `SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
-				 FROM public.memory_embeddings
-				 ORDER BY embedding <=> $1::vector
-				 LIMIT $2`
-		rows, err = r.pool.Query(ctx, query, vecStr, topK)
-		if err != nil {
-			return nil, fmt.Errorf("vector search: %w", err)
-		}
-		hits, err := scanVectorHits(rows)
-		if err != nil {
-			return nil, err
-		}
-		return r.hydrate(ctx, hits)
+	// A project filter is applied AFTER the HNSW index has already chosen its
+	// candidates, so a scoped query can silently return far too few rows --
+	// measured 0 of 250 matching memories on a 5k corpus with 20 projects.
+	// hnsw.iterative_scan makes pgvector keep scanning until the limit is
+	// satisfied, and strict_order preserves exact distance ordering so ranking
+	// still receives correctly ordered similarities.
+	//
+	// SET LOCAL needs a transaction, which is also what confines the setting to
+	// this query rather than leaking to the next user of the pooled connection.
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("vector search: begin: %w", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SET LOCAL hnsw.iterative_scan = strict_order`); err != nil {
+		// Older pgvector builds do not know the GUC. Recall degrades rather
+		// than the query failing, so carry on.
+		_ = err
+	}
+
+	const q = `SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
+			   FROM public.memory_embeddings
+			   WHERE project_id = $2
+			   ORDER BY embedding <=> $1::vector
+			   LIMIT $3`
+	rows, err := tx.Query(ctx, q, vecStr, projectID, topK)
+	if err != nil {
+		return nil, fmt.Errorf("vector search: %w", err)
+	}
+	return scanVectorHits(rows)
 }
 
 // vectorHit is one row from the pgvector similarity search, before the memory

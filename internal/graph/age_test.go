@@ -22,6 +22,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1314,5 +1315,59 @@ func TestCreateEdges_EmptyIsNoOp(t *testing.T) {
 	repo, ctx := testRepo(t)
 	if err := repo.CreateEdges(ctx, nil); err != nil {
 		t.Errorf("CreateEdges(nil) = %v, want no error", err)
+	}
+}
+
+// TestSearchByVector_DoesNotHoldTwoConnections guards against a pool deadlock.
+//
+// The scoped search needs a transaction, because hnsw.iterative_scan is set
+// with SET LOCAL. Hydrating the results inside that transaction's lifetime
+// would hold two pool connections per call -- one for the similarity search and
+// one for the graph fetch -- so concurrency at MaxConns deadlocked: every
+// caller held a connection and waited for one that would never be released.
+//
+// Observed before the fix at both MaxConns=4 and the production default of 10:
+// every request failed with "hydrate vector hits: context deadline exceeded"
+// after blocking for the full timeout.
+func TestSearchByVector_DoesNotHoldTwoConnections(t *testing.T) {
+	repo, ctx := testRepo(t)
+	project := newProjectID(t)
+
+	embedder := newTestEmbedder(testEmbeddingDim)
+	for i := 0; i < 30; i++ {
+		mem := newMemory(project, fmt.Sprintf("connection probe %d", i))
+		storeMemory(t, repo, ctx, mem)
+		if err := repo.StoreEmbedding(ctx, mem.ID, project, embedder(mem.Content)); err != nil {
+			t.Fatalf("store embedding: %v", err)
+		}
+	}
+
+	query := embedder("connection probe 3")
+
+	// Saturate the pool: if a single call needs two connections, this cannot
+	// complete.
+	concurrency := int(repo.pool.Stat().MaxConns())
+	var wg sync.WaitGroup
+	errs := make(chan error, concurrency)
+
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Comfortably longer than the query needs, far shorter than the
+			// test timeout, so a deadlock surfaces as a clear failure.
+			c, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			_, err := repo.SearchByVector(c, query, project, 5)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent scoped vector search failed, pool likely exhausted: %v", err)
+		}
 	}
 }
