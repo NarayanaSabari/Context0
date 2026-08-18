@@ -174,7 +174,10 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 	}
 
 	// Merge: deduplicate by ID, boosting memories both retrievers agree on.
-	results := mergeResults(graphResults, vectorResults)
+	// Keywords are passed so the merge can tell a candidate that lexically
+	// matched from one the vector retriever surfaced on similarity alone; the
+	// two scores are otherwise not comparable. See ranking.RelevanceTier.
+	results := mergeResults(graphResults, vectorResults, filter.Keywords)
 
 	// Rank results using scoring function. This consumes the Relevance set
 	// above, so retrieval quality drives the final order.
@@ -751,26 +754,38 @@ func extractKeywords(query string) []string {
 // Go randomizes map iteration, so without this the candidate order (and
 // therefore the resolution of any score tie downstream) would vary between
 // identical queries.
-func mergeResults(graph, vector []model.MemoryWithContext) []model.MemoryWithContext {
+func mergeResults(graph, vector []model.MemoryWithContext, keywords []string) []model.MemoryWithContext {
 	seen := make(map[uuid.UUID]*model.MemoryWithContext, len(graph)+len(vector))
+	hasKeywords := len(keywords) > 0
 
-	// Add all graph results, whose Relevance was set by the caller.
+	// Track the cosine signal separately from the lexical one. Overwriting a
+	// lexical score with a cosine score, or vice versa, is what let an
+	// unmatched memory outrank a verbatim match.
+	cosine := make(map[uuid.UUID]float64, len(vector))
+	for _, r := range vector {
+		cosine[r.Memory.ID] = r.Score
+	}
+
+	// Add all graph results, whose lexical Relevance was set by the caller.
 	for i := range graph {
 		r := graph[i]
 		seen[r.Memory.ID] = &r
 	}
 
-	// Merge vector results. The repository reports cosine similarity in Score;
-	// promote it to Relevance so both retrievers speak the same language.
+	// Add vector-only results. A memory the graph retriever did not return did
+	// not match any keyword, so it carries no lexical evidence.
 	for i := range vector {
 		r := vector[i]
-		r.Relevance = r.Score
-		if existing, ok := seen[r.Memory.ID]; ok {
-			// Found by both retrievers: agreement is evidence of relevance.
-			existing.Relevance = ranking.CombineRelevance(existing.Relevance, r.Relevance)
+		if _, ok := seen[r.Memory.ID]; ok {
 			continue
 		}
+		r.Relevance = 0
 		seen[r.Memory.ID] = &r
+	}
+
+	// Resolve every candidate on one scale.
+	for id, r := range seen {
+		r.Relevance = ranking.RelevanceTier(r.Relevance, cosine[id], hasKeywords)
 	}
 
 	results := make([]model.MemoryWithContext, 0, len(seen))

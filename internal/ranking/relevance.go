@@ -78,6 +78,41 @@ func LexicalRelevance(content string, tags []string, keywords []string) float64 
 	return clamp01(total / float64(distinct))
 }
 
+// RelevanceTier separates candidates that lexically match the query from those
+// that do not, so the two retrievers' scores can be compared at all.
+//
+// The problem this solves: the graph retriever filters by keyword, so every hit
+// it returns genuinely contains the term, and LexicalRelevance grades a content
+// hit at 0.75. The vector retriever runs unfiltered and reports raw cosine
+// similarity, and a bag-of-words embedding routinely scores near-duplicate
+// sentences above 0.85. Those numbers are both "in [0,1]" and are not on the
+// same scale: a memory that does not contain the query term at all entered the
+// merged set at 0.87 and displaced one that did at 0.75. Observed in a soak run
+// as a write not being readable by a keyword unique to its own content.
+//
+// Cosine similarity is a statement about direction in an embedding space, not
+// about evidence, and it cannot be calibrated against lexical matching by
+// scaling constants -- any fixed weighting still lets a sufficiently confident
+// embedding outvote a verbatim match.
+//
+// So the two are ordered rather than averaged. A candidate that contains a
+// query term is always ranked above one that does not; within each tier the
+// available signal orders the results. When the query carries no keywords there
+// is no lexical evidence to prefer and similarity alone decides.
+func RelevanceTier(lexical, cosine float64, hasKeywords bool) float64 {
+	lexical, cosine = clamp01(lexical), clamp01(cosine)
+	if !hasKeywords {
+		return cosine
+	}
+	if lexical > 0 {
+		// Matched tier: [0.5, 1.0]. Lexical strength leads, similarity refines.
+		return clamp01(0.5 + 0.5*CombineRelevance(lexical, cosine))
+	}
+	// Unmatched tier: [0, 0.5). Similarity is the only signal available, and it
+	// can never lift a candidate past one that actually matched.
+	return clamp01(cosine) * 0.499
+}
+
 // CombineRelevance merges the relevance signals for a memory that both
 // retrievers returned. The result is the stronger of the two signals plus a
 // bounded share of the weaker one, so agreement lifts a memory above either

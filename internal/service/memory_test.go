@@ -96,7 +96,7 @@ func TestMergeResults_CarriesRelevanceForward(t *testing.T) {
 		{Memory: model.Memory{ID: both}, Score: 0.5},
 	}
 
-	merged := mergeResults(graphResults, vectorResults)
+	merged := mergeResults(graphResults, vectorResults, []string{"kw"})
 
 	if len(merged) != 3 {
 		t.Fatalf("expected 3 deduplicated results, got %d", len(merged))
@@ -107,18 +107,34 @@ func TestMergeResults_CarriesRelevanceForward(t *testing.T) {
 		byID[m.Memory.ID] = m
 	}
 
-	if got := byID[graphOnly].Relevance; got != 0.8 {
-		t.Errorf("graph-only relevance = %f, want 0.8", got)
+	// Relevance is now tiered rather than passed through raw: candidates that
+	// lexically matched the query outrank those the vector retriever surfaced
+	// on similarity alone, because cosine similarity and lexical match are not
+	// measured on the same scale. Assert the ordering the ranking layer relies
+	// on, not the specific arithmetic.
+	if byID[graphOnly].Relevance <= byID[vectorOnly].Relevance {
+		t.Errorf("a keyword match (%f) must outrank a vector-only hit (%f)",
+			byID[graphOnly].Relevance, byID[vectorOnly].Relevance)
 	}
-	if got := byID[vectorOnly].Relevance; got != 0.7 {
-		t.Errorf("vector-only relevance = %f, want 0.7 (cosine similarity promoted)", got)
+	if byID[both].Relevance <= byID[vectorOnly].Relevance {
+		t.Errorf("a memory found by both retrievers (%f) must outrank a vector-only hit (%f)",
+			byID[both].Relevance, byID[vectorOnly].Relevance)
 	}
 
-	// Agreement between retrievers must lift the memory above either input.
-	if got := byID[both].Relevance; got <= 0.6 {
-		t.Errorf("cross-retriever agreement should boost relevance above 0.6, got %f", got)
-	} else if got > 1.0 {
-		t.Errorf("merged relevance %f exceeds 1.0", got)
+	// Agreement between retrievers must still lift a memory above the same
+	// memory matched lexically alone.
+	lexicalOnly := mergeResults(
+		[]model.MemoryWithContext{{Memory: model.Memory{ID: both}, Relevance: 0.6}},
+		nil, []string{"kw"},
+	)
+	if byID[both].Relevance <= lexicalOnly[0].Relevance {
+		t.Errorf("cross-retriever agreement should boost relevance: %f with agreement vs %f without",
+			byID[both].Relevance, lexicalOnly[0].Relevance)
+	}
+	for id, m := range byID {
+		if m.Relevance > 1.0 || m.Relevance < 0 {
+			t.Errorf("relevance for %s is %f, outside [0,1]", id, m.Relevance)
+		}
 	}
 }
 
@@ -134,9 +150,9 @@ func TestMergeResults_IsDeterministic(t *testing.T) {
 		})
 	}
 
-	first := mergeResults(graphResults, nil)
+	first := mergeResults(graphResults, nil, []string{"kw"})
 	for i := 0; i < 20; i++ {
-		got := mergeResults(graphResults, nil)
+		got := mergeResults(graphResults, nil, []string{"kw"})
 		for j := range got {
 			if got[j].Memory.ID != first[j].Memory.ID {
 				t.Fatalf("mergeResults order varies between identical calls at %d", j)

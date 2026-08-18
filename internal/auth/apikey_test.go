@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -392,5 +393,39 @@ func TestRateLimitAllowsNormalThroughput(t *testing.T) {
 		if !a.allowRequest("id") {
 			t.Fatalf("request %d of 1000 was rate limited at the default limit", i)
 		}
+	}
+}
+
+// TestRateLimitSetsRetryAfter: without this header a well-behaved client has no
+// way to know how long to wait, so it retries immediately and converts one
+// rejection into a hot loop. Observed as 450k rejections in a 120s soak.
+func TestRateLimitSetsRetryAfter(t *testing.T) {
+	a := NewAPIKeyAuth([]string{"ctx0_test_secret"}, 60) // 1/s
+	handler := a.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	var limited *httptest.ResponseRecorder
+	for range 200 {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/v1/memories", nil)
+		req.Header.Set("X-API-Key", "ctx0_test_secret")
+		handler.ServeHTTP(rec, req)
+		if rec.Code == http.StatusTooManyRequests {
+			limited = rec
+			break
+		}
+	}
+	if limited == nil {
+		t.Fatal("never hit the rate limit at 60/min over 200 requests")
+	}
+
+	got := limited.Header().Get("Retry-After")
+	if got == "" {
+		t.Fatal("429 response carries no Retry-After header")
+	}
+	secs, err := strconv.Atoi(got)
+	if err != nil || secs < 1 {
+		t.Errorf("Retry-After = %q, want a positive integer number of seconds", got)
 	}
 }

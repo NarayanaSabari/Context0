@@ -85,6 +85,16 @@ class Client:
             return json.loads(payload) if payload else {}
         except urllib.error.HTTPError as e:
             self.stats.error(op, f"HTTP {e.code}")
+            if e.code == 429:
+                # Honour Retry-After. Retrying a rejection immediately turns one
+                # 429 into a hot loop and reports hundreds of thousands of
+                # "errors" that are really one client refusing to back off,
+                # which buries whatever the soak was meant to find.
+                try:
+                    delay = float(e.headers.get("Retry-After", 1))
+                except (TypeError, ValueError):
+                    delay = 1.0
+                time.sleep(min(delay, 5.0))
             return None
         except Exception as e:
             self.stats.error(op, type(e).__name__)

@@ -84,8 +84,13 @@ check "GOMEMLIMIT derived from limits.memory" "536870912" \
   "$(kubectl exec -n "$NS" "$(api_pod)" -- printenv GOMEMLIMIT)"
 check "pool_max_conns set explicitly in the DSN" "pool_max_conns=10" \
   "$(kubectl exec -n "$NS" "$(api_pod)" -- printenv CONTEXT0_DATABASE_URL)"
-check "rate limit is configurable, not hardcoded" "100" \
-  "$(kubectl exec -n "$NS" "$(api_pod)" -- printenv CONTEXT0_RATE_LIMIT_PER_MINUTE)"
+# Asserts that the chart passes the value through, not what the value is:
+# pinning the number here means every retune of the default breaks the suite for
+# no reason. The default itself is pinned by a unit test against measured
+# service cost.
+check "rate limit is configurable, not hardcoded" "configured" \
+  "$([[ "$(kubectl exec -n "$NS" "$(api_pod)" -- printenv CONTEXT0_RATE_LIMIT_PER_MINUTE)" =~ ^[0-9]+$ ]] \
+    && echo configured || echo missing)"
 
 section "5. Lifecycle: drain outlives the grace period"
 check "preStop hook present" "sleep" \

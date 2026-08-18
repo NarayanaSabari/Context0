@@ -79,13 +79,29 @@ postgres:
     # Used for index builds, including the pgvector HNSW index, which is far
     # faster when the graph fits in this.
     maintenanceWorkMem: 128MB
+  # Sized from measurement, not convention. Under a soak of 8 concurrent
+  # clients (~35 ops/s) this Postgres sustains ~1.5 cores: AGE traversals and
+  # pgvector distance calculations are CPU-bound, not IO-bound.
+  #
+  # A 1000m limit therefore throttled it in 94% of scheduling periods, which is
+  # invisible in every pod-level signal -- the container is Running, healthy,
+  # under its memory limit, restarting never -- and shows up only as uniformly
+  # slow queries. Removing the ceiling took store p50 from 396ms to 33ms and
+  # query p50 from 523ms to 45ms, a 12x improvement from a value that had been
+  # picked as a round number.
+  #
+  # The limit is deliberately absent rather than merely raised. CPU limits
+  # throttle even when the node is idle, so a database that is briefly busy is
+  # slowed for no gain; the request reserves what it needs, and burst capacity
+  # is used when it happens to be free. Set postgres.resources.limits.cpu only
+  # where a hard cap is required for quota or noisy-neighbour policy, and size
+  # it well above 1.5 cores if so.
   resources:
     requests:
       memory: "512Mi"
-      cpu: "250m"
+      cpu: "1500m"
     limits:
       memory: "1Gi"
-      cpu: "1000m"
 
 # Consolidation CronJob
 consolidation:
