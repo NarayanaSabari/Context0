@@ -354,6 +354,24 @@ Without `CONTEXT0_TEST_DATABASE_URL` the suite skips, so plain `go test ./...`
 needs no database. Each test scopes its data to a unique project id and cleans
 up after itself, so runs are repeatable against a persistent database.
 
+### Benchmarking
+
+`scripts/bench_api.py` measures through the public REST API. Seed first with
+`scripts/seed_corpus.py`, which stores through the API so embeddings are
+generated:
+
+```bash
+docker compose up -d
+scripts/seed_corpus.py --count 5000
+scripts/bench_api.py
+```
+
+Do **not** seed by writing Cypher directly into AGE for a benchmark. It is much
+faster, but it leaves `public.memory_embeddings` empty, so `SearchByVector`
+matches nothing and the entire hybrid retrieval path silently does not run. An
+earlier round of this work measured exactly that and reported query latencies
+that excluded the vector half of the engine.
+
 ### Verifying the Helm chart
 
 `helm lint` and `helm template` check that YAML renders. They cannot tell you

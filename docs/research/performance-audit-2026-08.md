@@ -339,12 +339,59 @@ Also verified, because each is a distinct failure mode:
 
 ---
 
-## 12. Not attempted
+## 12. The vector path, which the first benchmarks never touched
+
+Every measurement in sections 1-10 used a corpus seeded directly into AGE with
+Cypher. That is fast, but it leaves `public.memory_embeddings` empty, so
+`SearchByVector` matched nothing on every run and the hybrid retrieval path --
+the project's headline feature -- never executed. `scripts/seed_corpus.py` seeds
+through the public API instead, so embeddings are generated the way they are in
+production.
+
+Doing that surfaced three bugs, two of them correctness rather than speed:
+
+**Project-scoped search could return nothing.** pgvector applies the `WHERE`
+filter *after* HNSW has chosen its candidates. When the query vector sits away
+from the target project's cluster -- the normal case, since a user's question is
+not a copy of something they already stored -- the candidate set can contain
+none of that project.
+
+| | Results for a 250-memory project |
+|---|---|
+| before | **0** |
+| after (`hnsw.iterative_scan`) | 10 |
+
+A caller reads zero results as "nothing relevant here", not as a failure, which
+is what makes this worse than a crash.
+
+**Deletes orphaned embeddings.** `DeleteMemory` removed the graph node and left
+the pgvector row behind, so deleted memories kept consuming HNSW candidate slots
+and the index grew without bound. It also made the test suite order-dependent,
+which is how it was found.
+
+**Hydration was N+1.** Each hit was fetched with its own `GetMemory`:
+
+| top_k | before | after |
+|---|---|---|
+| 5 | 3.5 ms | ~12 ms* |
+| 10 | 19.7 ms | ~11 ms |
+| 20 | 26.8 ms | **12.5 ms** |
+
+\* the before-numbers at low top_k are flattered by returning too few rows: the
+recall bug meant there was often nothing to hydrate. After the fix every row
+requested is actually returned, and latency is flat in top_k rather than
+climbing.
+
+Seeding 5,000 memories through the API also went from 152s to 95s, since each
+store no longer leaves a growing orphan index behind.
+
+---
+
+## 13. Not attempted
 
 - **Keyword search** is still `toLower(...) CONTAINS` inside Cypher, which can
   never use an index (§4). It survives only because `project_id` narrows the set
   first. Moving it to `pg_trgm` or the vector side is the next real win.
-- **The `SearchByVector` N+1** still issues one `GetMemory` per hit.
 - **CloudNativePG** remains the right long-term answer for the database, but AGE
   needs `shared_preload_libraries` and a custom operand image, so it is a
   project in itself.
