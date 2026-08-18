@@ -51,7 +51,18 @@ postgres:
     pullPolicy: IfNotPresent
   database: context0
   user: context0
-  password: context0-dev-password
+  # REQUIRED. No default: a default password in a published chart is a
+  # published password. Generate one, or set existingSecret instead.
+  #   --set postgres.password="$(openssl rand -base64 24)"
+  password: ""
+  # Use a Secret you already manage (External Secrets Operator, Sealed Secrets,
+  # SOPS, CSI driver). When set, this chart creates no Secret of its own.
+  existingSecret: ""
+  existingSecretKey: password
+  # sslmode for the API's connection to Postgres. "disable" is the default only
+  # because the in-cluster Postgres this chart ships does not serve TLS; point
+  # at a TLS-terminating Postgres and set this to verify-full.
+  sslMode: disable
   storage: 5Gi
   # PostgreSQL does not size itself from the cgroup limit, so these are set
   # explicitly against the 1Gi limit below. shared_buffers is the usual ~25% of
@@ -102,7 +113,24 @@ web:
 
 # Authentication
 auth:
-  apiKeys: "ctx0_dev_key_1,ctx0_dev_key_2"
+  # REQUIRED unless allowUnauthenticated is true. Comma-separated.
+  # Generate with: context0 keys generate
+  #
+  # Note for --set: helm reads "," as a list separator, so more than one key
+  # must be escaped or passed through a values file:
+  #   --set-string auth.apiKeys="key1\,key2"
+  #   -f my-values.yaml   (preferred for more than one key)
+  # No default: shipping one would publish a working credential for every
+  # install that does not change it.
+  apiKeys: ""
+  # Use a Secret you already manage instead of having the chart create one.
+  existingSecret: ""
+  existingSecretKey: keys
+  # Escape hatch for deployments where something in front of the API already
+  # authenticates (an ingress, a gateway, a service mesh). Leaving the key list
+  # empty disables authentication in the server, so this makes that explicit
+  # and deliberate rather than accidental.
+  allowUnauthenticated: false
 
 # Service exposure
 service:

@@ -64,17 +64,29 @@ spec:
             - containerPort: {{ .Values.api.httpPort }}
               name: http
           env:
+            # The password arrives from a Secret and is interpolated by the
+            # kubelet at container start, so it never appears in the Deployment
+            # spec. Inlining it here would expose it to anyone who can run
+            # `kubectl get deploy -o yaml`, which is a much wider set of people
+            # than those who can read Secrets.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.existingSecret | default "postgres-age-secret" }}
+                  key: {{ .Values.postgres.existingSecretKey | default "password" }}
             - name: CONTEXT0_DATABASE_URL
-              value: "postgres://{{ .Values.postgres.user }}:{{ .Values.postgres.password }}@postgres-age.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}?sslmode=disable&pool_max_conns={{ .Values.api.pool.maxConns }}&pool_min_conns={{ .Values.api.pool.minConns }}"
+              value: "postgres://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres-age.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}?sslmode={{ .Values.postgres.sslMode }}&pool_max_conns={{ .Values.api.pool.maxConns }}&pool_min_conns={{ .Values.api.pool.minConns }}"
             - name: CONTEXT0_GRPC_PORT
               value: {{ .Values.api.grpcPort | quote }}
             - name: CONTEXT0_HTTP_PORT
               value: {{ .Values.api.httpPort | quote }}
+            {{- if not .Values.auth.allowUnauthenticated }}
             - name: CONTEXT0_API_KEYS
               valueFrom:
                 secretKeyRef:
-                  name: context0-api-keys
-                  key: keys
+                  name: {{ .Values.auth.existingSecret | default "context0-api-keys" }}
+                  key: {{ .Values.auth.existingSecretKey | default "keys" }}
+            {{- end }}
             # Enforced per replica, so the cluster-wide ceiling is roughly this
             # value times .Values.api.replicas.
             - name: CONTEXT0_RATE_LIMIT_PER_MINUTE

@@ -25,8 +25,16 @@ spec:
               imagePullPolicy: {{ .Values.api.image.pullPolicy }}
               command: ["context0-consolidate"]
               env:
+                # Same as the API: the password comes from a Secret and is
+                # interpolated at container start rather than baked into the
+                # CronJob spec.
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.postgres.existingSecret | default "postgres-age-secret" }}
+                      key: {{ .Values.postgres.existingSecretKey | default "password" }}
                 - name: CONTEXT0_DATABASE_URL
-                  value: "postgres://{{ .Values.postgres.user }}:{{ .Values.postgres.password }}@postgres-age.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}?sslmode=disable"
+                  value: "postgres://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres-age.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}?sslmode={{ .Values.postgres.sslMode }}"
                 - name: CONSOLIDATION_DECAY_HALF_LIFE_DAYS
                   value: {{ .Values.consolidation.decayHalfLifeDays | quote }}
                 - name: CONSOLIDATION_STALE_THRESHOLD

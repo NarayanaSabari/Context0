@@ -28,7 +28,22 @@ check() {
 
 section() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
-api_pod() { kubectl get pod -n "$NS" -l app=context0-api -o jsonpath='{.items[0].metadata.name}'; }
+# Select a Ready pod, not merely the first one listed. During a rollout the
+# first item is often the old Terminating pod, and exec'ing into it fails with
+# exit 6 -- which reads as a fleet of unrelated failures rather than a race in
+# this script. Wait briefly for readiness so the suite can run immediately
+# after a `helm upgrade`.
+api_pod() {
+  for _ in $(seq 1 60); do
+    local p
+    p=$(kubectl get pod -n "$NS" -l app=context0-api \
+      -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name} {.status.containerStatuses[0].ready} {.metadata.deletionTimestamp}{"\n"}{end}' \
+      2>/dev/null | awk '$2=="true" && $3=="" {print $1; exit}')
+    if [[ -n "$p" ]]; then printf '%s' "$p"; return 0; fi
+    sleep 2
+  done
+  kubectl get pod -n "$NS" -l app=context0-api -o jsonpath='{.items[0].metadata.name}'
+}
 
 section "1. Probes: three endpoints, three questions"
 spec=$(kubectl get deploy -n "$NS" context0-api -o json)
@@ -141,6 +156,44 @@ check "pod recovers on its own once the database returns" "true" \
   "$(kubectl get pod -n "$NS" "$(api_pod)" -o jsonpath='{.status.containerStatuses[0].ready}')"
 check "the outage caused no container restart" "$restarts_before" \
   "$(kubectl get pod -n "$NS" "$(api_pod)" -o jsonpath='{.status.containerStatuses[0].restartCount}')"
+
+section "11. Credentials and authentication"
+# The chart used to ship a working database password and two API keys as
+# defaults, which means every install that did not override them shared a
+# published credential. These checks assert the deployed state, not the chart
+# source, so a regression in either place is caught.
+pgpw=$(kubectl get secret -n "$NS" postgres-age-secret -o jsonpath='{.data.password}' | base64 -d)
+check "the database password is not a shipped default" "notdefault" \
+  "$([[ "$pgpw" == "context0-dev-password" ]] && echo isdefault || echo notdefault)"
+check "no shipped default API key is accepted" "401" \
+  "$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c \
+    "wget -q -S -O /dev/null --header='X-API-Key: ctx0_dev_key_1' \
+     'http://localhost:8080/v1/memories/query?query=x&project_id=verify' 2>&1" \
+    | awk '/HTTP\//{print $2; exit}')"
+
+# The password must reach the container through a Secret reference, never
+# inlined into the Deployment spec: `kubectl get deploy -o yaml` is readable by
+# far more people than Secrets are.
+check "the password is absent from the Deployment spec" "0" \
+  "$(kubectl get deploy -n "$NS" context0-api -o yaml | grep -c -- "$pgpw" || true)"
+check "the password reaches the pod via secretKeyRef" "POSTGRES_PASSWORD" \
+  "$(kubectl get deploy -n "$NS" context0-api -o jsonpath='{.spec.template.spec.containers[0].env[?(@.valueFrom.secretKeyRef)].name}')"
+
+# Deny-by-default: before this, anything outside /v1/ was served without a key,
+# so any future route -- an admin surface, a mistakenly mounted profiler -- was
+# public the moment it was added.
+for path in /debug/pprof/ /admin /v2/memories /; do
+  check "unauthenticated $path is denied" "401" \
+    "$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c \
+      "wget -q -S -O /dev/null 'http://localhost:8080$path' 2>&1" | awk '/HTTP\//{print $2; exit}')"
+done
+
+# Keys are stored hashed, so the running process cannot hand back a credential
+# even if it is compromised or dumped.
+check "stored keys are hashes, not the plaintext key" "0" \
+  "$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c 'cat /proc/1/environ 2>/dev/null | tr "\0" "\n" | grep -c "^CONTEXT0_API_KEYS=$key$"' 2>/dev/null || echo 0)"
+check "the API key never appears in logs" "0" \
+  "$(kubectl logs -n "$NS" deploy/context0-api --tail=500 2>/dev/null | grep -c "$key" || true)"
 
 printf '\n\033[1m%s\033[0m\n' "=== $PASS passed, $FAIL failed ==="
 for f in "${FAILURES[@]:-}"; do [[ -n "$f" ]] && printf '  failed: %s\n' "$f"; done

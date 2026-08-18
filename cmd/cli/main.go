@@ -31,6 +31,7 @@ import (
 	"time"
 
 	pb "github.com/context0/context0/api/gen/context0/v1"
+	"github.com/context0/context0/internal/auth"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
@@ -40,6 +41,14 @@ func main() {
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
+	}
+
+	// Key generation is deliberately handled before any connection is opened:
+	// an operator needs a key in order to have a server to connect to, so
+	// requiring a running server first would be circular.
+	if os.Args[1] == "keys" {
+		runKeys(os.Args[2:])
+		return
 	}
 
 	// Read connection settings from environment, falling back to defaults.
@@ -348,6 +357,7 @@ Commands:
   stats          Show engine statistics
   session-start  Start a new session
   session-end    End a session
+  keys generate  Generate a new API key (no server required)
 
 Environment:
   CONTEXT0_ENDPOINT  gRPC endpoint (default: localhost:50051)
@@ -404,4 +414,33 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// runKeys implements the `keys` command group.
+//
+// Generation happens locally and offline: the server stores only the SHA-256 of
+// a key, so it can never print one back, and a key that was transmitted to be
+// generated would have been exposed in transit for no reason.
+func runKeys(args []string) {
+	if len(args) == 0 || args[0] != "generate" {
+		fmt.Println(`Usage: context0 keys generate
+
+Generates an API key for this deployment. The key is shown once and is not
+recoverable: the server stores only its hash, so a lost key must be replaced
+rather than looked up.
+
+Pass it to the server as CONTEXT0_API_KEYS (comma-separated for several), or to
+the chart as --set auth.apiKeys=...`)
+		os.Exit(1)
+	}
+
+	key, err := auth.GenerateKey()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to generate key: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(key.String())
+	fmt.Fprintln(os.Stderr, "\nStore this now: it cannot be recovered from the server.")
+	fmt.Fprintf(os.Stderr, "Key id %s will identify this credential in logs and metrics.\n", key.ID)
 }

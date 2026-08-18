@@ -34,8 +34,14 @@ const (
 // When no keys are configured (empty slice passed to NewAPIKeyAuth),
 // authentication is effectively disabled and all requests are allowed.
 type APIKeyAuth struct {
-	// validKeys is a set of accepted API keys for O(1) lookup.
-	validKeys map[string]bool
+	// validKeys maps the SHA-256 of each accepted key to the key's public
+	// identifier.
+	//
+	// Keys are stored hashed so that a leaked config dump, memory snapshot, or
+	// backup does not hand over working credentials. The identifier is kept so
+	// requests can be attributed to a specific key in logs and metrics without
+	// ever recording the secret.
+	validKeys map[string]string
 
 	// rateLimit is the maximum number of requests per minute per key.
 	rateLimit int
@@ -51,19 +57,52 @@ type APIKeyAuth struct {
 // NewAPIKeyAuth creates a new API key authenticator with the given set of
 // valid keys and a per-key rate limit (requests per minute). If rateLimit
 // is zero or negative, defaultRateLimit (100 req/min) is used.
+//
+// Keys are hashed immediately and the plaintext is not retained.
 func NewAPIKeyAuth(keys []string, rateLimit int) *APIKeyAuth {
 	if rateLimit <= 0 {
 		rateLimit = defaultRateLimit
 	}
-	valid := make(map[string]bool, len(keys))
+	valid := make(map[string]string, len(keys))
 	for _, k := range keys {
-		valid[k] = true
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		// Keys in the documented ctx0_<id>_<secret> form get their real
+		// identifier. Anything else is still accepted -- operators upgrading in
+		// place should not have their deployment stop working -- but is
+		// identified by a hash prefix rather than by a parsed id.
+		id := "legacy-" + HashKey(k)[:8]
+		if parsed, ok := ParseKey(k); ok {
+			id = parsed.ID
+		}
+		valid[HashKey(k)] = id
 	}
 	return &APIKeyAuth{
 		validKeys: valid,
 		rateLimit: rateLimit,
 		buckets:   make(map[string]*tokenBucket),
 	}
+}
+
+// verify checks a presented key and returns its identifier.
+//
+// The comparison is constant time. A plain map lookup on the hash would already
+// avoid leaking the secret through timing, but the explicit comparison keeps
+// that property from depending on the map implementation, and the loop is over
+// the (small) configured key set rather than anything attacker-controlled.
+func (a *APIKeyAuth) verify(presented string) (string, bool) {
+	if presented == "" {
+		return "", false
+	}
+	sum := HashKey(presented)
+	for stored, id := range a.validKeys {
+		if hashesEqual(stored, sum) {
+			return id, true
+		}
+	}
+	return "", false
 }
 
 // UnaryInterceptor returns a gRPC unary server interceptor that validates
@@ -96,17 +135,18 @@ func (a *APIKeyAuth) UnaryInterceptor() grpc.UnaryServerInterceptor {
 			keys = md.Get("grpcgateway-" + apiKeyHeader)
 		}
 		if len(keys) == 0 {
-			return nil, status.Error(codes.Unauthenticated, "missing API key")
+			return nil, status.Error(codes.Unauthenticated, "unauthorized")
 		}
 
 		// Validate the key against the allow-list.
-		key := keys[0]
-		if !a.validKeys[key] {
-			return nil, status.Error(codes.Unauthenticated, "invalid API key")
+		keyID, ok := a.verify(keys[0])
+		if !ok {
+			return nil, status.Error(codes.Unauthenticated, "unauthorized")
 		}
 
-		// Enforce per-key rate limiting via token bucket.
-		if !a.allowRequest(key) {
+		// Enforce per-key rate limiting via token bucket, keyed on identity so
+		// the map never holds credentials.
+		if !a.allowRequest(keyID) {
 			return nil, status.Error(codes.ResourceExhausted, "rate limit exceeded")
 		}
 
@@ -114,15 +154,36 @@ func (a *APIKeyAuth) UnaryInterceptor() grpc.UnaryServerInterceptor {
 	}
 }
 
+// publicPaths are the only endpoints served without an API key.
+//
+// An explicit allowlist rather than a pattern. The previous rule exempted
+// "anything not under /v1/", which meant every route added in future -- an
+// admin endpoint, a second API version, a debug handler -- would be
+// unauthenticated by default and nothing would say so. Deny-by-default makes
+// the failure mode a 401 on a route someone forgot to list, instead of an open
+// door nobody noticed.
+var publicPaths = map[string]bool{
+	// Kubernetes probes. These must answer before any credential is available
+	// and deliberately expose nothing about stored data.
+	"/livez":    true,
+	"/readyz":   true,
+	"/startupz": true,
+
+	// Retained for backward compatibility: earlier chart versions pointed
+	// probes here. It reports graph counts, so it is the one public endpoint
+	// that leaks anything, and it leaks only totals.
+	"/v1/health": true,
+
+	// Prometheus scrapes without credentials. Keep the Service ClusterIP in
+	// production: this endpoint is readable by anything that can reach it.
+	"/metrics": true,
+}
+
 // HTTPMiddleware wraps an HTTP handler with API key validation and rate
-// limiting. Paths exempt from authentication:
-//   - /v1/health -- liveness/readiness probes
-//   - /metrics   -- Prometheus scraping
-//   - any path not under /v1/ -- serves the web UI or static assets
+// limiting. Every path not in publicPaths requires a valid key.
 func (a *APIKeyAuth) HTTPMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Allow health, metrics, and non-API paths without authentication.
-		if r.URL.Path == "/v1/health" || r.URL.Path == "/metrics" || !strings.HasPrefix(r.URL.Path, "/v1/") {
+		if publicPaths[r.URL.Path] {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -133,20 +194,17 @@ func (a *APIKeyAuth) HTTPMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Read the API key from the standard HTTP header.
-		key := r.Header.Get("X-API-Key")
-		if key == "" {
-			http.Error(w, `{"error":"missing API key"}`, http.StatusUnauthorized)
+		keyID, ok := a.verify(r.Header.Get("X-API-Key"))
+		if !ok {
+			// One message for both "missing" and "wrong", so the response does
+			// not tell an attacker whether a key exists.
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
 
-		if !a.validKeys[key] {
-			http.Error(w, `{"error":"invalid API key"}`, http.StatusUnauthorized)
-			return
-		}
-
-		// Enforce per-key rate limiting via token bucket.
-		if !a.allowRequest(key) {
+		// Rate limit per key identity rather than per secret, so the bucket map
+		// never holds credentials.
+		if !a.allowRequest(keyID) {
 			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
 			return
 		}

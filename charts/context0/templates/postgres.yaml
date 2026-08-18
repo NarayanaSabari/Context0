@@ -31,8 +31,8 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: postgres-age-secret
-                  key: password
+                  name: {{ .Values.postgres.existingSecret | default "postgres-age-secret" }}
+                  key: {{ .Values.postgres.existingSecretKey | default "password" }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql
