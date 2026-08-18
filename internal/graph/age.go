@@ -30,10 +30,35 @@ const GraphName = "context0"
 // types (agtype, graphid) resolve unqualified.
 const searchPath = `SET search_path = ag_catalog, "$user", public`
 
+// timestampLayout is RFC3339 with milliseconds. Timestamps are stored as
+// strings in agtype and compared lexically, so the layout must be fixed-width
+// and zero-padded for ordering to match chronology -- which this satisfies.
+//
+// Second precision was not enough: under load a single second accumulated 153
+// memories, and `ORDER BY created_at DESC LIMIT k` over such a tie group
+// returns an arbitrary subset.
+//
+// Rows written before this change carry second precision. time.RFC3339 parses
+// both, so reads are unaffected. Within one second an older row sorts after a
+// newer millisecond-precision one ("...19Z" > "...19.123Z" lexically), which is
+// a harmless ordering quirk confined to memories written across the upgrade.
+const timestampLayout = "2006-01-02T15:04:05.000Z07:00"
+
 // defaultEmbeddingDim is the width used when creating memory_embeddings for a
 // database that has none yet and the caller did not specify one. It matches
 // the bag-of-words embedder and common small transformer models.
 const defaultEmbeddingDim = 384
+
+// Candidate pool sizing for QueryMemories.
+//
+// The Cypher LIMIT runs before ranking, so fetching exactly topK rows lets the
+// database decide which memories the ranking layer is even allowed to see.
+// Over-fetching by this factor gives ranking a real pool to choose from, capped
+// so a large topK cannot pull an unbounded result set into memory.
+const (
+	candidatePoolFactor = 10
+	maxCandidatePool    = 500
+)
 
 // Connection pool sizing. These are deliberately fixed rather than derived from
 // the CPU count: see the comment in NewPool. Override per deployment with the
@@ -104,6 +129,18 @@ type QueryFilter struct {
 	Types []model.MemoryType
 	// TopK caps the number of results returned. Defaults to 5 if zero.
 	TopK int32
+
+	// OverFetch asks for a candidate pool larger than TopK.
+	//
+	// The Cypher LIMIT runs before any ranking, so a caller that ranks its
+	// results must not let the database pick which TopK rows it is allowed to
+	// consider -- created_at ties make that choice arbitrary. Ranking callers
+	// set this and truncate to TopK themselves.
+	//
+	// Off by default so TopK keeps its plain meaning of "at most this many",
+	// which is what every non-ranking caller (profiles, consolidation, tag
+	// auto-linking) depends on.
+	OverFetch bool
 }
 
 // AGERepository stores and queries Context0's memory graph using Apache AGE.
@@ -421,7 +458,10 @@ func (r *AGERepository) CreateMemory(ctx context.Context, mem model.Memory) erro
 		"type":       string(mem.Type),
 		"project_id": mem.ProjectID,
 		"tags":       string(tagsJSON),
-		"created_at": mem.CreatedAt.Format(time.RFC3339),
+		// Millisecond precision, not second: at second granularity a busy
+		// project puts hundreds of memories on the same timestamp, which makes
+		// any created_at ordering arbitrary within the group.
+		"created_at": mem.CreatedAt.Format(timestampLayout),
 	})
 }
 
@@ -776,7 +816,28 @@ func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) (
 	if topK <= 0 {
 		topK = 5
 	}
-	p["top_k"] = topK
+
+	// Fetch a candidate pool larger than topK, because this LIMIT is applied
+	// before the ranking layer has seen anything.
+	//
+	// created_at has second precision, so a busy project produces large groups
+	// of ties -- measured 153 memories sharing one timestamp under load. With
+	// `ORDER BY created_at DESC LIMIT 5` over such a group, Postgres is free to
+	// return any five, and the memory that actually matched the query could be
+	// discarded before ranking ran. That showed up as a write not being
+	// readable by its own keyword moments after being stored.
+	//
+	// Over-fetching lets ranking choose from a real pool. The cap keeps the
+	// cost bounded: the filter has already narrowed to one project, and the
+	// ranking layer truncates to topK immediately afterwards.
+	candidateLimit := int32(topK)
+	if filter.OverFetch {
+		candidateLimit *= candidatePoolFactor
+		if candidateLimit > maxCandidatePool {
+			candidateLimit = maxCandidatePool
+		}
+	}
+	p["top_k"] = candidateLimit
 
 	q := `MATCH (m:Memory) RETURN properties(m) ORDER BY m.created_at DESC LIMIT $top_k`
 	if len(conditions) > 0 {

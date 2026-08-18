@@ -1371,3 +1371,100 @@ func TestSearchByVector_DoesNotHoldTwoConnections(t *testing.T) {
 		}
 	}
 }
+
+// TestQueryMemories_KeywordMatchSurvivesTieBreak is a correctness regression
+// test for a bug the soak harness found: a memory was not retrievable by its
+// own distinctive keyword moments after being written.
+//
+// QueryMemories applies `ORDER BY created_at DESC LIMIT k` in Cypher, which
+// runs before the ranking layer sees anything. created_at had second precision,
+// so a busy project put large groups of memories on the same timestamp -- 153
+// in one second under load. Ordering within a tie group is arbitrary, so with
+// LIMIT equal to topK the one memory that actually matched the query could be
+// discarded before ranking ever ran.
+//
+// Two things fix it and both are checked here: millisecond timestamps break
+// most ties at the source, and the query over-fetches a candidate pool so
+// ranking chooses from more than exactly topK rows.
+func TestQueryMemories_KeywordMatchSurvivesTieBreak(t *testing.T) {
+	repo, ctx := testRepo(t)
+	projectID := newProjectID(t)
+
+	// Force the exact condition: every memory shares one timestamp, and the
+	// needle is the OLDEST so a created_at DESC ordering puts it last. Writing
+	// quickly is not enough to reproduce reliably, and a test that only
+	// sometimes exercises the bug is not a regression test.
+	shared := time.Now().UTC().Add(-time.Hour)
+
+	needleMem := newMemory(projectID, "the distinctive zqxjklmw marker lives here", "needle")
+	needleMem.CreatedAt = shared
+	needle := storeMemory(t, repo, ctx, needleMem)
+
+	const noise = 120
+	for i := 0; i < noise; i++ {
+		m := newMemory(projectID, fmt.Sprintf("filler %d about deployment and rollout", i), "filler")
+		m.CreatedAt = shared
+		storeMemory(t, repo, ctx, m)
+	}
+
+	got, err := repo.QueryMemories(ctx, QueryFilter{
+		ProjectID: projectID,
+		Keywords:  []string{"zqxjklmw"},
+		TopK:      5,
+	})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+
+	var found bool
+	for _, r := range got {
+		if r.Memory.ID == needle.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the only memory matching the keyword was not returned "+
+			"(got %d results); it was discarded by the pre-ranking LIMIT", len(got))
+	}
+}
+
+// TestCreateMemory_TimestampsHaveSubSecondPrecision pins the storage format.
+// Reverting to second precision reintroduces the tie groups that made
+// pre-ranking truncation lossy.
+func TestCreateMemory_TimestampsHaveSubSecondPrecision(t *testing.T) {
+	repo, ctx := testRepo(t)
+	projectID := newProjectID(t)
+
+	// Written as fast as possible: at second precision these would collide.
+	const n = 25
+	seen := make(map[string]int, n)
+	for i := 0; i < n; i++ {
+		mem := newMemory(projectID, fmt.Sprintf("timestamp probe %d", i))
+		mem.CreatedAt = time.Now().UTC()
+		storeMemory(t, repo, ctx, mem)
+
+		got, err := repo.GetMemory(ctx, mem.ID)
+		if err != nil {
+			t.Fatalf("get memory: %v", err)
+		}
+		seen[got.CreatedAt.Format(time.RFC3339Nano)]++
+	}
+
+	// Not a strict "all distinct" assertion: several writes genuinely land in
+	// the same millisecond, and how many depends on machine speed. The bug was
+	// an entire second collapsing to one value (153 memories shared a
+	// timestamp), so the property under test is that the stored value carries
+	// sub-second detail at all.
+	for ts := range seen {
+		if !strings.Contains(ts, ".") {
+			t.Errorf("stored timestamp %q has no fractional seconds; "+
+				"second-precision timestamps make created_at ordering arbitrary "+
+				"within a busy second", ts)
+			break
+		}
+	}
+	if len(seen) < 3 {
+		t.Errorf("%d rapid writes produced only %d distinct timestamps; "+
+			"sub-second precision appears to be lost", n, len(seen))
+	}
+}

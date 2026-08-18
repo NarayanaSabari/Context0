@@ -110,11 +110,11 @@ func (s *MemoryService) Store(ctx context.Context, req *pb.StoreRequest) (*pb.St
 	}
 
 	// Detect contradictions with existing memories and create supersedes edges.
-	s.detectAndSupersede(ctx, mem)
+	superseded := s.detectAndSupersede(ctx, mem)
 
 	// Auto-link by tags: find existing memories with overlapping tags and create relates_to edges.
 	if len(req.Tags) > 0 {
-		s.autoLinkByTags(ctx, mem)
+		s.autoLinkByTags(ctx, mem, superseded)
 	}
 
 	metrics.MemoriesTotal.WithLabelValues(string(memType)).Inc()
@@ -353,7 +353,7 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 		}
 
 		// Auto-link by tags.
-		s.autoLinkByTags(ctx, mem)
+		s.autoLinkByTags(ctx, mem, nil)
 		relCount++ // approximate — autoLinkByTags may create multiple edges
 
 		metrics.MemoriesTotal.WithLabelValues(string(mem.Type)).Inc()
@@ -426,20 +426,20 @@ func (s *MemoryService) GetProfile(ctx context.Context, req *pb.GetProfileReques
 // confidence >= 0.5, a supersedes edge is created from the new memory to the old one,
 // signaling that the new memory replaces the old fact. Only semantic memories are
 // checked because episodic and procedural memories do not contradict each other.
-func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory) {
+func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory) map[uuid.UUID]bool {
 	if mem.Type != model.MemoryTypeSemantic {
-		return
+		return nil
 	}
 
 	filter := graph.QueryFilter{
 		ProjectID: mem.ProjectID,
 		Types:     []model.MemoryType{model.MemoryTypeSemantic},
-		TopK:      50,
+		TopK:      contradictionCandidates,
 	}
 
 	results, err := s.repo.QueryMemories(ctx, filter)
 	if err != nil {
-		return
+		return nil
 	}
 
 	var existingMems []model.Memory
@@ -452,6 +452,13 @@ func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory
 	// Collected and written in one statement: a project with many similar
 	// memories can produce dozens of contradictions, and a round trip each
 	// would land entirely on the caller's Store latency.
+	//
+	// Only the highest-confidence contradictions are recorded. Without a cap,
+	// a project of near-identical semantic memories links each new write to
+	// most of its candidates, so edges grow with writes x candidates -- 70k
+	// supersedes edges over ~6k memories in a soak run -- and every later
+	// traversal over those nodes pays for it. Superseding the few most likely
+	// matches carries essentially all the signal.
 	var edges []model.Edge
 	for _, c := range contradictions {
 		if c.Confidence < 0.5 {
@@ -468,10 +475,49 @@ func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory
 		})
 	}
 
-	if err := s.repo.CreateEdges(ctx, edges); err == nil {
-		metrics.EdgesTotal.WithLabelValues(string(model.RelSupersedes)).Add(float64(len(edges)))
+	sort.SliceStable(edges, func(i, j int) bool { return edges[i].Weight > edges[j].Weight })
+	if len(edges) > maxSupersedesPerStore {
+		edges = edges[:maxSupersedesPerStore]
 	}
+
+	if err := s.repo.CreateEdges(ctx, edges); err != nil {
+		return nil
+	}
+	metrics.EdgesTotal.WithLabelValues(string(model.RelSupersedes)).Add(float64(len(edges)))
+
+	// Reported so tag auto-linking can skip pairs that already have a more
+	// specific relationship, without re-reading them from the graph.
+	linked := make(map[uuid.UUID]bool, len(edges))
+	for _, e := range edges {
+		linked[e.ToID] = true
+	}
+	return linked
 }
+
+// maxSupersedesPerStore caps how many supersedes edges a single write may
+// create. Contradiction detection is a heuristic over text overlap, so a
+// project of similar memories can flag most candidates at once; recording all
+// of them inflates the graph without adding information.
+const maxSupersedesPerStore = 5
+
+// maxRelatesPerStore caps how many relates_to edges tag auto-linking may create
+// per write.
+const maxRelatesPerStore = 5
+
+// contradictionCandidates bounds how many existing semantic memories a new one
+// is checked against for contradictions. Same reasoning as autoLinkCandidates:
+// every detection becomes a supersedes edge.
+const contradictionCandidates = 50
+
+// autoLinkCandidates bounds how many recent memories a new one is compared
+// against for tag overlap.
+//
+// This is deliberately small. Every match becomes an edge, so the graph grows
+// with the product of writes and candidates, and each edge makes later
+// traversals over the same node more expensive. Measured under 8-way
+// concurrency, a tagged write cost ~469ms against a 100-candidate pool versus
+// ~6ms for an untagged one.
+const autoLinkCandidates = 10
 
 // autoLinkByTags finds existing memories in the same project that share at least
 // one tag with the given memory and creates relates_to edges with a default weight
@@ -480,10 +526,10 @@ func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory
 // inferred by detectAndSupersede) are skipped: a generic relates_to edge adds
 // nothing once a more specific relationship has already been recorded between
 // the same pair.
-func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory) {
+func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory, connected map[uuid.UUID]bool) {
 	filter := graph.QueryFilter{
 		ProjectID: mem.ProjectID,
-		TopK:      10,
+		TopK:      autoLinkCandidates,
 	}
 
 	existing, err := s.repo.QueryMemories(ctx, filter)
@@ -491,13 +537,14 @@ func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory) {
 		return
 	}
 
-	connected := make(map[uuid.UUID]bool)
-	if edgesByID, err := s.repo.GetContextEdges(ctx, []uuid.UUID{mem.ID}); err == nil {
-		for _, ce := range edgesByID[mem.ID] {
-			connected[ce.TargetID] = true
-		}
-	}
-
+	// Which memories this one is already connected to, so a generic relates_to
+	// edge is not added on top of a more specific relationship.
+	//
+	// Only the supersedes edges just written by detectAndSupersede can exist at
+	// this point -- the memory was created moments ago -- so they are passed in
+	// rather than re-read. The previous round trip to GetContextEdges was a
+	// significant share of a tagged write's latency, and it queried a node whose
+	// edges this process had itself just created.
 	var edges []model.Edge
 	for _, e := range existing {
 		if e.Memory.ID == mem.ID || connected[e.Memory.ID] {
@@ -513,6 +560,13 @@ func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory) {
 				CreatedAt:    time.Now().UTC(),
 			})
 		}
+	}
+
+	// Capped for the same reason as detectAndSupersede: unbounded tag linking
+	// makes the graph grow with writes x candidates, and every later traversal
+	// over those nodes pays for it.
+	if len(edges) > maxRelatesPerStore {
+		edges = edges[:maxRelatesPerStore]
 	}
 
 	// One statement rather than a round trip per match, for the same reason as
@@ -647,6 +701,10 @@ func ParseQuery(query string, projectID string, types []model.MemoryType, topK i
 		Keywords:  keywords,
 		Types:     types,
 		TopK:      topK,
+		// Query ranks its results, so it must see more than TopK candidates:
+		// the Cypher LIMIT runs before ranking, and created_at ties make the
+		// database's choice among equals arbitrary.
+		OverFetch: true,
 	}
 }
 
