@@ -55,7 +55,7 @@ results = client.search(query="auth architecture", container_tag="user-123")
 
 ### 2. No Infrastructure Control
 - **Their weakness:** You can't run it in your own cloud, your own region, or your own cluster. Latency depends on their infrastructure.
-- **Our advantage:** Deploy with `helm install` into any K8s cluster. In-cluster latency <20ms. You control scaling, backups, and regions.
+- **Our advantage:** Deploy with `helm install` into any K8s cluster. No network round-trip to a vendor. You control scaling, backups, and regions. See the latency note below for measured numbers rather than a claim.
 
 ### 3. Vendor Lock-in
 - **Their weakness:** Proprietary API, proprietary storage format. Switching away means losing all your memory data.
@@ -122,7 +122,7 @@ Things we have that Supermemory doesn't offer:
 | **Graph transparency** | Web UI to explore graph, Cypher queries, subgraph API. Their graph is a black box. |
 | **K8s-native** | Runs as K8s workloads, CronJobs for consolidation. They're a remote API. |
 | **Data ownership** | Your data stays in your PostgreSQL. They hold your data. |
-| **In-cluster latency** | <20ms (ClusterIP). They add network round-trip to their cloud. |
+| **In-cluster latency** | ~22ms idle, ~54ms under sustained load (measured, see below). No round-trip to a vendor cloud. |
 | **Predictable cost** | Fixed infra cost. Their usage-based pricing scales unpredictably. |
 | **gRPC API** | Binary protocol, streaming, strong typing. They only have REST. |
 
@@ -197,3 +197,30 @@ Both are valid. We target a different audience:
 - Organizations already running K8s
 - Developers who want to understand and debug their memory system
 ```
+
+
+## Latency: measured, not claimed
+
+Earlier versions of this document asserted "<20ms in-cluster" without a
+measurement behind it. The figures below come from a kind cluster running the
+shipped chart, against a graph of ~94,000 memories and ~312,000 edges, with a
+1.5-core Postgres.
+
+| Operation | Idle (serial) | Under 6-way concurrent load |
+|---|---|---|
+| Query, scoped to a project | ~22 ms | ~54 ms mean, p50 ~50 ms |
+| Store (full pipeline) | ~38 ms | ~93 ms mean |
+| `/v1/health` | ~1 ms | ~1 ms p50 |
+
+Method matters for reading these:
+
+- **Store is not one write.** It creates the vertex, generates and stores an
+  embedding, runs contradiction detection, writes supersedes edges, and
+  auto-links by tag. It is the whole pipeline, not an insert.
+- **Measure in-cluster.** Through `kubectl port-forward` the tunnel becomes the
+  bottleneck under concurrency and the numbers describe it, not the service.
+- **Graph size matters, and it is stated.** A latency number without the size of
+  the database behind it is not reproducible. These are at 94k vertices; smaller
+  deployments are faster.
+
+Reproduce with `scripts/soak.py`; see `docs/soak-testing.md`.

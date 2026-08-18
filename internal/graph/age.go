@@ -286,6 +286,10 @@ var memoryPropertyIndexes = []struct{ name, property string }{
 //
 // Measured at 50k vertices, these turn a lookup by id from a 5.5ms sequential
 // scan into a 0.19ms index scan, and the project filter from 17.2ms to 3.6ms.
+// Re-checked at 94k vertices: the id lookup still plans as an index scan
+// (0.48ms). Worth re-checking rather than trusting, because the UNWIND form
+// documented on uuidLiteralList did plan an index scan at 50k and stopped
+// doing so by 64k -- a plan is a property of the data, not of the query.
 func (r *AGERepository) createPropertyIndexes(ctx context.Context) error {
 	// AGE creates a label's table lazily, on first write. Without this the
 	// indexes below cannot be built on a fresh database, and the deployment
@@ -1006,8 +1010,10 @@ func scanOne[T any](rows pgx.Rows) (T, bool, error) {
 // Like GetSubgraph, this runs as two directed matches instead of one undirected
 // pattern: AGE cannot use the edge indexes for an undirected match and degrades
 // into a full label scan. Measured at 50k vertices, 71.5ms undirected versus
-// 0.05ms directed. The dedup by edge id below also absorbs self-loops, which
-// would otherwise be returned by both halves.
+// 0.05ms directed; re-checked at 94k vertices, 734ms versus 14ms. The gap grows
+// with the graph, because the undirected form scans all of it. The dedup by
+// edge id below also absorbs self-loops, which would otherwise be returned by
+// both halves.
 func (r *AGERepository) getEdgesAround(ctx context.Context, centerID uuid.UUID) ([]model.Edge, error) {
 	const outgoing = `MATCH (center)-[e]->(other:Memory) WHERE center.id = $center_id ` +
 		`RETURN {edge_id: e.id, from_id: startNode(e).id, to_id: endNode(e).id, ` +

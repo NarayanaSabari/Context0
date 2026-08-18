@@ -580,8 +580,13 @@ const contradictionCandidates = 50
 // This is deliberately small. Every match becomes an edge, so the graph grows
 // with the product of writes and candidates, and each edge makes later
 // traversals over the same node more expensive. Measured under 8-way
-// concurrency, a tagged write cost ~469ms against a 100-candidate pool versus
-// ~6ms for an untagged one.
+// concurrency at the time the cap was introduced, a tagged write cost ~469ms
+// against a 100-candidate pool versus ~6ms for an untagged one.
+//
+// That 469ms figure is what the cap prevents, not what the code does now: with
+// the cap in place, and after the query fixes in a661212, a tagged write into a
+// 94k-vertex graph measures ~38ms serially. Both numbers are kept because the
+// second alone would make this constant look unnecessary.
 const autoLinkCandidates = 10
 
 // autoLinkByTags finds existing memories in the same project that share at least
