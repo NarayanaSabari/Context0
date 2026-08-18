@@ -36,6 +36,7 @@ import (
 	emb "github.com/context0/context0/internal/embedding"
 	"github.com/context0/context0/internal/graph"
 	"github.com/context0/context0/internal/metrics"
+	"github.com/context0/context0/internal/server"
 	"github.com/context0/context0/internal/service"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -43,6 +44,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
 )
+
+// shutdownTimeout bounds the graceful drain. It must stay comfortably below the
+// chart's terminationGracePeriodSeconds, so the process finishes draining and
+// closes the connection pool before Kubernetes escalates to SIGKILL.
+const shutdownTimeout = 15 * time.Second
 
 func main() {
 	// Step 1: Load all configuration from environment variables.
@@ -86,7 +92,7 @@ func main() {
 	metrics.Register()
 
 	// Step 6: Set up API key authentication with 100 requests/minute per key.
-	apiAuth := auth.NewAPIKeyAuth(cfg.APIKeys, 100)
+	apiAuth := auth.NewAPIKeyAuth(cfg.APIKeys, cfg.RateLimitPerMinute)
 
 	// Step 7: Build and start the gRPC server.
 	grpcServer := grpc.NewServer(
@@ -146,6 +152,11 @@ func main() {
 	mux.Handle("/metrics", promhttp.Handler()) // Prometheus scrape endpoint
 	mux.Handle("/v1/", gwMux)                  // REST gateway for all /v1/* routes
 
+	// Kubernetes probes. These are registered directly on the mux rather than
+	// going through the gateway, so they stay cheap and never reach the graph.
+	probes := server.NewProbes(pool)
+	probes.Register(mux)
+
 	// Wrap the mux with API key + rate limit middleware.
 	httpHandler := apiAuth.HTTPMiddleware(mux)
 
@@ -162,18 +173,35 @@ func main() {
 		}
 	}()
 
+	// Everything is listening and the schema is ready, so the startup probe can
+	// pass and readiness can begin reporting on the database.
+	probes.MarkStarted()
+
 	// Step 10: Block until SIGINT or SIGTERM, then shut down gracefully.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
 	log.Printf("received signal %s, shutting down...", sig)
 
-	// Drain in-flight gRPC requests, then stop accepting new ones.
-	grpcServer.GracefulStop()
-	// Shut down the HTTP server, allowing active connections to finish.
-	if err := httpServer.Shutdown(ctx); err != nil {
+	// Fail readiness first. Kubernetes removes the pod from Service endpoints
+	// asynchronously, so this window is what stops new requests arriving while
+	// in-flight ones are still being served. The chart's preStop sleep covers
+	// the same race for clients that bypass readiness.
+	probes.MarkDraining()
+
+	// Bound the drain. Without a deadline a single stuck connection can outlive
+	// terminationGracePeriodSeconds and get SIGKILLed, skipping pool cleanup.
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancelShutdown()
+
+	// HTTP first, then gRPC. The REST gateway proxies to the local gRPC server,
+	// so stopping gRPC first would break every in-flight REST request instead of
+	// draining it.
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("HTTP server shutdown error: %v", err)
 	}
+	grpcServer.GracefulStop()
+
 	// Release the database connection pool.
 	repo.Close()
 

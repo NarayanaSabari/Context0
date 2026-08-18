@@ -18,6 +18,9 @@
 //
 //	CONTEXT0_API_KEYS           Comma-separated list of valid API keys.
 //	                            When empty, authentication is disabled.
+//	CONTEXT0_RATE_LIMIT_PER_MINUTE
+//	                            Per-key requests per minute, enforced per replica
+//	                            (default: 100)
 //
 // Embedding:
 //
@@ -59,6 +62,16 @@ type Config struct {
 	// Env: CONTEXT0_API_KEYS (comma-separated)
 	APIKeys []string
 
+	// RateLimitPerMinute is the per-API-key request budget enforced by each
+	// replica's token bucket.
+	//
+	// The limit is per pod, not cluster-wide: the buckets live in process
+	// memory, so N replicas admit roughly N times this rate. Scale it down as
+	// replicas go up, or move rate limiting to an ingress or service mesh if
+	// you need a true global budget.
+	// Env: CONTEXT0_RATE_LIMIT_PER_MINUTE (default: 100)
+	RateLimitPerMinute int
+
 	// EmbeddingProvider selects the embedding backend.
 	// Accepted values: "bag-of-words", "ollama", "openai", "google".
 	// Env: CONTEXT0_EMBEDDING_PROVIDER (default: "bag-of-words")
@@ -94,6 +107,8 @@ func Load() Config {
 		HTTPPort:    getEnvInt("CONTEXT0_HTTP_PORT", 8080),
 		DatabaseURL: getEnv("CONTEXT0_DATABASE_URL", "postgres://context0:context0@localhost:5432/context0?sslmode=disable"),
 		APIKeys:     splitEnv("CONTEXT0_API_KEYS", ","),
+
+		RateLimitPerMinute: getEnvInt("CONTEXT0_RATE_LIMIT_PER_MINUTE", 100),
 
 		EmbeddingProvider: getEnv("CONTEXT0_EMBEDDING_PROVIDER", "bag-of-words"),
 		EmbeddingModel:    getEnv("CONTEXT0_EMBEDDING_MODEL", ""),
