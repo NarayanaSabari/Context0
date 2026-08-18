@@ -1328,6 +1328,15 @@ func (r *AGERepository) count(ctx context.Context, query, label string) (int64, 
 	return count, nil
 }
 
+// Ping verifies the backing database is reachable.
+//
+// This is the reachability half of a health check, kept separate from the count
+// queries because it is cheap and must never be served from a cache, while the
+// counts are expensive full scans and can be.
+func (r *AGERepository) Ping(ctx context.Context) error {
+	return r.pool.Ping(ctx)
+}
+
 // NodeCount returns the total number of vertices in the AGE graph.
 func (r *AGERepository) NodeCount(ctx context.Context) (int64, error) {
 	return r.count(ctx, `MATCH (n) RETURN count(n)`, "node")

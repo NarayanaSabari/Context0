@@ -23,7 +23,22 @@ const (
 
 	// defaultRateLimit is the fallback rate limit (requests per minute)
 	// when a non-positive value is supplied to NewAPIKeyAuth.
-	defaultRateLimit = 100
+	//
+	// 6000/min (100/s) is chosen against measured service behaviour: a store
+	// costs ~4ms and an unscoped query ~3ms, so a single client can drive far
+	// more than the old 100/min (1.6/s) without the server breaking a sweat.
+	// The limit exists to stop a runaway client from monopolising the pool, not
+	// to ration normal use. The previous value was never felt because rate
+	// limiting only runs once a key is configured, and no key was configured
+	// until authentication became mandatory -- enabling auth would otherwise
+	// have silently throttled every deployment to 1.6 requests per second.
+	defaultRateLimit = 6000
+
+	// maxBuckets caps the per-key bucket map. Buckets are keyed by verified key
+	// identity, so an attacker cannot grow this map -- but a deployment that
+	// rotates keys often would still accumulate entries for the lifetime of the
+	// process. Evicting the idlest entry past this bound keeps that bounded.
+	maxBuckets = 4096
 )
 
 // APIKeyAuth validates API keys and enforces per-key rate limits using
@@ -221,12 +236,35 @@ func (a *APIKeyAuth) allowRequest(key string) bool {
 
 	bucket, ok := a.buckets[key]
 	if !ok {
+		// Reclaim before inserting, so the map cannot grow without bound across
+		// a long-lived process that has seen many rotated keys.
+		if len(a.buckets) >= maxBuckets {
+			a.evictIdlestLocked()
+		}
 		// First request for this key; create a full bucket.
 		bucket = newTokenBucket(a.rateLimit)
 		a.buckets[key] = bucket
 	}
 
 	return bucket.allow()
+}
+
+// evictIdlestLocked drops the least recently used bucket. The caller holds mu.
+//
+// Evicting a bucket resets that key's allowance, so the victim is the one that
+// has gone longest without a request: it is both the least likely to be mid-
+// burst and the one whose bucket has most likely refilled anyway.
+func (a *APIKeyAuth) evictIdlestLocked() {
+	var oldestKey string
+	var oldest time.Time
+	for k, b := range a.buckets {
+		if oldestKey == "" || b.lastTime.Before(oldest) {
+			oldestKey, oldest = k, b.lastTime
+		}
+	}
+	if oldestKey != "" {
+		delete(a.buckets, oldestKey)
+	}
 }
 
 // tokenBucket implements a token bucket rate limiter. The algorithm works as

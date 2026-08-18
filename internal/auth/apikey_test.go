@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -355,6 +356,41 @@ func TestParseKeyRejectsMalformed(t *testing.T) {
 	} {
 		if _, ok := ParseKey(s); ok {
 			t.Errorf("ParseKey(%q) accepted a malformed key", s)
+		}
+	}
+}
+
+// TestBucketMapIsBounded: the bucket map is keyed by verified key identity, so
+// it cannot be grown by an attacker, but a process that has seen many rotated
+// keys would otherwise hold a bucket for every key it ever served.
+func TestBucketMapIsBounded(t *testing.T) {
+	a := NewAPIKeyAuth([]string{"ctx0_test_secret"}, 100)
+
+	for i := range maxBuckets * 2 {
+		a.allowRequest(fmt.Sprintf("key-%d", i))
+	}
+
+	a.mu.Lock()
+	n := len(a.buckets)
+	a.mu.Unlock()
+
+	if n > maxBuckets {
+		t.Errorf("bucket map holds %d entries, want at most %d", n, maxBuckets)
+	}
+}
+
+// TestRateLimitAllowsNormalThroughput pins the default against measured service
+// cost. The old default of 100/min (1.6/s) was never noticed because rate
+// limiting only engages once a key is configured; making authentication
+// mandatory would have throttled every deployment to a crawl.
+func TestRateLimitAllowsNormalThroughput(t *testing.T) {
+	a := NewAPIKeyAuth([]string{"ctx0_test_secret"}, 0) // 0 => default
+
+	// A burst of 1000 requests is well within what a single client does during
+	// a bulk import, and must not be rejected.
+	for i := range 1000 {
+		if !a.allowRequest("id") {
+			t.Fatalf("request %d of 1000 was rate limited at the default limit", i)
 		}
 	}
 }

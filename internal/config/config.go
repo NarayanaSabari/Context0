@@ -69,7 +69,7 @@ type Config struct {
 	// memory, so N replicas admit roughly N times this rate. Scale it down as
 	// replicas go up, or move rate limiting to an ingress or service mesh if
 	// you need a true global budget.
-	// Env: CONTEXT0_RATE_LIMIT_PER_MINUTE (default: 100)
+	// Env: CONTEXT0_RATE_LIMIT_PER_MINUTE (default: 6000)
 	RateLimitPerMinute int
 
 	// EmbeddingProvider selects the embedding backend.
@@ -108,7 +108,7 @@ func Load() Config {
 		DatabaseURL: getEnv("CONTEXT0_DATABASE_URL", "postgres://context0:context0@localhost:5432/context0?sslmode=disable"),
 		APIKeys:     splitEnv("CONTEXT0_API_KEYS", ","),
 
-		RateLimitPerMinute: getEnvInt("CONTEXT0_RATE_LIMIT_PER_MINUTE", 100),
+		RateLimitPerMinute: getEnvInt("CONTEXT0_RATE_LIMIT_PER_MINUTE", 6000),
 
 		EmbeddingProvider: getEnv("CONTEXT0_EMBEDDING_PROVIDER", "bag-of-words"),
 		EmbeddingModel:    getEnv("CONTEXT0_EMBEDDING_MODEL", ""),

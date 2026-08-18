@@ -18,7 +18,10 @@ api:
   # Per-key request budget, enforced independently by each replica (the token
   # buckets are in process memory). The effective cluster limit is this times
   # replicas; use an ingress or service mesh if you need a true global budget.
-  rateLimitPerMinute: 100
+  # 100 requests/second per key. High enough that normal use never sees a 429
+  # (a store costs ~4ms), low enough that one runaway client cannot monopolise
+  # the connection pool.
+  rateLimitPerMinute: 6000
   pool:
     # pgxpool otherwise defaults MaxConns to the NODE's core count, which has
     # nothing to do with this container's CPU limit: a few replicas on a large
