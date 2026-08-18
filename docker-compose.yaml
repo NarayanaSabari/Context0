@@ -50,6 +50,9 @@ services:
       CONTEXT0_GRPC_PORT: "50051"
       CONTEXT0_HTTP_PORT: "8080"
       CONTEXT0_API_KEYS: "ctx0_dev_key_1,ctx0_dev_key_2"
+      # Local development: generous so benchmarks and the e2e suite are not
+      # throttled. Production should keep the 100/min default or lower.
+      CONTEXT0_RATE_LIMIT_PER_MINUTE: "100000"
       CONTEXT0_EMBEDDING_PROVIDER: "bag-of-words"
       # To use Ollama (if running on host):
       # CONTEXT0_EMBEDDING_PROVIDER: ollama

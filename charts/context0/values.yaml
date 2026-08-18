@@ -9,6 +9,22 @@ api:
     pullPolicy: IfNotPresent
   grpcPort: 50051
   httpPort: 8080
+  # Must exceed the process's own 15s drain plus preStopSleepSeconds, or
+  # Kubernetes SIGKILLs mid-drain and the connection pool is never closed.
+  terminationGracePeriodSeconds: 30
+  # Covers the gap between kubelet sending SIGTERM and kube-proxy finishing
+  # endpoint removal. Without it, rollouts drop connections.
+  preStopSleepSeconds: 5
+  # Per-key request budget, enforced independently by each replica (the token
+  # buckets are in process memory). The effective cluster limit is this times
+  # replicas; use an ingress or service mesh if you need a true global budget.
+  rateLimitPerMinute: 100
+  pool:
+    # pgxpool otherwise defaults MaxConns to the NODE's core count, which has
+    # nothing to do with this container's CPU limit: a few replicas on a large
+    # node would exhaust Postgres's max_connections (100).
+    maxConns: 10
+    minConns: 2
   resources:
     requests:
       memory: "128Mi"
@@ -16,6 +32,16 @@ api:
     limits:
       memory: "512Mi"
       cpu: "500m"
+
+# Prometheus scraping. Requires the Prometheus Operator CRDs
+# (kube-prometheus-stack); left off so a plain install does not fail on a
+# missing CRD.
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    # Set to the release label your Prometheus instance selects on.
+    labels: {}
 
 # PostgreSQL + Apache AGE + pgvector
 postgres:
@@ -27,6 +53,18 @@ postgres:
   user: context0
   password: context0-dev-password
   storage: 5Gi
+  # PostgreSQL does not size itself from the cgroup limit, so these are set
+  # explicitly against the 1Gi limit below. shared_buffers is the usual ~25% of
+  # available memory; effective_cache_size tells the planner how much the OS is
+  # likely caching and makes index scans look as cheap as they really are.
+  # Raise all four together with the resource limits.
+  tuning:
+    sharedBuffers: 256MB
+    effectiveCacheSize: 768MB
+    workMem: 16MB
+    # Used for index builds, including the pgvector HNSW index, which is far
+    # faster when the graph fits in this.
+    maintenanceWorkMem: 128MB
   resources:
     requests:
       memory: "512Mi"

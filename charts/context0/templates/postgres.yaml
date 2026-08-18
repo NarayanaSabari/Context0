@@ -38,15 +38,38 @@ spec:
               mountPath: /var/lib/postgresql
           resources:
             {{- toYaml .Values.postgres.resources | nindent 12 }}
+          # PostgreSQL ships defaults sized for a shared workstation
+          # (shared_buffers=128MB, work_mem=4MB) and does not read the cgroup
+          # limit, so without these it leaves most of the pod's memory unused
+          # and re-reads from disk what it could have cached.
+          args:
+            - -c
+            - shared_buffers={{ .Values.postgres.tuning.sharedBuffers }}
+            - -c
+            - effective_cache_size={{ .Values.postgres.tuning.effectiveCacheSize }}
+            - -c
+            - work_mem={{ .Values.postgres.tuning.workMem }}
+            - -c
+            - maintenance_work_mem={{ .Values.postgres.tuning.maintenanceWorkMem }}
+            # AGE requires its shared library to be preloaded.
+            - -c
+            - shared_preload_libraries=age
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}]
+            periodSeconds: 3
+            # Generous: a first start initialises the data directory, and a
+            # restart after an unclean shutdown replays WAL before accepting
+            # connections. Liveness must not fire during either.
+            failureThreshold: 40
           livenessProbe:
             exec:
               command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}]
-            initialDelaySeconds: 30
             periodSeconds: 10
+            failureThreshold: 3
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}]
-            initialDelaySeconds: 5
             periodSeconds: 5
   volumeClaimTemplates:
     - metadata:
