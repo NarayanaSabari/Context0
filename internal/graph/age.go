@@ -524,21 +524,22 @@ func (r *AGERepository) IncrementAccessCount(ctx context.Context, id uuid.UUID) 
 // paid before the response could be written. Batching makes the cost
 // independent of top_k.
 //
-// UNWIND rather than `WHERE m.id IN $ids`: see the comment on GetContextEdges.
-// A parameterized IN list makes AGE fall back to a sequential scan.
+// A literal id list, not a parameter: see uuidLiteralList. Both parameterized
+// forms make AGE scan the whole Memory label.
 func (r *AGERepository) IncrementAccessCounts(ctx context.Context, ids []uuid.UUID) error {
 	if len(ids) == 0 {
 		return nil
 	}
 
-	idStrs := make([]string, len(ids))
-	for i, id := range ids {
-		idStrs[i] = id.String()
+	list, err := uuidLiteralList(ids)
+	if err != nil {
+		return err
 	}
 
-	const q = `UNWIND $ids AS wanted MATCH (m:Memory) WHERE m.id = wanted ` +
-		`SET m.access_count = m.access_count + 1`
-	return r.cypherExec(ctx, q, params{"ids": idStrs})
+	// Literal list, not UNWIND or a parameter: see uuidLiteralList.
+	q := `MATCH (m:Memory) WHERE m.id IN ` + list +
+		` SET m.access_count = m.access_count + 1`
+	return r.cypherExec(ctx, q, nil)
 }
 
 // UpdateDecayScore sets a memory's decay_score property to the given value.
@@ -655,30 +656,43 @@ func (r *AGERepository) CreateEdges(ctx context.Context, edges []model.Edge) err
 	}
 
 	for rel, group := range byRel {
-		rows := make([]map[string]any, len(group))
-		for i, e := range group {
-			rows[i] = map[string]any{
-				"from_id":    e.FromID.String(),
-				"to_id":      e.ToID.String(),
+		// One statement per edge, with both endpoint ids inlined as literals.
+		//
+		// The batched UNWIND form this replaces could not use the id index for
+		// `WHERE a.id = row.from_id`: AGE planned a sequential scan over the
+		// whole Memory label for *each* endpoint. Measured at 64,070 vertices
+		// that was 94.2ms for a single-row batch and it grew with the graph,
+		// while the same MERGE with literal endpoints is 0.286ms because both
+		// sides plan as index scans.
+		//
+		// So the round trips lose to the scans: a batch of five edges is five
+		// statements at ~0.3ms rather than one statement at ~94ms. See
+		// uuidLiteralList for why inlining these particular values is safe.
+		for _, e := range group {
+			from, err := uuidLiteralList([]uuid.UUID{e.FromID})
+			if err != nil {
+				return err
+			}
+			to, err := uuidLiteralList([]uuid.UUID{e.ToID})
+			if err != nil {
+				return err
+			}
+
+			q := fmt.Sprintf(
+				`MATCH (a:Memory), (b:Memory) WHERE a.id IN %s AND b.id IN %s `+
+					`MERGE (a)-[e:%s]->(b) `+
+					`SET e.id = coalesce(e.id, $edge_id), `+
+					`e.weight = coalesce(e.weight, $weight), `+
+					`e.created_at = coalesce(e.created_at, $created_at)`,
+				from, to, string(rel),
+			)
+			if err := r.cypherExec(ctx, q, params{
 				"edge_id":    e.ID.String(),
 				"weight":     e.Weight,
 				"created_at": e.CreatedAt.Format(time.RFC3339),
+			}); err != nil {
+				return fmt.Errorf("create %s edge: %w", rel, err)
 			}
-		}
-
-		// UNWIND rather than a parameterized IN list, for the indexing reason
-		// documented on GetContextEdges.
-		q := fmt.Sprintf(
-			`UNWIND $rows AS row `+
-				`MATCH (a:Memory), (b:Memory) WHERE a.id = row.from_id AND b.id = row.to_id `+
-				`MERGE (a)-[e:%s]->(b) `+
-				`SET e.id = coalesce(e.id, row.edge_id), `+
-				`e.weight = coalesce(e.weight, row.weight), `+
-				`e.created_at = coalesce(e.created_at, row.created_at)`,
-			string(rel),
-		)
-		if err := r.cypherExec(ctx, q, params{"rows": rows}); err != nil {
-			return fmt.Errorf("create %s edges: %w", rel, err)
 		}
 	}
 
@@ -1041,6 +1055,68 @@ func (r *AGERepository) getEdgesAround(ctx context.Context, centerID uuid.UUID) 
 	return edges, nil
 }
 
+// uuidLiteralList renders UUIDs as a Cypher list literal: ['a','b',...].
+//
+// Building query text from values is exactly what this repository stopped doing
+// when it replaced escapeCypher with real parameters, so this needs to be
+// justified rather than assumed:
+//
+//   - The input is []uuid.UUID, not a string. A uuid.UUID is 16 bytes and
+//     String() renders it as 36 characters from [0-9a-f-]. There is no input,
+//     malicious or otherwise, that produces a quote, a backslash, or a brace.
+//     The type system is doing the escaping, which is stronger than escaping.
+//   - The check below is belt and braces: if a future change makes this take
+//     strings, the assumption fails loudly rather than silently reopening the
+//     injection hole.
+//
+// It exists because AGE cannot use the id property index for `WHERE m.id =
+// wanted` after UNWIND, nor for a parameterized `IN $ids`. Only a literal list
+// plans as an index scan. Measured at 64,070 vertices, ten ids:
+//
+//	UNWIND + WHERE m.id = wanted   24.5ms   (Seq Scan over all 64,070)
+//	WHERE m.id IN $ids             76.2ms   (Seq Scan)
+//	WHERE m.id IN ['literal',...]   0.4ms   (Bitmap Index Scan)
+//
+// Both parameterized forms scan the whole label, so their cost grows with the
+// size of the graph rather than the size of the request.
+func uuidLiteralList(ids []uuid.UUID) (string, error) {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, id := range ids {
+		s := id.String()
+		if !isPlainUUID(s) {
+			return "", fmt.Errorf("refusing to inline non-uuid id %q", s)
+		}
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('\'')
+		b.WriteString(s)
+		b.WriteByte('\'')
+	}
+	b.WriteByte(']')
+	return b.String(), nil
+}
+
+// isPlainUUID reports whether s consists only of hex digits and hyphens at the
+// canonical length. Deliberately stricter than uuid.Parse: this is the guard
+// that makes inlining safe, so it rejects anything it does not fully recognise.
+func isPlainUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		case c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // GetContextEdges returns, for each of the given memory ids, the edges
 // connecting it to its neighbors -- used to explain why a query result was
 // returned. All ids are handled in one round trip per direction, so the cost
@@ -1049,12 +1125,11 @@ func (r *AGERepository) getEdgesAround(ctx context.Context, centerID uuid.UUID) 
 // Two details here are both counter-intuitive and both measured, so do not
 // "simplify" either one without re-running EXPLAIN:
 //
-//  1. UNWIND, not `WHERE m.id IN $ids`. A parameterized IN list defeats the
-//     property index completely -- AGE plans a sequential scan over the whole
-//     Memory label. UNWIND over the same parameter drives an index scan per
-//     element. Measured at 50k vertices: 12.4ms versus 0.098ms.
-//     (The literal `IN [...]` form does use the index, but building literals is
-//     exactly the injection hole this repository removed.)
+//  1. A literal `IN [...]` list, not a parameter and not UNWIND. Both
+//     parameterized forms make AGE scan the whole Memory label, so their cost
+//     grows with the size of the graph rather than the size of the request.
+//     See uuidLiteralList for the measurements and for why inlining these
+//     particular values is safe.
 //  2. Two directed matches, not one undirected `-[e]-`. AGE cannot drive an
 //     undirected pattern from the edge indexes and degrades to a full label
 //     scan. The union of both directions is exactly the undirected set.
@@ -1064,22 +1139,22 @@ func (r *AGERepository) GetContextEdges(ctx context.Context, ids []uuid.UUID) (m
 		return result, nil
 	}
 
-	idStrs := make([]string, len(ids))
-	for i, id := range ids {
-		idStrs[i] = id.String()
+	list, err := uuidLiteralList(ids)
+	if err != nil {
+		return nil, err
 	}
 
 	// Outgoing then incoming. Both shapes return the neighbour as n, so the
 	// decoding below is identical for each.
-	const outgoing = `UNWIND $ids AS wanted MATCH (m:Memory)-[e]->(n:Memory) WHERE m.id = wanted ` +
-		`RETURN {memory_id: m.id, relationship: label(e), weight: e.weight, ` +
+	outgoing := `MATCH (m:Memory)-[e]->(n:Memory) WHERE m.id IN ` + list +
+		` RETURN {memory_id: m.id, relationship: label(e), weight: e.weight, ` +
 		`target_id: n.id, target_content: n.content}`
-	const incoming = `UNWIND $ids AS wanted MATCH (m:Memory)<-[e]-(n:Memory) WHERE m.id = wanted ` +
-		`RETURN {memory_id: m.id, relationship: label(e), weight: e.weight, ` +
+	incoming := `MATCH (m:Memory)<-[e]-(n:Memory) WHERE m.id IN ` + list +
+		` RETURN {memory_id: m.id, relationship: label(e), weight: e.weight, ` +
 		`target_id: n.id, target_content: n.content}`
 
 	for _, q := range [...]string{outgoing, incoming} {
-		rows, err := r.cypher(ctx, q, params{"ids": idStrs})
+		rows, err := r.cypher(ctx, q, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1247,14 +1322,18 @@ func (r *AGERepository) hydrate(ctx context.Context, hits []vectorHit) ([]model.
 		return nil, nil
 	}
 
-	idStrs := make([]string, len(hits))
+	ids := make([]uuid.UUID, len(hits))
 	for i, h := range hits {
-		idStrs[i] = h.id.String()
+		ids[i] = h.id
+	}
+	list, err := uuidLiteralList(ids)
+	if err != nil {
+		return nil, err
 	}
 
-	// UNWIND rather than IN: see the comment on GetContextEdges.
-	const q = `UNWIND $ids AS wanted MATCH (m:Memory) WHERE m.id = wanted RETURN properties(m)`
-	rows, err := r.cypher(ctx, q, params{"ids": idStrs})
+	// Literal list, not UNWIND or a parameter: see uuidLiteralList.
+	q := `MATCH (m:Memory) WHERE m.id IN ` + list + ` RETURN properties(m)`
+	rows, err := r.cypher(ctx, q, nil)
 	if err != nil {
 		return nil, fmt.Errorf("hydrate vector hits: %w", err)
 	}

@@ -1468,3 +1468,56 @@ func TestCreateMemory_TimestampsHaveSubSecondPrecision(t *testing.T) {
 			"sub-second precision appears to be lost", n, len(seen))
 	}
 }
+
+// TestUUIDLiteralListRejectsNonUUID guards the one place this repository builds
+// query text from values rather than passing parameters.
+//
+// Inlining is safe because the input is []uuid.UUID -- 16 bytes rendered as 36
+// characters from [0-9a-f-], with no way to express a quote or a brace. This
+// test is the tripwire for that assumption: if the signature ever loosens to
+// strings, or uuid's String() changes, the guard must reject rather than
+// silently reopen the injection hole that c9a1c8a closed.
+func TestUUIDLiteralListRejectsNonUUID(t *testing.T) {
+	if !isPlainUUID("3f2a9c1e-0000-4000-8000-abcdefabcdef") {
+		t.Error("a canonical uuid was rejected")
+	}
+
+	for _, bad := range []string{
+		"",
+		"3f2a9c1e-0000-4000-8000-abcdefabcde",   // too short
+		"3f2a9c1e-0000-4000-8000-abcdefabcdef1", // too long
+		"3f2a9c1e-0000-4000-8000-abcdefabcde'",  // quote
+		"3f2a9c1e'-0000-4000-8000-abcdefabcde",  // quote mid-string
+		`3f2a9c1e\-0000-4000-8000-abcdefabcde`,  // backslash
+		"3f2a9c1e-0000-4000-8000-abcdefabcdeZ",  // non-hex
+		"' OR 1=1 --                         ",  // injection attempt at length 36
+	} {
+		if isPlainUUID(bad) {
+			t.Errorf("isPlainUUID(%q) accepted a value that is not a plain uuid", bad)
+		}
+	}
+}
+
+// TestUUIDLiteralListRenders checks the Cypher list literal shape, since a
+// malformed list is a syntax error at query time rather than a compile error.
+func TestUUIDLiteralListRenders(t *testing.T) {
+	a := uuid.MustParse("3f2a9c1e-0000-4000-8000-abcdefabcdef")
+	b := uuid.MustParse("11111111-2222-4333-8444-555555555555")
+
+	got, err := uuidLiteralList([]uuid.UUID{a, b})
+	if err != nil {
+		t.Fatalf("uuidLiteralList: %v", err)
+	}
+	want := "['3f2a9c1e-0000-4000-8000-abcdefabcdef','11111111-2222-4333-8444-555555555555']"
+	if got != want {
+		t.Errorf("uuidLiteralList =\n  %s\nwant\n  %s", got, want)
+	}
+
+	empty, err := uuidLiteralList(nil)
+	if err != nil {
+		t.Fatalf("uuidLiteralList(nil): %v", err)
+	}
+	if empty != "[]" {
+		t.Errorf("uuidLiteralList(nil) = %q, want []", empty)
+	}
+}
