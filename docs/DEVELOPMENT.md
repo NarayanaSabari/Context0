@@ -106,7 +106,7 @@ No separate branches — configuration controls the mode.
 For developers trying Context0, local testing, or small self-hosted deployments.
 
 ```yaml
-# values-local.yaml
+# Example local overrides (pass with -f, or use `make deploy`)
 mode: local
 
 postgres:
@@ -134,12 +134,22 @@ consolidation:
   schedule: "0 */6 * * *"
 
 auth:
-  enabled: false            # No auth for local dev
+  # Running without authentication is now explicit rather than the result of
+  # leaving a field blank. Only sensible when nothing outside your machine can
+  # reach the cluster.
+  allowUnauthenticated: true
 ```
 
 **Install:**
 ```bash
-helm install context0 ./charts/context0 -f charts/context0/values-local.yaml -n context0 --create-namespace
+# `make deploy` is the shortcut: it generates a password and API key into
+# .dev-credentials (gitignored) on first run and reuses them afterwards.
+make kind-up && make deploy
+
+# Or explicitly:
+helm install context0 ./charts/context0 -n context0 --create-namespace \
+  --set postgres.password="$(openssl rand -hex 16)" \
+  --set auth.apiKeys="$(go run ./cmd/cli keys generate)"
 ```
 
 ### Mode 2: Production (Enterprise / Managed)
@@ -147,7 +157,7 @@ helm install context0 ./charts/context0 -f charts/context0/values-local.yaml -n 
 For production deployments with HA, real embeddings, monitoring, and security.
 
 ```yaml
-# values-production.yaml
+# Example production overrides (pass with -f)
 mode: production
 
 postgres:
@@ -204,7 +214,22 @@ security:
 
 **Install:**
 ```bash
-helm install context0 ./charts/context0 -f charts/context0/values-production.yaml -n context0 --create-namespace
+# Credentials come from Secrets you manage (External Secrets, Sealed Secrets,
+# SOPS, or a CSI driver). With existingSecret set, the chart creates no Secret
+# of its own and never sees the values.
+helm install context0 ./charts/context0 -n context0 --create-namespace \
+  -f my-production-values.yaml \
+  --set postgres.existingSecret=context0-postgres \
+  --set auth.existingSecret=context0-api-keys
+```
+
+Then enforce the Pod Security "restricted" profile on the namespace. Helm does
+not manage the namespace it installs into, so this is a separate step:
+
+```bash
+kubectl label namespace context0 \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/enforce-version=latest
 ```
 
 ### How modes differ (same code, different config)
@@ -389,8 +414,10 @@ make kind-up
 for img in context0/context0:dev context0/postgres-age-vector:dev context0/web:dev; do
   kind load docker-image "$img" --name context0-dev
 done
-helm install context0 ./charts/context0 -n context0 --create-namespace
-scripts/verify_k8s.sh
+helm install context0 ./charts/context0 -n context0 --create-namespace \
+  --set postgres.password="$(openssl rand -hex 16)" \
+  --set auth.apiKeys="$(go run ./cmd/cli keys generate)"
+CONTEXT0_API_KEY=<the key above> scripts/verify_k8s.sh
 ```
 
 The script maps each requirement to a check against the live cluster: probe
@@ -481,9 +508,8 @@ context0/
 │   └── gen/                     # Generated Go code (gitignored)
 ├── charts/
 │   └── context0/
-│       ├── values.yaml          # Default values
-│       ├── values-local.yaml    # Local/dev override
-│       └── values-production.yaml # Production override
+│       ├── values.yaml          # All values, documented inline
+│       └── templates/           # Manifests, NetworkPolicy, ServiceAccounts
 ├── cmd/
 │   ├── server/                  # API server
 │   ├── consolidate/             # Consolidation CronJob

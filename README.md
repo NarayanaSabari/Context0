@@ -34,7 +34,22 @@ Context0 solves this with a **graph-based memory engine** that runs in your Kube
 ### Install with Helm
 
 ```bash
-helm install context0 ./charts/context0 -n context0 --create-namespace
+# Generate an API key (offline; the server stores only its hash)
+go run ./cmd/cli keys generate
+
+helm install context0 ./charts/context0 -n context0 --create-namespace \
+  --set postgres.password="$(openssl rand -base64 24 | tr -d '/+=')" \
+  --set auth.apiKeys="<the key printed above>"
+```
+
+The chart ships no default password or API key, and refuses to install without
+them: a default credential in a public chart is a published credential. For
+anything beyond a local trial, point it at Secrets you manage instead:
+
+```bash
+helm install context0 ./charts/context0 -n context0 --create-namespace \
+  --set postgres.existingSecret=my-postgres-secret \
+  --set auth.existingSecret=my-api-keys
 ```
 
 ### Try it with Docker Compose
@@ -281,13 +296,17 @@ make docker-build
 ### Run on kind cluster
 
 ```bash
-# Create cluster + deploy
+# Create cluster + deploy.
+# `make deploy` generates a password and API key into .dev-credentials
+# (gitignored) on first run and reuses them afterwards. The chart ships no
+# default credentials, because a default in a public chart is a published one.
 make kind-up
 make deploy
 
-# Run E2E tests
+# Run E2E tests against the deployed cluster
+. ./.dev-credentials
 CONTEXT0_E2E_HTTP=http://localhost:8080 \
-CONTEXT0_E2E_API_KEY=ctx0_dev_key_1 \
+CONTEXT0_E2E_API_KEY="$DEV_API_KEY" \
 go test ./test/e2e/... -v -tags=e2e
 
 # Teardown
