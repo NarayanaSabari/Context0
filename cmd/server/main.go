@@ -21,7 +21,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -35,6 +35,7 @@ import (
 	"github.com/context0/context0/internal/config"
 	emb "github.com/context0/context0/internal/embedding"
 	"github.com/context0/context0/internal/graph"
+	"github.com/context0/context0/internal/logging"
 	"github.com/context0/context0/internal/metrics"
 	"github.com/context0/context0/internal/server"
 	"github.com/context0/context0/internal/service"
@@ -54,17 +55,25 @@ func main() {
 	// Step 1: Load all configuration from environment variables.
 	cfg := config.Load()
 
+	// Structured logging is installed before anything else can fail, so even a
+	// startup error is emitted in the same format as everything else.
+	logger := logging.Setup(logging.Options{
+		Level:   cfg.LogLevel,
+		Format:  cfg.LogFormat,
+		Version: cfg.Version,
+	})
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Step 2: Establish a PostgreSQL connection pool and verify reachability.
-	log.Printf("connecting to database...")
+	slog.Info("connecting to database")
 	pool, err := graph.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
+		fatal("failed to connect to database", err)
 	}
 	defer pool.Close()
-	log.Printf("database connected")
+	slog.Info("database connected")
 
 	// Step 3: Initialise the embedding provider. This must happen before the
 	// graph repository is created because the vector dimension (returned by
@@ -77,16 +86,16 @@ func main() {
 		Dim:      cfg.EmbeddingDim,
 	})
 	if err != nil {
-		log.Fatalf("failed to create embedder: %v", err)
+		fatal("failed to create embedder", err)
 	}
-	log.Printf("embedding: provider=%s dim=%d", cfg.EmbeddingProvider, embedder.Dimension())
+	slog.Info("embedding provider ready", slog.String("provider", cfg.EmbeddingProvider), slog.Int("dimension", embedder.Dimension()))
 
 	// Step 4: Create the graph repository and apply schema migrations.
 	repo := graph.NewAGERepository(pool, embedder.Dimension())
 	if err := repo.InitSchema(ctx); err != nil {
-		log.Fatalf("failed to init graph schema: %v", err)
+		fatal("failed to init graph schema", err)
 	}
-	log.Printf("graph schema initialized (graph: %s)", graph.GraphName)
+	slog.Info("graph schema initialized", slog.String("graph", graph.GraphName))
 
 	// Step 5: Register Prometheus metrics (counters, histograms, gauges).
 	metrics.Register()
@@ -95,8 +104,15 @@ func main() {
 	apiAuth := auth.NewAPIKeyAuth(cfg.APIKeys, cfg.RateLimitPerMinute)
 
 	// Step 7: Build and start the gRPC server.
+	//
+	// Order matters: authentication runs first so an unauthenticated request is
+	// rejected before a handler sees it, and logging wraps the handler so the
+	// outcome of everything that gets past auth is recorded.
 	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(apiAuth.UnaryInterceptor()),
+		grpc.ChainUnaryInterceptor(
+			apiAuth.UnaryInterceptor(),
+			logging.UnaryServerInterceptor(logger),
+		),
 	)
 
 	// Register all service implementations on the gRPC server.
@@ -113,13 +129,13 @@ func main() {
 
 	grpcLis, err := net.Listen("tcp", cfg.GRPCAddr())
 	if err != nil {
-		log.Fatalf("failed to listen on %s: %v", cfg.GRPCAddr(), err)
+		fatal("failed to listen for gRPC", err, slog.String("addr", cfg.GRPCAddr()))
 	}
 
 	go func() {
-		log.Printf("gRPC server listening on %s", cfg.GRPCAddr())
+		slog.Info("gRPC server listening", slog.String("addr", cfg.GRPCAddr()))
 		if err := grpcServer.Serve(grpcLis); err != nil {
-			log.Fatalf("gRPC server failed: %v", err)
+			fatal("gRPC server failed", err)
 		}
 	}()
 
@@ -138,13 +154,13 @@ func main() {
 
 	// Register each service's REST handler, pointing back to the local gRPC server.
 	if err := pb.RegisterContext0HandlerFromEndpoint(ctx, gwMux, cfg.GRPCAddr(), opts); err != nil {
-		log.Fatalf("failed to register memory gateway: %v", err)
+		fatal("failed to register memory gateway", err)
 	}
 	if err := pb.RegisterSessionServiceHandlerFromEndpoint(ctx, gwMux, cfg.GRPCAddr(), opts); err != nil {
-		log.Fatalf("failed to register session gateway: %v", err)
+		fatal("failed to register session gateway", err)
 	}
 	if err := pb.RegisterHealthServiceHandlerFromEndpoint(ctx, gwMux, cfg.GRPCAddr(), opts); err != nil {
-		log.Fatalf("failed to register health gateway: %v", err)
+		fatal("failed to register health gateway", err)
 	}
 
 	// Step 9: Build and start the HTTP server.
@@ -167,9 +183,9 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("HTTP server listening on %s (REST gateway + metrics)", cfg.HTTPAddr())
+		slog.Info("HTTP server listening (REST gateway + metrics)", slog.String("addr", cfg.HTTPAddr()))
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTP server failed: %v", err)
+			fatal("HTTP server failed", err)
 		}
 	}()
 
@@ -181,7 +197,7 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
-	log.Printf("received signal %s, shutting down...", sig)
+	slog.Info("signal received, shutting down", slog.String("signal", sig.String()))
 
 	// Fail readiness first. Kubernetes removes the pod from Service endpoints
 	// asynchronously, so this window is what stops new requests arriving while
@@ -198,12 +214,28 @@ func main() {
 	// so stopping gRPC first would break every in-flight REST request instead of
 	// draining it.
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		slog.Error("HTTP server shutdown error", slog.Any("error", err))
 	}
 	grpcServer.GracefulStop()
 
 	// Release the database connection pool.
 	repo.Close()
 
-	log.Printf("shutdown complete")
+	slog.Info("shutdown complete")
+}
+
+// fatal logs a structured error and exits non-zero.
+//
+// slog has no Fatal: it is a logging library, and exiting is a policy decision.
+// This keeps startup failures in the same structured stream as everything else
+// rather than reverting to the stdlib logger's unstructured format for exactly
+// the messages an operator most needs to parse.
+func fatal(msg string, err error, attrs ...slog.Attr) {
+	args := make([]any, 0, len(attrs)+1)
+	for _, a := range attrs {
+		args = append(args, a)
+	}
+	args = append(args, slog.Any("error", err))
+	slog.Error(msg, args...)
+	os.Exit(1)
 }

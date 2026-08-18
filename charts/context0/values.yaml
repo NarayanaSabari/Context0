@@ -22,6 +22,10 @@ api:
   # (a store costs ~4ms), low enough that one runaway client cannot monopolise
   # the connection pool.
   rateLimitPerMinute: 6000
+  # Structured logging. JSON is the default because the destination is a log
+  # aggregator; set "text" when reading output directly during development.
+  logLevel: info
+  logFormat: json
   pool:
     # pgxpool otherwise defaults MaxConns to the NODE's core count, which has
     # nothing to do with this container's CPU limit: a few replicas on a large

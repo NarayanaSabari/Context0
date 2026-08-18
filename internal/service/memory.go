@@ -17,8 +17,11 @@
 package service
 
 import (
+	"log/slog"
+
 	"context"
 	"fmt"
+	"github.com/context0/context0/internal/logging"
 	"sort"
 	"strings"
 	"time"
@@ -92,9 +95,25 @@ func (s *MemoryService) Store(ctx context.Context, req *pb.StoreRequest) (*pb.St
 	}
 
 	// Generate and store embedding for vector search.
+	//
+	// A failure here is not fatal to the write -- the memory is already stored
+	// and remains findable by keyword -- but it silently removes that memory
+	// from vector search forever, so it must be visible rather than dropped.
 	if s.embedder != nil {
-		if vec, err := s.embedder.Embed(mem.Content); err == nil {
-			_ = s.repo.StoreEmbedding(ctx, mem.ID, mem.ProjectID, vec)
+		vec, err := s.embedder.Embed(mem.Content)
+		switch {
+		case err != nil:
+			logging.FromContext(ctx).Error("embedding failed; memory will not be vector-searchable",
+				slog.String("memory_id", mem.ID.String()),
+				slog.String("project_id", mem.ProjectID),
+				slog.Any("error", err))
+		default:
+			if err := s.repo.StoreEmbedding(ctx, mem.ID, mem.ProjectID, vec); err != nil {
+				logging.FromContext(ctx).Error("storing embedding failed; memory will not be vector-searchable",
+					slog.String("memory_id", mem.ID.String()),
+					slog.String("project_id", mem.ProjectID),
+					slog.Any("error", err))
+			}
 		}
 	}
 
@@ -169,7 +188,15 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 	var vectorResults []model.MemoryWithContext
 	if s.embedder != nil && req.Query != "" {
 		if queryVec, err := s.embedder.Embed(req.Query); err == nil {
-			vectorResults, _ = s.repo.SearchByVector(ctx, queryVec, req.ProjectId, int(filter.TopK)*2)
+			var verr error
+			vectorResults, verr = s.repo.SearchByVector(ctx, queryVec, req.ProjectId, int(filter.TopK)*2)
+			if verr != nil {
+				// The query still returns keyword results, so the caller sees a
+				// quietly worse answer rather than an error. Record it.
+				logging.FromContext(ctx).Warn("vector search failed; falling back to keyword results only",
+					slog.String("project_id", req.ProjectId),
+					slog.Any("error", verr))
+			}
 		}
 	}
 
@@ -191,7 +218,12 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 	}
 	// Context is supplementary, not required: a failure here degrades
 	// gracefully since a nil map reads as empty for every id.
-	contextEdges, _ := s.repo.GetContextEdges(ctx, ids)
+	contextEdges, cerr := s.repo.GetContextEdges(ctx, ids)
+	if cerr != nil {
+		logging.FromContext(ctx).Warn("loading context edges failed; results returned without context",
+			slog.Int("result_count", len(ids)),
+			slog.Any("error", cerr))
+	}
 	for i, r := range results {
 		results[i].Context = contextEdges[r.Memory.ID]
 	}
@@ -199,7 +231,11 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 	// One statement for every result rather than a round trip each. Access
 	// counts feed ranking and consolidation, so a failure here skews future
 	// ordering slightly but must not fail the read the caller asked for.
-	_ = s.repo.IncrementAccessCounts(ctx, ids)
+	if err := s.repo.IncrementAccessCounts(ctx, ids); err != nil {
+		logging.FromContext(ctx).Warn("incrementing access counts failed; ranking and consolidation will see stale frequencies",
+			slog.Int("result_count", len(ids)),
+			slog.Any("error", err))
+	}
 
 	metrics.QueryResultsCount.Observe(float64(len(results)))
 
@@ -337,13 +373,27 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 
 	for _, mem := range memories {
 		if err := s.repo.CreateMemory(ctx, mem); err != nil {
+			// Extraction is best-effort per memory: one bad memory must not
+			// discard the rest of the conversation. But the caller is told how
+			// many were extracted, not how many were dropped, so a silent skip
+			// here reads as "the extractor found nothing".
+			logging.FromContext(ctx).Error("extracted memory could not be stored; it is missing from the response count",
+				slog.String("project_id", req.ProjectId),
+				slog.Any("error", err))
 			continue
 		}
 
 		// Generate and store embedding.
 		if s.embedder != nil {
-			if vec, err := s.embedder.Embed(mem.Content); err == nil {
-				_ = s.repo.StoreEmbedding(ctx, mem.ID, mem.ProjectID, vec)
+			vec, err := s.embedder.Embed(mem.Content)
+			if err != nil {
+				logging.FromContext(ctx).Error("embedding failed for extracted memory; it will not be vector-searchable",
+					slog.String("memory_id", mem.ID.String()),
+					slog.Any("error", err))
+			} else if err := s.repo.StoreEmbedding(ctx, mem.ID, mem.ProjectID, vec); err != nil {
+				logging.FromContext(ctx).Error("storing embedding failed for extracted memory; it will not be vector-searchable",
+					slog.String("memory_id", mem.ID.String()),
+					slog.Any("error", err))
 			}
 		}
 
@@ -351,7 +401,12 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 		if req.SessionId != "" {
 			sessID, err := uuid.Parse(req.SessionId)
 			if err == nil {
-				_ = s.repo.LinkMemoryToSession(ctx, sessID, mem.ID)
+				if err := s.repo.LinkMemoryToSession(ctx, sessID, mem.ID); err != nil {
+					logging.FromContext(ctx).Warn("linking extracted memory to session failed",
+						slog.String("memory_id", mem.ID.String()),
+						slog.String("session_id", req.SessionId),
+						slog.Any("error", err))
+				}
 			}
 		}
 
@@ -442,6 +497,9 @@ func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory
 
 	results, err := s.repo.QueryMemories(ctx, filter)
 	if err != nil {
+		logging.FromContext(ctx).Warn("contradiction detection skipped: candidate lookup failed",
+			slog.String("memory_id", mem.ID.String()),
+			slog.Any("error", err))
 		return nil
 	}
 
@@ -484,6 +542,10 @@ func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory
 	}
 
 	if err := s.repo.CreateEdges(ctx, edges); err != nil {
+		logging.FromContext(ctx).Warn("writing supersedes edges failed; superseded facts stay live",
+			slog.String("memory_id", mem.ID.String()),
+			slog.Int("edge_count", len(edges)),
+			slog.Any("error", err))
 		return nil
 	}
 	metrics.EdgesTotal.WithLabelValues(string(model.RelSupersedes)).Add(float64(len(edges)))

@@ -33,6 +33,10 @@ spec:
                     secretKeyRef:
                       name: {{ .Values.postgres.existingSecret | default "postgres-age-secret" }}
                       key: {{ .Values.postgres.existingSecretKey | default "password" }}
+                - name: CONTEXT0_LOG_LEVEL
+                  value: {{ .Values.api.logLevel | quote }}
+                - name: CONTEXT0_LOG_FORMAT
+                  value: {{ .Values.api.logFormat | quote }}
                 - name: CONTEXT0_DATABASE_URL
                   value: "postgres://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres-age.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}?sslmode={{ .Values.postgres.sslMode }}"
                 - name: CONSOLIDATION_DECAY_HALF_LIFE_DAYS

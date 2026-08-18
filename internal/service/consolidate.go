@@ -15,7 +15,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"time"
 
@@ -55,29 +55,29 @@ type ConsolidationResult struct {
 func RunConsolidation(ctx context.Context, repo *graph.AGERepository, cfg ConsolidationConfig) (ConsolidationResult, error) {
 	var result ConsolidationResult
 
-	log.Println("consolidation: starting merge phase...")
+	slog.Info("consolidation: merge phase starting")
 	merged, err := phaseMerge(ctx, repo)
 	if err != nil {
 		return result, fmt.Errorf("merge phase: %w", err)
 	}
 	result.EdgesMerged = merged
 
-	log.Println("consolidation: starting decay phase...")
+	slog.Info("consolidation: decay phase starting")
 	decayed, err := phaseDecay(ctx, repo, cfg)
 	if err != nil {
 		return result, fmt.Errorf("decay phase: %w", err)
 	}
 	result.MemoriesDecayed = decayed
 
-	log.Println("consolidation: starting prune phase...")
+	slog.Info("consolidation: prune phase starting")
 	pruned, err := phasePrune(ctx, repo, cfg)
 	if err != nil {
 		return result, fmt.Errorf("prune phase: %w", err)
 	}
 	result.MemoriesPruned = pruned
 
-	log.Printf("consolidation: complete (merged=%d, decayed=%d, pruned=%d)",
-		result.EdgesMerged, result.MemoriesDecayed, result.MemoriesPruned)
+	slog.Info("consolidation complete",
+		slog.Int("merged", merged), slog.Int("decayed", decayed), slog.Int("pruned", pruned))
 
 	return result, nil
 }
@@ -137,7 +137,7 @@ func phaseMerge(ctx context.Context, repo *graph.AGERepository) (int, error) {
 				CreatedAt:    time.Now().UTC(),
 			}
 			if _, err := repo.CreateEdge(ctx, edge); err != nil {
-				log.Printf("consolidation: failed to create supersedes edge: %v", err)
+				slog.Warn("consolidation: creating supersedes edge failed", slog.Any("error", err))
 				continue
 			}
 			merged++
@@ -183,7 +183,7 @@ func phaseDecay(ctx context.Context, repo *graph.AGERepository, cfg Consolidatio
 		}
 
 		if err := repo.UpdateDecayScore(ctx, r.Memory.ID, newScore); err != nil {
-			log.Printf("consolidation: failed to update decay score for %s: %v", r.Memory.ID, err)
+			slog.Warn("consolidation: updating decay score failed", slog.String("memory_id", r.Memory.ID.String()), slog.Any("error", err))
 			continue
 		}
 		decayed++
@@ -217,7 +217,7 @@ func phasePrune(ctx context.Context, repo *graph.AGERepository, cfg Consolidatio
 			ageDays > float64(cfg.PruneAgeDays) {
 
 			if err := repo.DeleteMemory(ctx, r.Memory.ID); err != nil {
-				log.Printf("consolidation: failed to prune memory %s: %v", r.Memory.ID, err)
+				slog.Warn("consolidation: pruning memory failed", slog.String("memory_id", r.Memory.ID.String()), slog.Any("error", err))
 				continue
 			}
 			pruned++

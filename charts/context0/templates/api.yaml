@@ -91,6 +91,10 @@ spec:
             # value times .Values.api.replicas.
             - name: CONTEXT0_RATE_LIMIT_PER_MINUTE
               value: {{ .Values.api.rateLimitPerMinute | quote }}
+            - name: CONTEXT0_LOG_LEVEL
+              value: {{ .Values.api.logLevel | quote }}
+            - name: CONTEXT0_LOG_FORMAT
+              value: {{ .Values.api.logFormat | quote }}
             # Go does not derive its heap target from the cgroup limit, so
             # without this the GC only reacts to its own pacing and the kernel
             # OOM-kills the container before the collector feels any pressure.

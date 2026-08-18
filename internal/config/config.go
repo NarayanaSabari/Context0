@@ -93,6 +93,15 @@ type Config struct {
 	// Env: CONTEXT0_EMBEDDING_DIM (default: 0)
 	EmbeddingDim int
 
+	// LogLevel is one of debug, info, warn, error.
+	// Env: CONTEXT0_LOG_LEVEL (default: info)
+	LogLevel string
+
+	// LogFormat is "json" or "text". JSON is the default because the usual
+	// destination is a log aggregator; text is for local development.
+	// Env: CONTEXT0_LOG_FORMAT (default: json)
+	LogFormat string
+
 	// Version is the engine version string reported by the health endpoint.
 	// Env: CONTEXT0_VERSION (default: "0.1.0-dev")
 	Version string
@@ -115,6 +124,9 @@ func Load() Config {
 		EmbeddingAPIKey:   getEnv("CONTEXT0_EMBEDDING_API_KEY", ""),
 		EmbeddingBaseURL:  getEnv("CONTEXT0_EMBEDDING_BASE_URL", ""),
 		EmbeddingDim:      getEnvInt("CONTEXT0_EMBEDDING_DIM", 0),
+
+		LogLevel:  getEnv("CONTEXT0_LOG_LEVEL", "info"),
+		LogFormat: getEnv("CONTEXT0_LOG_FORMAT", "json"),
 
 		Version: getEnv("CONTEXT0_VERSION", "0.1.0-dev"),
 	}

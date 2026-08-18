@@ -17,19 +17,25 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 
 	"github.com/context0/context0/internal/config"
 	"github.com/context0/context0/internal/graph"
+	"github.com/context0/context0/internal/logging"
 	"github.com/context0/context0/internal/service"
 )
 
 func main() {
-	log.Println("context0 consolidation job starting...")
-
 	cfg := config.Load()
+
+	logging.Setup(logging.Options{
+		Level:   cfg.LogLevel,
+		Format:  cfg.LogFormat,
+		Version: cfg.Version,
+	})
+	slog.Info("consolidation job starting")
 
 	ctx := context.Background()
 
@@ -37,7 +43,7 @@ func main() {
 	// graph data; it does not need embedding support.
 	pool, err := graph.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
+		fatal("failed to connect to database", err)
 	}
 	defer pool.Close()
 
@@ -48,7 +54,7 @@ func main() {
 	defer repo.Close()
 
 	if err := repo.InitSchema(ctx); err != nil {
-		log.Fatalf("failed to init graph schema: %v", err)
+		fatal("failed to init graph schema", err)
 	}
 
 	// Start with default consolidation settings, then apply any
@@ -74,9 +80,18 @@ func main() {
 	// Execute the consolidation pipeline: merge, decay, prune.
 	result, err := service.RunConsolidation(ctx, repo, consolCfg)
 	if err != nil {
-		log.Fatalf("consolidation failed: %v", err)
+		fatal("consolidation failed", err)
 	}
 
-	log.Printf("consolidation complete: merged=%d, decayed=%d, pruned=%d",
-		result.EdgesMerged, result.MemoriesDecayed, result.MemoriesPruned)
+	slog.Info("consolidation complete",
+		slog.Int("merged", result.EdgesMerged),
+		slog.Int("decayed", result.MemoriesDecayed),
+		slog.Int("pruned", result.MemoriesPruned))
+}
+
+// fatal logs a structured error and exits non-zero. See the equivalent in
+// cmd/server for why slog has no Fatal of its own.
+func fatal(msg string, err error) {
+	slog.Error(msg, slog.Any("error", err))
+	os.Exit(1)
 }
