@@ -149,7 +149,11 @@ metadata:
   labels:
     app: context0-api
 spec:
-  type: {{ .Values.service.type }}
+  # nodePort entries are only legal on a NodePort/LoadBalancer Service, so
+  # enabling them implies the type. Reading service.type alone made
+  # `--set service.nodePort.enabled=true` fail the install outright with
+  # "may not be used when `type` is 'ClusterIP'".
+  type: {{ if .Values.service.nodePort.enabled }}NodePort{{ else }}{{ .Values.service.type }}{{ end }}
   ports:
     - port: {{ .Values.api.grpcPort }}
       targetPort: {{ .Values.api.grpcPort }}

@@ -259,14 +259,21 @@ Adding `automaxprocs` would actively *disable* that, so it should not be added.
 
 ## 10. Results
 
-End-to-end, measured through the public REST API against the same 50k corpus
-(`scripts/bench_api.py`):
+Measured through the public REST API against the same 50k corpus, comparing a
+binary built at `c2b2888` (before any of this work) against `bbd6eee`, both
+pointed at the same database:
 
-| Endpoint | Before | After | Speedup |
+| Endpoint | Before (`c2b2888`) | After (`bbd6eee`) | Speedup |
 |---|---|---|---|
-| `GET /v1/memories/query` (project filter) | 62.2 ms | **5.8 ms** | **10.6x** |
-| `GET /v1/memories/query` (keyword) | 62.5 ms | **5.9 ms** | **10.6x** |
-| liveness probe | 21.4 ms (`/v1/health`) | **1.6 ms** (`/livez`) | 13x, and no DB |
+| `GET /v1/memories/query` (project filter) | 135.0 ms | **2.9 ms** | **47x** |
+| `GET /v1/memories/query` (keyword) | 139.8 ms | **4.7 ms** | **30x** |
+| `GET /v1/profiles/{id}` | 39.4 ms | **3.8 ms** | **10x** |
+| liveness probe | 50.4 ms (`/v1/health`) | **0.5 ms** (`/livez`) | **95x**, and no DB |
+
+> An earlier draft of this table reported 62.2 ms as the "before" figure. That
+> was measured mid-work, after the property indexes had already landed, so it
+> compared two partially-optimized builds rather than before against after. The
+> numbers above are a true A/B: two binaries, one database, one corpus.
 
 What shipped:
 
