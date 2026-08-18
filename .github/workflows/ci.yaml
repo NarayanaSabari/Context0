@@ -144,8 +144,27 @@ jobs:
 
       - name: Helm lint
         run: |
-          helm lint ./charts/context0
-          helm template context0 ./charts/context0 > /dev/null
+          # Credentials must be supplied: the chart ships no default password or
+          # API key, because a default in a public chart is a published
+          # credential.
+          helm lint ./charts/context0 \
+            --set postgres.password=ci-render-only \
+            --set auth.apiKeys=ctx0_ci_render_only
+          helm template context0 ./charts/context0 \
+            --set postgres.password=ci-render-only \
+            --set auth.apiKeys=ctx0_ci_render_only > /dev/null
+
+          # The other supported path: bring your own Secrets, chart creates none.
+          helm template context0 ./charts/context0 \
+            --set postgres.existingSecret=my-pg \
+            --set auth.existingSecret=my-keys > /dev/null
+
+          # And the guard itself must hold: a credential-less install has to
+          # fail loudly rather than quietly shipping an empty password.
+          if helm template context0 ./charts/context0 > /dev/null 2>&1; then
+            echo "::error::chart rendered without credentials; the required-value guard is gone"
+            exit 1
+          fi
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
@@ -180,11 +199,20 @@ jobs:
 
       - name: Deploy
         run: |
+          # Generated per run rather than hardcoded: the chart ships no default
+          # credentials, and a fixed key in a public workflow is a published one
+          # even when it only ever reaches an ephemeral cluster.
+          echo "E2E_API_KEY=ctx0_$(openssl rand -hex 6)_$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+          echo "E2E_PG_PASSWORD=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+          source "$GITHUB_ENV"
+
           helm install context0 ./charts/context0 -n context0 --create-namespace \
             --set api.image.tag=ci \
             --set api.image.repository=context0/context0 \
             --set postgres.image.tag=ci \
-            --set web.enabled=false
+            --set web.enabled=false \
+            --set postgres.password="$E2E_PG_PASSWORD" \
+            --set auth.apiKeys="$E2E_API_KEY"
 
           kubectl -n context0 wait --for=condition=ready pod -l app=postgres-age --timeout=120s
           kubectl -n context0 wait --for=condition=ready pod -l app=context0-api --timeout=120s
@@ -198,5 +226,5 @@ jobs:
       - name: Run E2E tests
         env:
           CONTEXT0_E2E_HTTP: http://localhost:8080
-          CONTEXT0_E2E_API_KEY: ctx0_dev_key_1
+          CONTEXT0_E2E_API_KEY: ${{ env.E2E_API_KEY }}
         run: go test ./test/e2e/... -v -tags=e2e -count=1 -timeout=120s

@@ -30,7 +30,14 @@ var (
 
 func TestMain(m *testing.M) {
 	httpBase = cmp.Or(os.Getenv("CONTEXT0_E2E_HTTP"), "http://localhost:8080")
-	apiKey = cmp.Or(os.Getenv("CONTEXT0_E2E_API_KEY"), "ctx0_dev_key_1")
+	// No default key. The chart ships none, so a fallback here would only ever
+	// paper over a misconfigured run with a confusing 401 instead of saying
+	// what is actually missing.
+	apiKey = os.Getenv("CONTEXT0_E2E_API_KEY")
+	if apiKey == "" {
+		fmt.Fprintln(os.Stderr, "CONTEXT0_E2E_API_KEY is required: generate one with `context0 keys generate` and deploy with it")
+		os.Exit(1)
+	}
 
 	// Wait for server to be ready.
 	if !waitForHealth(httpBase, 30*time.Second) {
