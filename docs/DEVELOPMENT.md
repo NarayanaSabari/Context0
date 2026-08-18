@@ -354,6 +354,30 @@ Without `CONTEXT0_TEST_DATABASE_URL` the suite skips, so plain `go test ./...`
 needs no database. Each test scopes its data to a unique project id and cleans
 up after itself, so runs are repeatable against a persistent database.
 
+### Verifying the Helm chart
+
+`helm lint` and `helm template` check that YAML renders. They cannot tell you
+whether a pod starts, whether `readOnlyRootFilesystem` breaks the container, or
+whether a probe path exists. Deploy and check the running cluster:
+
+```bash
+make kind-up
+for img in context0/context0:dev context0/postgres-age-vector:dev context0/web:dev; do
+  kind load docker-image "$img" --name context0-dev
+done
+helm install context0 ./charts/context0 -n context0 --create-namespace
+scripts/verify_k8s.sh
+```
+
+The script maps each requirement to a check against the live cluster: probe
+wiring and responses, the security context enforced at runtime, `GOMEMLIMIT`
+and pool sizing reaching the process, Postgres tuning, the property indexes,
+the public API round-trip, and the database-outage failure mode. It exits
+non-zero on any failure.
+
+Note that its last section deliberately scales Postgres to zero and back, so
+run it against a throwaway cluster rather than anything you care about.
+
 ### Coverage Requirements
 
 | Package | Minimum | Current |

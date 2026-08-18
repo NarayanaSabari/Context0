@@ -295,7 +295,51 @@ What shipped:
 edit that reintroduces a sequential scan fails the suite instead of quietly
 regressing latency.
 
-## 11. Not attempted
+## 11. Kubernetes verification
+
+The chart claims were checked against a running kind cluster, not against
+rendered YAML. `scripts/verify_k8s.sh` maps each requirement to a check that
+observes the live cluster, and reports 35/35 on a default `helm install` with no
+`--set` overrides:
+
+| Area | What is checked |
+|---|---|
+| Probes | all three paths wired, each returns 200, none still points at `/v1/health` |
+| Security | readOnly rootfs *enforced at runtime*, not just declared; caps dropped; non-root |
+| Runtime config | `GOMEMLIMIT` resolved from the pod limit, `pool_max_conns` in the DSN |
+| Lifecycle | preStop present, grace period exceeds the 15s drain, `maxUnavailable: 0` |
+| Postgres | all four tuned settings served by the running server |
+| Performance | property indexes created automatically on first in-cluster boot |
+| Public API | store and query round-trip; `/metrics` scrapeable without auth |
+| Web | upstream resolves; pod Running rather than CrashLoopBackOff |
+| Failure mode | database killed: liveness holds, readiness fails, **no restart**, self-recovers |
+
+That last row is the one that matters most. Killing Postgres and watching the
+API pod stay up, drop out of Service endpoints, and rejoin on its own with the
+restart count unchanged is direct evidence for the probe split. Under the
+previous configuration the same outage would have failed liveness on every
+replica simultaneously.
+
+Also verified, because each is a distinct failure mode:
+
+- **Default install path** (`helm install` with no overrides) - the path a new
+  user actually takes, and the one I had never run.
+- **Conditional resources**: no PDB at one replica (a `minAvailable` PDB there
+  blocks node drains), PDB and topology spread appear at two.
+- **ServiceMonitor gating**: absent by default, and enabling it on a cluster
+  without the Prometheus Operator CRD fails loudly with an actionable message
+  rather than silently doing nothing.
+- **Zero-downtime rollout**: 13,323 requests through the NodePort Service across
+  a full rolling update, zero failures.
+
+> A first rollout attempt reported 9,779 failures. That was `kubectl
+> port-forward`, which binds a single pod and dies when it is replaced - a
+> property of the test, not the Service. Re-run through the NodePort, which is a
+> real Service path, it is clean.
+
+---
+
+## 12. Not attempted
 
 - **Keyword search** is still `toLower(...) CONTAINS` inside Cypher, which can
   never use an index (§4). It survives only because `project_id` narrows the set
