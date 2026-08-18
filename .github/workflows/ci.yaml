@@ -197,6 +197,17 @@ jobs:
           kind load docker-image context0/context0:ci --name context0-e2e
           kind load docker-image context0/postgres-age-vector:ci --name context0-e2e
 
+      # Runs the install paths the README and Makefile document, from scratch,
+      # rather than the bespoke one below. Removing the chart's default
+      # credentials broke every documented path and nothing noticed for several
+      # commits: the unit tests, the 64 cluster checks and the soak all start
+      # from a deployment that is already up.
+      - name: Verify documented install paths
+        run: |
+          docker tag context0/context0:ci context0-api:dev
+          kind load docker-image context0-api:dev --name context0-e2e
+          scripts/verify_install.sh
+
       - name: Deploy
         run: |
           # Generated per run rather than hardcoded: the chart ships no default
