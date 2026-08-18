@@ -191,8 +191,12 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 	contextEdges, _ := s.repo.GetContextEdges(ctx, ids)
 	for i, r := range results {
 		results[i].Context = contextEdges[r.Memory.ID]
-		_ = s.repo.IncrementAccessCount(ctx, r.Memory.ID)
 	}
+
+	// One statement for every result rather than a round trip each. Access
+	// counts feed ranking and consolidation, so a failure here skews future
+	// ordering slightly but must not fail the read the caller asked for.
+	_ = s.repo.IncrementAccessCounts(ctx, ids)
 
 	metrics.QueryResultsCount.Observe(float64(len(results)))
 

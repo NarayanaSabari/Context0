@@ -855,3 +855,88 @@ func TestPoolRequiresValidDSN(t *testing.T) {
 		t.Error("expected an error for a malformed connection string")
 	}
 }
+
+// TestQueryPlansUseIndexes is a performance regression test.
+//
+// Several query shapes in this package look interchangeable but are not: AGE
+// silently falls back to a sequential scan over the whole label for some of
+// them, which is invisible in a correctness test and only shows up as latency
+// that grows with the corpus. Each case below was measured during the 2026-08
+// performance audit; see docs/research/performance-audit-2026-08.md.
+//
+// The plans are captured through pgx rather than psql because AGE requires the
+// third cypher() argument to be a real bind parameter, so psql cannot reproduce
+// the parameterized plans the server actually runs.
+func TestQueryPlansUseIndexes(t *testing.T) {
+	repo, ctx := testRepo(t)
+	projectID := newProjectID(t)
+
+	// Enough rows that the planner prefers an index when one is usable. With a
+	// nearly empty table a sequential scan is legitimately cheapest, and the
+	// test would pass for the wrong reason.
+	for i := 0; i < 200; i++ {
+		storeMemory(t, repo, ctx, newMemory(projectID, fmt.Sprintf("plan probe %d", i), "plan"))
+	}
+	if _, err := repo.pool.Exec(ctx, fmt.Sprintf(`ANALYZE %s."Memory"`, GraphName)); err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+
+	idA, idB := uuid.NewString(), uuid.NewString()
+
+	cases := []struct {
+		name  string
+		query string
+		args  string
+	}{
+		{
+			// GetMemory, DeleteMemory, IncrementAccessCount, UpdateDecayScore.
+			"lookup by id uses the property index",
+			`MATCH (m:Memory) WHERE m.id = $id RETURN properties(m)`,
+			`{"id": "` + idA + `"}`,
+		},
+		{
+			// QueryMemories: the filter on nearly every read.
+			"project filter uses the property index",
+			`MATCH (m:Memory) WHERE m.project_id = $project_id RETURN properties(m) ORDER BY m.created_at DESC LIMIT $top_k`,
+			`{"project_id": "` + projectID + `", "top_k": 5}`,
+		},
+		{
+			// GetContextEdges and IncrementAccessCounts. A parameterized
+			// `WHERE m.id IN $ids` measured a full sequential scan here;
+			// UNWIND over the same parameter drives an index scan per element.
+			"UNWIND over an id list uses the property index",
+			`UNWIND $ids AS wanted MATCH (m:Memory) WHERE m.id = wanted RETURN properties(m)`,
+			`{"ids": ["` + idA + `", "` + idB + `"]}`,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sql := fmt.Sprintf(
+				`EXPLAIN SELECT * FROM ag_catalog.cypher('%s', $$ %s $$, $1) AS (result ag_catalog.agtype)`,
+				GraphName, c.query,
+			)
+			rows, err := repo.pool.Query(ctx, sql, c.args)
+			if err != nil {
+				t.Fatalf("explain failed: %v", err)
+			}
+			var plan []string
+			for rows.Next() {
+				var line string
+				if err := rows.Scan(&line); err != nil {
+					t.Fatalf("scan plan: %v", err)
+				}
+				plan = append(plan, line)
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				t.Fatalf("read plan: %v", err)
+			}
+
+			joined := strings.Join(plan, "\n")
+			if !strings.Contains(joined, "Index Scan") && !strings.Contains(joined, "Bitmap Index Scan") {
+				t.Errorf("query planned without an index scan, so it will degrade as the corpus grows:\n%s", joined)
+			}
+		})
+	}
+}

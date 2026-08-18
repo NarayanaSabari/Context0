@@ -35,6 +35,14 @@ const searchPath = `SET search_path = ag_catalog, "$user", public`
 // the bag-of-words embedder and common small transformer models.
 const defaultEmbeddingDim = 384
 
+// Connection pool sizing. These are deliberately fixed rather than derived from
+// the CPU count: see the comment in NewPool. Override per deployment with the
+// standard pgx DSN parameters pool_max_conns and pool_min_conns.
+const (
+	defaultMaxConns = 10
+	defaultMinConns = 2
+)
+
 // NewPool opens a connection pool configured for Apache AGE.
 //
 // search_path is session state, so it must be set on EVERY pooled connection,
@@ -46,6 +54,24 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+
+	// Size the pool explicitly unless the DSN already says otherwise.
+	//
+	// pgxpool's default MaxConns is the machine's core count, which is the
+	// wrong number on Kubernetes: it reflects the node, not the container's CPU
+	// limit. On a 64-core node every replica would open up to 64 connections
+	// and a handful of pods would exhaust Postgres's default max_connections of
+	// 100. A fixed, modest default keeps replica count and database capacity
+	// related in a way an operator can reason about.
+	if !strings.Contains(databaseURL, "pool_max_conns") {
+		cfg.MaxConns = defaultMaxConns
+	}
+	if !strings.Contains(databaseURL, "pool_min_conns") {
+		// Keep a couple of connections warm so a request arriving after an idle
+		// period does not pay TCP plus TLS plus the AfterConnect search_path
+		// round trip.
+		cfg.MinConns = defaultMinConns
 	}
 
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
@@ -189,6 +215,69 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 	_, err := r.pool.Exec(ctx, `SELECT * FROM ag_catalog.create_graph('`+GraphName+`')`)
 	if err != nil && !strings.Contains(err.Error(), "already exists") {
 		return fmt.Errorf("create graph: %w", err)
+	}
+
+	// Index the vertex properties we filter on. AGE only creates indexes for
+	// its internal graphid columns, so without these every lookup by id or
+	// project_id is a sequential scan of the entire label.
+	if err := r.createPropertyIndexes(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// memoryPropertyIndexes are the vertex properties worth indexing, in the form
+// AGE's own regression suite uses (regress/sql/index.sql). AGE keeps every
+// property inside one agtype column, so a plain column index is impossible:
+// the index has to be on the extraction expression, and it only matches a query
+// whose WHERE clause produces that identical expression.
+//
+// This is why the repository consistently writes `WHERE m.id = $id` rather than
+// the map form `MATCH (m:Memory {id: $id})`. The two compile to different quals
+// -- the map form becomes a `properties @> ...` containment check, which these
+// btree indexes cannot serve.
+var memoryPropertyIndexes = []struct{ name, property string }{
+	// Looked up per vector-search hit, and on every Connect and Delete.
+	{"memory_id_idx", "id"},
+	// Filters nearly every query; also the tenant boundary.
+	{"memory_project_id_idx", "project_id"},
+}
+
+// createPropertyIndexes builds the expression indexes and refreshes planner
+// statistics. It is idempotent and safe on every startup.
+//
+// Measured at 50k vertices, these turn a lookup by id from a 5.5ms sequential
+// scan into a 0.19ms index scan, and the project filter from 17.2ms to 3.6ms.
+func (r *AGERepository) createPropertyIndexes(ctx context.Context) error {
+	// AGE creates a label's table lazily, on first write. Without this the
+	// indexes below cannot be built on a fresh database, and the deployment
+	// would run unindexed until something happened to restart it -- exactly
+	// when the corpus is growing and the seq scans hurt most. create_vlabel is
+	// idempotent apart from erroring when the label already exists.
+	if _, err := r.pool.Exec(ctx,
+		`SELECT ag_catalog.create_vlabel($1, 'Memory')`, GraphName,
+	); err != nil && !strings.Contains(err.Error(), "already exists") {
+		return fmt.Errorf("create Memory label: %w", err)
+	}
+
+	for _, idx := range memoryPropertyIndexes {
+		// The property name is a compile-time constant from the slice above,
+		// never caller input, so interpolating it introduces no injection risk.
+		stmt := fmt.Sprintf(
+			`CREATE INDEX IF NOT EXISTS %s ON %s."Memory" `+
+				`(ag_catalog.agtype_access_operator(properties, '"%s"'::ag_catalog.agtype))`,
+			idx.name, GraphName, idx.property,
+		)
+		if _, err := r.pool.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("create index %s: %w", idx.name, err)
+		}
+	}
+
+	// Expression indexes have no statistics until ANALYZE runs, and without
+	// them the planner may still choose a sequential scan.
+	if _, err := r.pool.Exec(ctx, fmt.Sprintf(`ANALYZE %s."Memory"`, GraphName)); err != nil {
+		return fmt.Errorf("analyze Memory label: %w", err)
 	}
 
 	return nil
@@ -339,7 +428,7 @@ func (r *AGERepository) CreateMemory(ctx context.Context, mem model.Memory) erro
 // GetMemory retrieves a single memory node by its UUID. Returns an error
 // if the node does not exist.
 func (r *AGERepository) GetMemory(ctx context.Context, id uuid.UUID) (model.Memory, error) {
-	const q = `MATCH (m:Memory {id: $id}) RETURN properties(m)`
+	const q = `MATCH (m:Memory) WHERE m.id = $id RETURN properties(m)`
 	rows, err := r.cypher(ctx, q, params{"id": id.String()})
 	if err != nil {
 		return model.Memory{}, fmt.Errorf("get memory: %w", err)
@@ -359,7 +448,7 @@ func (r *AGERepository) GetMemory(ctx context.Context, id uuid.UUID) (model.Memo
 // DeleteMemory removes a memory node and all its connected edges using
 // Cypher's DETACH DELETE, which automatically deletes relationships first.
 func (r *AGERepository) DeleteMemory(ctx context.Context, id uuid.UUID) error {
-	const q = `MATCH (m:Memory {id: $id}) DETACH DELETE m`
+	const q = `MATCH (m:Memory) WHERE m.id = $id DETACH DELETE m`
 	return r.cypherExec(ctx, q, params{"id": id.String()})
 }
 
@@ -367,14 +456,39 @@ func (r *AGERepository) DeleteMemory(ctx context.Context, id uuid.UUID) error {
 // This counter feeds into the ranking layer to prioritize frequently accessed
 // memories during retrieval.
 func (r *AGERepository) IncrementAccessCount(ctx context.Context, id uuid.UUID) error {
-	const q = `MATCH (m:Memory {id: $id}) SET m.access_count = m.access_count + 1 RETURN m`
+	const q = `MATCH (m:Memory) WHERE m.id = $id SET m.access_count = m.access_count + 1 RETURN m`
 	return r.cypherExec(ctx, q, params{"id": id.String()})
+}
+
+// IncrementAccessCounts bumps access_count for several memories in one
+// statement.
+//
+// Query calls this for every result it returns, so the serial alternative put a
+// full round trip per result on the read path -- ~1.4ms each at 50k vertices,
+// paid before the response could be written. Batching makes the cost
+// independent of top_k.
+//
+// UNWIND rather than `WHERE m.id IN $ids`: see the comment on GetContextEdges.
+// A parameterized IN list makes AGE fall back to a sequential scan.
+func (r *AGERepository) IncrementAccessCounts(ctx context.Context, ids []uuid.UUID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = id.String()
+	}
+
+	const q = `UNWIND $ids AS wanted MATCH (m:Memory) WHERE m.id = wanted ` +
+		`SET m.access_count = m.access_count + 1`
+	return r.cypherExec(ctx, q, params{"ids": idStrs})
 }
 
 // UpdateDecayScore sets a memory's decay_score property to the given value.
 // Called by the consolidation pipeline's decay phase after recomputing scores.
 func (r *AGERepository) UpdateDecayScore(ctx context.Context, id uuid.UUID, score float64) error {
-	const q = `MATCH (m:Memory {id: $id}) SET m.decay_score = $score RETURN m`
+	const q = `MATCH (m:Memory) WHERE m.id = $id SET m.decay_score = $score RETURN m`
 	return r.cypherExec(ctx, q, params{"id": id.String(), "score": score})
 }
 
@@ -610,16 +724,31 @@ func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) (
 func (r *AGERepository) GetSubgraph(ctx context.Context, centerID uuid.UUID) ([]model.Memory, []model.Edge, error) {
 	// Get direct neighbors. AGE has limited variable-length path support,
 	// so this is a 1-hop lookup.
-	const q = `MATCH (center {id: $center_id})-[e]-(neighbor) RETURN properties(neighbor)`
+	//
+	// Two directed matches rather than one undirected `-[e]-`. AGE cannot drive
+	// an undirected pattern from the edge indexes and falls back to scanning the
+	// whole Memory label: 209ms at 50k vertices, versus 0.09ms for the directed
+	// pair. Their union is exactly the undirected neighbour set.
+	//
+	// The neighbour carries the :Memory label because only that label holds the
+	// property index, and Memory is the only kind of neighbour decoded here.
+	// The center stays unlabeled on purpose: callers pass Session ids as well as
+	// Memory ids, so constraining it to :Memory would silently return nothing
+	// for a session subgraph.
+	const outgoing = `MATCH (center)-[e]->(neighbor:Memory) WHERE center.id = $center_id RETURN properties(neighbor)`
+	const incoming = `MATCH (center)<-[e]-(neighbor:Memory) WHERE center.id = $center_id RETURN properties(neighbor)`
 
-	rows, err := r.cypher(ctx, q, params{"center_id": centerID.String()})
-	if err != nil {
-		return nil, nil, fmt.Errorf("get subgraph: %w", err)
-	}
-
-	props, err := scanAgtype[memoryProps](rows)
-	if err != nil {
-		return nil, nil, fmt.Errorf("get subgraph: %w", err)
+	var props []memoryProps
+	for _, q := range [...]string{outgoing, incoming} {
+		rows, err := r.cypher(ctx, q, params{"center_id": centerID.String()})
+		if err != nil {
+			return nil, nil, fmt.Errorf("get subgraph: %w", err)
+		}
+		batch, err := scanAgtype[memoryProps](rows)
+		if err != nil {
+			return nil, nil, fmt.Errorf("get subgraph: %w", err)
+		}
+		props = append(props, batch...)
 	}
 
 	seen := make(map[string]bool)
@@ -711,19 +840,34 @@ func scanOne[T any](rows pgx.Rows) (T, bool, error) {
 
 // getEdgesAround returns every edge with at least one endpoint at centerID,
 // deduplicated by edge id. startNode()/endNode() recover the true directed
-// endpoints of each relationship even though the MATCH pattern itself is
-// undirected.
+// endpoints of each relationship, so the reported direction is the stored one
+// regardless of which side the traversal entered from.
+//
+// Like GetSubgraph, this runs as two directed matches instead of one undirected
+// pattern: AGE cannot use the edge indexes for an undirected match and degrades
+// into a full label scan. Measured at 50k vertices, 71.5ms undirected versus
+// 0.05ms directed. The dedup by edge id below also absorbs self-loops, which
+// would otherwise be returned by both halves.
 func (r *AGERepository) getEdgesAround(ctx context.Context, centerID uuid.UUID) ([]model.Edge, error) {
-	const q = `MATCH (center {id: $center_id})-[e]-() ` +
+	const outgoing = `MATCH (center)-[e]->(other:Memory) WHERE center.id = $center_id ` +
+		`RETURN {edge_id: e.id, from_id: startNode(e).id, to_id: endNode(e).id, ` +
+		`relationship: label(e), weight: e.weight, created_at: e.created_at}`
+	const incoming = `MATCH (center)<-[e]-(other:Memory) WHERE center.id = $center_id ` +
 		`RETURN {edge_id: e.id, from_id: startNode(e).id, to_id: endNode(e).id, ` +
 		`relationship: label(e), weight: e.weight, created_at: e.created_at}`
 
-	rows, err := r.cypher(ctx, q, params{"center_id": centerID.String()})
-	if err != nil {
-		return nil, err
+	var ers []edgeRow
+	for _, q := range [...]string{outgoing, incoming} {
+		rows, err := r.cypher(ctx, q, params{"center_id": centerID.String()})
+		if err != nil {
+			return nil, err
+		}
+		batch, err := scanAgtype[edgeRow](rows)
+		if err != nil {
+			return nil, err
+		}
+		ers = append(ers, batch...)
 	}
-
-	ers, err := scanAgtype[edgeRow](rows)
 
 	seen := make(map[string]bool)
 	var edges []model.Edge
@@ -748,14 +892,26 @@ func (r *AGERepository) getEdgesAround(ctx context.Context, centerID uuid.UUID) 
 		})
 	}
 
-	return edges, err
+	return edges, nil
 }
 
 // GetContextEdges returns, for each of the given memory ids, the edges
 // connecting it to its neighbors -- used to explain why a query result was
-// returned. A single Cypher query handles all ids at once (bounded by
-// WHERE m.id IN [...]) so callers issue one round trip regardless of how
-// many memories are being explained.
+// returned. All ids are handled in one round trip per direction, so the cost
+// does not grow with the number of memories being explained.
+//
+// Two details here are both counter-intuitive and both measured, so do not
+// "simplify" either one without re-running EXPLAIN:
+//
+//  1. UNWIND, not `WHERE m.id IN $ids`. A parameterized IN list defeats the
+//     property index completely -- AGE plans a sequential scan over the whole
+//     Memory label. UNWIND over the same parameter drives an index scan per
+//     element. Measured at 50k vertices: 12.4ms versus 0.098ms.
+//     (The literal `IN [...]` form does use the index, but building literals is
+//     exactly the injection hole this repository removed.)
+//  2. Two directed matches, not one undirected `-[e]-`. AGE cannot drive an
+//     undirected pattern from the edge indexes and degrades to a full label
+//     scan. The union of both directions is exactly the undirected set.
 func (r *AGERepository) GetContextEdges(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID][]model.ContextEdge, error) {
 	result := make(map[uuid.UUID][]model.ContextEdge)
 	if len(ids) == 0 {
@@ -767,34 +923,45 @@ func (r *AGERepository) GetContextEdges(ctx context.Context, ids []uuid.UUID) (m
 		idStrs[i] = id.String()
 	}
 
-	const q = `MATCH (m:Memory)-[e]-(n:Memory) WHERE m.id IN $ids ` +
+	// Outgoing then incoming. Both shapes return the neighbour as n, so the
+	// decoding below is identical for each.
+	const outgoing = `UNWIND $ids AS wanted MATCH (m:Memory)-[e]->(n:Memory) WHERE m.id = wanted ` +
+		`RETURN {memory_id: m.id, relationship: label(e), weight: e.weight, ` +
+		`target_id: n.id, target_content: n.content}`
+	const incoming = `UNWIND $ids AS wanted MATCH (m:Memory)<-[e]-(n:Memory) WHERE m.id = wanted ` +
 		`RETURN {memory_id: m.id, relationship: label(e), weight: e.weight, ` +
 		`target_id: n.id, target_content: n.content}`
 
-	rows, err := r.cypher(ctx, q, params{"ids": idStrs})
-	if err != nil {
-		return nil, err
+	for _, q := range [...]string{outgoing, incoming} {
+		rows, err := r.cypher(ctx, q, params{"ids": idStrs})
+		if err != nil {
+			return nil, err
+		}
+
+		crs, err := scanAgtype[contextEdgeRow](rows)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, cr := range crs {
+			memID, perr := uuid.Parse(cr.MemoryID)
+			if perr != nil {
+				continue
+			}
+			targetID, perr := uuid.Parse(cr.TargetID)
+			if perr != nil {
+				continue
+			}
+			result[memID] = append(result[memID], model.ContextEdge{
+				Relationship:  model.RelationshipType(cr.Relationship),
+				TargetID:      targetID,
+				TargetContent: cr.TargetContent,
+				Weight:        cr.Weight,
+			})
+		}
 	}
 
-	crs, err := scanAgtype[contextEdgeRow](rows)
-	for _, cr := range crs {
-		memID, perr := uuid.Parse(cr.MemoryID)
-		if perr != nil {
-			continue
-		}
-		targetID, perr := uuid.Parse(cr.TargetID)
-		if perr != nil {
-			continue
-		}
-		result[memID] = append(result[memID], model.ContextEdge{
-			Relationship:  model.RelationshipType(cr.Relationship),
-			TargetID:      targetID,
-			TargetContent: cr.TargetContent,
-			Weight:        cr.Weight,
-		})
-	}
-
-	return result, err
+	return result, nil
 }
 
 // --- Embeddings (pgvector) ---
