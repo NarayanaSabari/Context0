@@ -1197,3 +1197,122 @@ func forceVectorIndex(t *testing.T, repo *AGERepository, ctx context.Context) {
 		_, _ = repo.pool.Exec(context.Background(), `SET enable_seqscan = on`)
 	})
 }
+
+// TestCreateEdges_MatchesCreateEdgeSemantics pins the batched writer against
+// the per-edge one. Storing a tagged semantic memory fans out into an edge per
+// contradiction and per tag match, so this runs on the caller's Store latency
+// and must behave identically to the single-edge path it replaced.
+func TestCreateEdges_MatchesCreateEdgeSemantics(t *testing.T) {
+	repo, ctx := testRepo(t)
+	projectID := newProjectID(t)
+
+	center := storeMemory(t, repo, ctx, newMemory(projectID, "batch edge center"))
+	var targets []model.Memory
+	for i := 0; i < 5; i++ {
+		targets = append(targets,
+			storeMemory(t, repo, ctx, newMemory(projectID, fmt.Sprintf("batch edge target %d", i))))
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	var edges []model.Edge
+	for i, target := range targets {
+		// Mixed relationship types: the batch groups by type because a label
+		// cannot be parameterized.
+		rel := model.RelRelatesTo
+		if i%2 == 1 {
+			rel = model.RelSupersedes
+		}
+		edges = append(edges, model.Edge{
+			ID:           uuid.New(),
+			FromID:       center.ID,
+			ToID:         target.ID,
+			Relationship: rel,
+			Weight:       0.5,
+			CreatedAt:    now,
+		})
+	}
+
+	if err := repo.CreateEdges(ctx, edges); err != nil {
+		t.Fatalf("create edges: %v", err)
+	}
+
+	_, got, err := repo.GetSubgraph(ctx, center.ID)
+	if err != nil {
+		t.Fatalf("get subgraph: %v", err)
+	}
+	if len(got) != len(edges) {
+		t.Fatalf("graph holds %d edges, want %d", len(got), len(edges))
+	}
+
+	byTarget := make(map[uuid.UUID]model.Edge, len(got))
+	for _, e := range got {
+		byTarget[e.ToID] = e
+	}
+	for _, want := range edges {
+		e, ok := byTarget[want.ToID]
+		if !ok {
+			t.Errorf("no edge written to %s", want.ToID)
+			continue
+		}
+		if e.Relationship != want.Relationship {
+			t.Errorf("edge to %s has relationship %q, want %q", want.ToID, e.Relationship, want.Relationship)
+		}
+		if e.Weight != want.Weight {
+			t.Errorf("edge to %s has weight %f, want %f", want.ToID, e.Weight, want.Weight)
+		}
+		if e.FromID != center.ID {
+			t.Errorf("edge direction lost: from %s, want %s", e.FromID, center.ID)
+		}
+	}
+
+	// Re-asserting must be idempotent, like CreateEdge.
+	if err := repo.CreateEdges(ctx, edges); err != nil {
+		t.Fatalf("re-assert edges: %v", err)
+	}
+	_, after, err := repo.GetSubgraph(ctx, center.ID)
+	if err != nil {
+		t.Fatalf("get subgraph: %v", err)
+	}
+	if len(after) != len(edges) {
+		t.Errorf("re-asserting produced %d edges, want %d; MERGE is not idempotent here",
+			len(after), len(edges))
+	}
+}
+
+// TestCreateEdges_RejectsUnknownRelationship keeps the batched path under the
+// same label allowlist as CreateEdge, since the label is interpolated.
+func TestCreateEdges_RejectsUnknownRelationship(t *testing.T) {
+	repo, ctx := testRepo(t)
+	projectID := newProjectID(t)
+
+	from := storeMemory(t, repo, ctx, newMemory(projectID, "batch label source"))
+	to := storeMemory(t, repo, ctx, newMemory(projectID, "batch label target"))
+
+	err := repo.CreateEdges(ctx, []model.Edge{{
+		ID:           uuid.New(),
+		FromID:       from.ID,
+		ToID:         to.ID,
+		Relationship: model.RelationshipType(`relates_to]->(x) DETACH DELETE (x) //`),
+		Weight:       1.0,
+		CreatedAt:    time.Now().UTC(),
+	}})
+	if err == nil {
+		t.Fatal("CreateEdges accepted a hostile relationship label")
+	}
+	if !strings.Contains(err.Error(), "unknown relationship") {
+		t.Errorf("rejected for the wrong reason: %v", err)
+	}
+
+	if _, err := repo.GetMemory(ctx, to.ID); err != nil {
+		t.Fatalf("target memory was destroyed: %v", err)
+	}
+}
+
+// TestCreateEdges_EmptyIsNoOp: the callers pass whatever they collected, which
+// is frequently nothing.
+func TestCreateEdges_EmptyIsNoOp(t *testing.T) {
+	repo, ctx := testRepo(t)
+	if err := repo.CreateEdges(ctx, nil); err != nil {
+		t.Errorf("CreateEdges(nil) = %v, want no error", err)
+	}
+}

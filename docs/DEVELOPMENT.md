@@ -364,7 +364,13 @@ generated:
 docker compose up -d
 scripts/seed_corpus.py --count 5000
 scripts/bench_api.py
+scripts/bench_write.py
 ```
+
+`bench_write.py` measures `POST /v1/memories`, split by memory type and by
+whether tags are present, because only semantic memories run contradiction
+detection and only tagged ones run auto-linking. That separation is what makes
+it obvious which stage is responsible when writes get slower.
 
 Do **not** seed by writing Cypher directly into AGE for a benchmark. It is much
 faster, but it leaves `public.memory_embeddings` empty, so `SearchByVector`

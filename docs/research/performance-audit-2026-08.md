@@ -387,6 +387,38 @@ store no longer leaves a growing orphan index behind.
 
 ---
 
+## 13. The write path, also never measured
+
+Sections 1-12 are all about reads. `Store` is the other half of the public API
+and does considerably more work per call: `CreateMemory`, `StoreEmbedding`, then
+`detectAndSupersede` (a full `QueryMemories` over up to 50 memories, plus an edge
+per contradiction) and `autoLinkByTags` (another query plus an edge per tag
+match). None of it had been profiled. `scripts/bench_write.py` measures it.
+
+Two problems, both amplified by how many edges a single write fans out into
+(measured at ~10 supersedes plus ~3 relates_to per memory on a similar corpus):
+
+**`CreateEdge` matched unlabeled endpoints.** The same defect fixed in the
+traversals in §2, missed here: `MATCH (a {id: ...})` scans every vertex table
+and cannot use the property index. 0.41ms to 0.067ms per edge once labeled,
+which matters a dozen times over per write.
+
+**Edges were written one round trip at a time.** Batched into one statement per
+relationship type via `CreateEdges`.
+
+| Scenario | Before | After | Speedup |
+|---|---|---|---|
+| write into a 160-memory project | 48.2 ms | **10.0 ms** | 4.8x |
+| worst case (identical semantic content + tags) | 82.5 ms | **13.3 ms** | 6.2x |
+| seeding throughput through the API | 29/s | **254/s** | **8.8x** |
+
+The growth curve matters more than the point figures: writes still get slower as
+a project fills, because contradiction detection genuinely has to compare
+against existing memories, but the slope is far shallower. Untagged episodic
+writes are flat at ~1.1ms, since they trigger neither stage.
+
+---
+
 ## 13. Not attempted
 
 - **Keyword search** is still `toLower(...) CONTAINS` inside Cypher, which can

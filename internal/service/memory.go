@@ -449,21 +449,27 @@ func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory
 
 	contradictions := extraction.DetectContradictions(mem, existingMems)
 
+	// Collected and written in one statement: a project with many similar
+	// memories can produce dozens of contradictions, and a round trip each
+	// would land entirely on the caller's Store latency.
+	var edges []model.Edge
 	for _, c := range contradictions {
 		if c.Confidence < 0.5 {
 			continue // skip low-confidence contradictions
 		}
 
-		edge := model.Edge{
+		edges = append(edges, model.Edge{
 			ID:           uuid.New(),
 			FromID:       c.NewMemory.ID,
 			ToID:         c.OldMemory.ID,
 			Relationship: model.RelSupersedes,
 			Weight:       c.Confidence,
 			CreatedAt:    time.Now().UTC(),
-		}
-		_, _ = s.repo.CreateEdge(ctx, edge)
-		metrics.EdgesTotal.WithLabelValues(string(model.RelSupersedes)).Inc()
+		})
+	}
+
+	if err := s.repo.CreateEdges(ctx, edges); err == nil {
+		metrics.EdgesTotal.WithLabelValues(string(model.RelSupersedes)).Add(float64(len(edges)))
 	}
 }
 
@@ -492,21 +498,27 @@ func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory) {
 		}
 	}
 
+	var edges []model.Edge
 	for _, e := range existing {
 		if e.Memory.ID == mem.ID || connected[e.Memory.ID] {
 			continue
 		}
 		if hasOverlappingTags(mem.Tags, e.Memory.Tags) {
-			edge := model.Edge{
+			edges = append(edges, model.Edge{
 				ID:           uuid.New(),
 				FromID:       mem.ID,
 				ToID:         e.Memory.ID,
 				Relationship: model.RelRelatesTo,
 				Weight:       0.5,
 				CreatedAt:    time.Now().UTC(),
-			}
-			_, _ = s.repo.CreateEdge(ctx, edge)
+			})
 		}
+	}
+
+	// One statement rather than a round trip per match, for the same reason as
+	// detectAndSupersede: this runs inline on every tagged Store.
+	if err := s.repo.CreateEdges(ctx, edges); err == nil {
+		metrics.EdgesTotal.WithLabelValues(string(model.RelRelatesTo)).Add(float64(len(edges)))
 	}
 }
 
