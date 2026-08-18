@@ -1,5 +1,7 @@
 server {
-    listen 80;
+    # 8080, not 80: binding a port below 1024 requires NET_BIND_SERVICE, and
+    # this container drops all capabilities and runs as a non-root user.
+    listen 8080;
     root /usr/share/nginx/html;
     index index.html;
 

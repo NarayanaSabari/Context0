@@ -18,10 +18,26 @@ spec:
           labels:
             app: context0-consolidation
         spec:
+          # No Kubernetes API access: this job only talks to Postgres.
+          serviceAccountName: context0-consolidation-sa
+          automountServiceAccountToken: false
+          # Same restricted profile as the API: this runs the same binary
+          # against the same database, so it gets the same constraints.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
           restartPolicy: OnFailure
           containers:
             - name: consolidation
               image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
               imagePullPolicy: {{ .Values.api.image.pullPolicy }}
               command: ["context0-consolidate"]
               env:

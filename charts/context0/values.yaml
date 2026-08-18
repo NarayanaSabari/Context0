@@ -134,6 +134,48 @@ web:
     type: NodePort
     nodePort: 30000
 
+# Pod Security Standards.
+#
+# Helm does not manage the namespace it installs into (--create-namespace makes
+# a bare one), so these labels have to be applied to the namespace directly:
+#
+#   kubectl label namespace <ns> \
+#     pod-security.kubernetes.io/enforce=restricted \
+#     pod-security.kubernetes.io/enforce-version=latest
+#
+# Every workload in this chart satisfies "restricted". That was not true before:
+# labelling the namespace is what revealed Postgres running as root with full
+# capabilities and the web UI running as root, because only the API had ever
+# been given a securityContext. Enforcing it means a future workload that
+# regresses is refused admission rather than quietly running privileged.
+
+# Network policy. Default-deny for the namespace, with only the flows this
+# system needs opened explicitly.
+#
+# Verified as a real gap: before this, a pod in an unrelated namespace connected
+# straight to Postgres and read every memory row, bypassing the API's
+# authentication and rate limiting entirely.
+#
+# Enforcement is the CNI's job, not Kubernetes'. kind's default kindnet ignores
+# NetworkPolicy, so these objects apply cleanly there and do nothing at all --
+# check your CNI rather than assuming the resource existing means it is being
+# enforced. Calico, Cilium, and the major managed CNIs all enforce it.
+networkPolicy:
+  enabled: true
+  # Extra egress rules for the API pod: an external embedding provider, an OTLP
+  # collector, a managed Postgres outside the cluster. Standard NetworkPolicy
+  # egress syntax.
+  apiExtraEgress: []
+
+# Service accounts. One per workload, none able to reach the Kubernetes API.
+#
+# Every pod previously ran as the namespace `default` account with its token
+# mounted, and none of these workloads call the Kubernetes API at all. Set
+# create: false only if you supply accounts of your own, and keep
+# automountServiceAccountToken disabled on them.
+serviceAccount:
+  create: true
+
 # Authentication
 auth:
   # REQUIRED unless allowUnauthenticated is true. Comma-separated.

@@ -16,10 +16,32 @@ spec:
       labels:
         app: postgres-age
     spec:
+      # No Kubernetes API access: this workload never calls it, so the
+      # token would only be a credential available to steal.
+      serviceAccountName: postgres-age-sa
+      automountServiceAccountToken: false
+      # Satisfies the Pod Security "restricted" profile. The image already
+      # contains a postgres user (uid 999); this makes the pod actually run as
+      # it rather than relying on the image default, which the admission
+      # controller cannot see. fsGroup gives that uid ownership of the mounted
+      # data volume, without which initdb fails on a fresh PVC.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgres-age
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
           imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # Not readOnlyRootFilesystem: Postgres writes its socket to
+            # /var/run/postgresql and temp files outside the data volume.
           ports:
             - containerPort: 5432
               name: postgres

@@ -1,0 +1,193 @@
+{{- /*
+Default-deny network policy for the namespace, plus the specific flows this
+system actually needs.
+
+Without this, any pod anywhere in the cluster can open a connection straight to
+Postgres on 5432 and read every memory in the database, bypassing the API, its
+authentication, and its rate limiting entirely. The engine's own security model
+assumes traffic arrives through its front door; nothing was enforcing that.
+
+IMPORTANT: NetworkPolicy is enforced by the CNI plugin, not by Kubernetes. On a
+cluster whose CNI does not implement it -- notably kind's default kindnet, which
+is why this cannot be verified in the local dev cluster -- these objects are
+accepted by the API server and silently do nothing. Verify enforcement on the
+target cluster rather than assuming the resource existing means it is applied.
+Calico, Cilium, and the major managed CNIs all enforce it.
+
+Egress is restricted as well as ingress. Egress rules are what turn a
+compromised pod from a foothold into a dead end: an attacker with code execution
+in the API pod that cannot open outbound connections cannot exfiltrate the
+database to anywhere off-cluster.
+*/ -}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: context0-default-deny
+  namespace: {{ .Release.Namespace }}
+spec:
+  # Empty selector: every pod in the namespace. Anything not explicitly allowed
+  # below is denied, so a workload added later is closed until someone opens it.
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: context0-api
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: context0-api
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # The API is the front door, so its callers are deliberately not restricted
+    # by source: an ingress controller, a mesh sidecar, and clients in other
+    # namespaces are all legitimate. Authentication is what gates this, not the
+    # network.
+    - ports:
+        - port: {{ .Values.api.grpcPort }}
+          protocol: TCP
+        - port: {{ .Values.api.httpPort }}
+          protocol: TCP
+  egress:
+    # Postgres, and nothing else on the data path.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres-age
+      ports:
+        - port: 5432
+          protocol: TCP
+    # DNS. Without this the pod cannot resolve the Postgres Service name and
+    # fails to start, which is the most common way a default-deny policy breaks
+    # a working deployment.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- with .Values.networkPolicy.apiExtraEgress }}
+    # Deployment-specific egress: an external embedding provider, an OTLP
+    # collector, a managed database outside the cluster.
+{{ toYaml . | indent 4 }}
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-age
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres-age
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # This is the rule that matters: only the API and the consolidation job may
+    # speak to the database. Everything else in the cluster is refused at the
+    # network, before Postgres authentication is even reached.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: context0-api
+        - podSelector:
+            matchLabels:
+              app: context0-consolidation
+      ports:
+        - port: 5432
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- if .Values.consolidation.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: context0-consolidation
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: context0-consolidation
+  policyTypes: [Ingress, Egress]
+  # No ingress rules: nothing should ever connect to a batch job.
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres-age
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}
+{{- if .Values.web.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: context0-web
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: context0-web
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - port: {{ .Values.web.port | default 3000 }}
+          protocol: TCP
+  egress:
+    # The UI talks to the API. It has no business reaching Postgres directly.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: context0-api
+      ports:
+        - port: {{ .Values.api.httpPort }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}
+{{- end }}

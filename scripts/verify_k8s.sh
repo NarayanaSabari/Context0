@@ -200,6 +200,61 @@ check "stored keys are hashes, not the plaintext key" "0" \
 check "the API key never appears in logs" "0" \
   "$(kubectl logs -n "$NS" deploy/context0-api --tail=500 2>/dev/null | grep -c "$key" || true)"
 
+section "12. Pod identity and network isolation"
+# Every pod used to run as the namespace `default` service account with its
+# token mounted, and none of these workloads call the Kubernetes API. A token
+# that is never used is a credential available to steal: it turns code execution
+# in a container into an authenticated identity in the cluster.
+check "no service account token is mounted in the API pod" "absent" \
+  "$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c \
+    'test -d /var/run/secrets/kubernetes.io/serviceaccount && echo present || echo absent' 2>/dev/null)"
+check "the API runs as its own service account, not default" "context0-api-sa" \
+  "$(kubectl get pod -n "$NS" "$(api_pod)" -o jsonpath='{.spec.serviceAccountName}')"
+
+# The rule that matters: before this, a pod in an unrelated namespace connected
+# straight to Postgres and read every memory row, bypassing the API's
+# authentication and rate limiting entirely.
+#
+# NetworkPolicy is enforced by the CNI, not by Kubernetes, so this asserts
+# behaviour rather than the existence of the object -- on a CNI that ignores
+# policy the resource applies cleanly and does nothing.
+if kubectl get networkpolicy -n "$NS" postgres-age >/dev/null 2>&1; then
+  reached=$(kubectl run netpol-probe-$$ --rm -i --restart=Never -n default \
+    --image=busybox:1.36 --quiet --command -- \
+    timeout 8 nc -z -w 5 postgres-age."$NS".svc.cluster.local 5432 2>/dev/null \
+    && echo reachable || echo blocked)
+  check "Postgres is unreachable from another namespace" "blocked" "$reached"
+fi
+
+# ...and the allowed path must still work, or the policy has simply broken the
+# deployment rather than secured it.
+# Every workload must satisfy the Pod Security "restricted" profile, not just
+# the API. Labelling the namespace revealed that Postgres ran as root with full
+# capabilities and the web UI ran as root, because only the API had ever been
+# given a securityContext.
+for wl in "deploy/context0-api" "statefulset/postgres-age" "deploy/context0-web"; do
+  uid=$(kubectl get "$wl" -n "$NS" -o jsonpath='{.spec.template.spec.securityContext.runAsUser}' 2>/dev/null)
+  check "$wl runs as a non-root uid" "nonroot" \
+    "$([[ -n "$uid" && "$uid" != "0" ]] && echo nonroot || echo "root(${uid:-unset})")"
+  check "$wl drops all capabilities" "ALL" \
+    "$(kubectl get "$wl" -n "$NS" -o jsonpath='{.spec.template.spec.containers[0].securityContext.capabilities.drop[0]}' 2>/dev/null)"
+  check "$wl sets a seccomp profile" "RuntimeDefault" \
+    "$(kubectl get "$wl" -n "$NS" -o jsonpath='{.spec.template.spec.securityContext.seccompProfile.type}' 2>/dev/null)"
+done
+
+# The web UI must still actually serve after being moved off port 80 to run
+# unprivileged: hardening that breaks the product is not hardening.
+web_np=$(kubectl get svc context0-web -n "$NS" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null)
+if [[ -n "$web_np" ]]; then
+  check "the web UI still serves through its NodePort as non-root" "200" \
+    "$(docker exec "${KIND_NODE:-context0-dev-control-plane}" \
+      curl -s -o /dev/null -w '%{http_code}' "http://localhost:$web_np/" 2>/dev/null)"
+fi
+
+check "the API can still reach Postgres through the policy" "200" \
+  "$(kubectl exec -n "$NS" "$(api_pod)" -- wget -q -S -O /dev/null http://localhost:8080/readyz 2>&1 \
+    | awk '/HTTP\//{print $2; exit}')"
+
 printf '\n\033[1m%s\033[0m\n' "=== $PASS passed, $FAIL failed ==="
 for f in "${FAILURES[@]:-}"; do [[ -n "$f" ]] && printf '  failed: %s\n' "$f"; done
 exit $((FAIL > 0 ? 1 : 0))

@@ -28,6 +28,11 @@ spec:
         # deploy.
         checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
     spec:
+      # No Kubernetes API access: this workload never calls it, so the token
+      # would only be a credential available to steal. This is the pod most
+      # worth protecting -- it is the one exposed to the network.
+      serviceAccountName: context0-api-sa
+      automountServiceAccountToken: false
       # Long enough for the in-process 15s drain to finish, with headroom for
       # the preStop sleep below.
       terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
