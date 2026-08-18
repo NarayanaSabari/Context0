@@ -73,6 +73,11 @@ func main() {
 		fatal("failed to connect to database", err)
 	}
 	defer pool.Close()
+
+	// Pool saturation is this service's most likely failure mode and was
+	// previously unobservable: a deadlock here once presented as uniformly slow
+	// requests with no metric that named the cause.
+	metrics.SetPoolStatsSource(ctx, pool)
 	slog.Info("database connected")
 
 	// Step 3: Initialise the embedding provider. This must happen before the

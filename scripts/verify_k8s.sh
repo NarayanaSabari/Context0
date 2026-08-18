@@ -255,6 +255,30 @@ check "the API can still reach Postgres through the policy" "200" \
   "$(kubectl exec -n "$NS" "$(api_pod)" -- wget -q -S -O /dev/null http://localhost:8080/readyz 2>&1 \
     | awk '/HTTP\//{print $2; exit}')"
 
+section "13. Metrics are usable, not merely present"
+mx=$(kubectl exec -n "$NS" "$(api_pod)" -- wget -q -O- http://localhost:8080/metrics 2>/dev/null)
+
+# Pool exhaustion is this service's most likely saturation point and used to be
+# invisible: a deadlock here once presented as uniformly slow requests with no
+# metric naming the cause.
+check "connection pool occupancy is exposed" "context0_pool_connections" \
+  "$(grep -o 'context0_pool_connections' <<<"$mx" | head -1)"
+check "pool acquire wait is exposed" "context0_pool_acquire_wait_seconds_total" \
+  "$(grep -o 'context0_pool_acquire_wait_seconds_total' <<<"$mx" | head -1)"
+
+# RED for every method, not just the two that were instrumented by hand: a
+# failing Extract or GetProfile previously produced no metric at all.
+check "per-method request counters exist" "context0_requests_total" \
+  "$(grep -o 'context0_requests_total' <<<"$mx" | head -1)"
+check "request counters are labelled by status code" "code" \
+  "$(grep -o 'context0_requests_total{code=' <<<"$mx" | head -1 | grep -o 'code')"
+
+# The histogram must be able to tell p50 from p99. With the default buckets,
+# both landed in [0.1, 0.25] along with 79% of all samples.
+lo=$(grep -c 'context0_request_duration_seconds_bucket{.*le="0.125"' <<<"$mx" || true)
+check "latency buckets resolve the range this service operates in" "present" \
+  "$([[ "$lo" -gt 0 ]] && echo present || echo missing)"
+
 printf '\n\033[1m%s\033[0m\n' "=== $PASS passed, $FAIL failed ==="
 for f in "${FAILURES[@]:-}"; do [[ -n "$f" ]] && printf '  failed: %s\n' "$f"; done
 exit $((FAIL > 0 ? 1 : 0))

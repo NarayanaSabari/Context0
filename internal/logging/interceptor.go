@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/context0/context0/internal/metrics"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -41,11 +42,18 @@ func UnaryServerInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {
 		// call can be attributed to the RPC that caused it.
 		resp, err := handler(WithLogger(ctx, logger), req)
 
+		// RED metrics come from the same place as the log line: every RPC
+		// passes through here, so instrumenting it once covers methods added
+		// later without anyone remembering to add a timer by hand.
 		code := status.Code(err)
+		elapsed := time.Since(start)
+		metrics.RequestsTotal.WithLabelValues(info.FullMethod, code.String()).Inc()
+		metrics.RequestDuration.WithLabelValues(info.FullMethod).Observe(elapsed.Seconds())
+
 		attrs := []any{
 			slog.String("method", info.FullMethod),
 			slog.String("code", code.String()),
-			slog.Duration("duration", time.Since(start)),
+			slog.Duration("duration", elapsed),
 		}
 
 		switch {
