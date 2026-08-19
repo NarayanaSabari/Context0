@@ -124,3 +124,25 @@ B=$(M); kubectl exec -n context0 deploy/context0-api -- sh /tmp/loop.sh; A=$(M)
 
 This is how the 90.9ms -> 16.2ms improvement was attributed to the query change
 rather than to a quieter cluster.
+
+## Backups
+
+`scripts/backup.sh` dumps, restores, and verifies. The verify step exists
+because this database has a failure mode that `pg_restore` reports as success:
+
+```sh
+scripts/backup.sh dump backup.dump
+scripts/backup.sh verify backup.dump   # restores, checks, drops
+```
+
+`verify` asserts the vector index survived, not just the rows. Rebuilding the
+pgvector HNSW index needs more shared memory in one allocation than Kubernetes'
+default 64Mi `/dev/shm` provides -- at 94k embeddings the build asks for 131MB
+and fails. The data restores fine and the index silently does not, which leaves
+vector search scanning every row, and the API treats a failed index build as
+fatal at startup, so the deployment cannot come up on the recovered data.
+
+The running database never hits this, because its index grew a row at a time.
+It only appears on a rebuild, which is exactly what a restore is. `shmSize` in
+values.yaml addresses it; `verify_k8s.sh` checks both the size and that the
+index can actually be built at the current data volume.

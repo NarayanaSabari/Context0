@@ -71,6 +71,14 @@ postgres:
   # at a TLS-terminating Postgres and set this to verify-full.
   sslMode: disable
   storage: 5Gi
+  # /dev/shm size. Kubernetes defaults this to 64Mi, which is not enough to
+  # build the pgvector HNSW index: at 94k embeddings the build asked for 131MB
+  # in a single allocation and failed. That failure is only reachable on a
+  # rebuild -- notably restoring a backup -- because a live index grows
+  # incrementally, which is exactly why it goes unnoticed until recovery.
+  #
+  # Counts against the pod memory limit, since medium: Memory.
+  shmSize: 256Mi
   # PostgreSQL does not size itself from the cgroup limit, so these are set
   # explicitly against the 1Gi limit below. shared_buffers is the usual ~25% of
   # available memory; effective_cache_size tells the planner how much the OS is

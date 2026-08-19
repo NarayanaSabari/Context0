@@ -58,6 +58,19 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql
+            # Kubernetes defaults /dev/shm to 64Mi, which PostgreSQL uses for
+            # parallel workers' shared memory. Building the pgvector HNSW index
+            # needs far more than that in one allocation: at 94k embeddings it
+            # asked for 131MB and failed with "could not resize shared memory
+            # segment ... No space left on device".
+            #
+            # That is not a theoretical limit. It makes a restored backup
+            # unusable: pg_restore skips the index, and the API rebuilds it on
+            # startup and treats the failure as fatal, so the deployment cannot
+            # come up on recovered data. The running database never hits it
+            # because its index grew a row at a time.
+            - name: dshm
+              mountPath: /dev/shm
           resources:
             {{- toYaml .Values.postgres.resources | nindent 12 }}
           # PostgreSQL ships defaults sized for a shared workstation
@@ -93,6 +106,11 @@ spec:
             exec:
               command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}]
             periodSeconds: 5
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.postgres.shmSize }}
   volumeClaimTemplates:
     - metadata:
         name: data

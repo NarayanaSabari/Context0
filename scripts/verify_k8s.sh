@@ -9,6 +9,7 @@
 set -uo pipefail
 
 NS="${1:-context0}"
+DB_NAME="${DB_NAME:-context0}"
 PASS=0
 FAIL=0
 declare -a FAILURES
@@ -313,6 +314,28 @@ EOF
 else
   printf '  skipped: replicas=%s (PDB and topology spread are gated on >1)\n' "${replicas:-1}"
 fi
+
+section "15. Recoverability"
+# /dev/shm defaults to 64Mi in Kubernetes, which is not enough to build the
+# pgvector HNSW index in one allocation: at 94k embeddings the build asked for
+# 131MB and failed. The live database never hits this, because its index grew a
+# row at a time -- it only appears when the index is rebuilt, which is exactly
+# what restoring a backup does. pg_restore then reports success having skipped
+# the index, and the API treats a failed index build as fatal at startup, so the
+# deployment cannot come up on the recovered data.
+shm_mb=$(kubectl exec -n "$NS" postgres-age-0 -- sh -c \
+  "df -m /dev/shm | awk 'NR==2{print \$2}'" 2>/dev/null)
+check "/dev/shm is larger than the 64Mi default" "ok" \
+  "$([[ "${shm_mb:-0}" -gt 64 ]] && echo ok || echo "only ${shm_mb:-?}Mi")"
+
+# A backup is only a backup if it restores. This asserts the index survives the
+# round trip, because that is the part that fails silently.
+check "the HNSW vector index can be rebuilt at the current data size" "ok" \
+  "$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d "$DB_NAME" -tAc \
+    "SET maintenance_work_mem='128MB';
+     CREATE INDEX IF NOT EXISTS shm_probe_idx ON public.memory_embeddings
+       USING hnsw (embedding vector_cosine_ops);
+     DROP INDEX IF EXISTS shm_probe_idx;" >/dev/null 2>&1 && echo ok || echo "index build failed")"
 
 printf '\n\033[1m%s\033[0m\n' "=== $PASS passed, $FAIL failed ==="
 for f in "${FAILURES[@]:-}"; do [[ -n "$f" ]] && printf '  failed: %s\n' "$f"; done
