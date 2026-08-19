@@ -237,6 +237,16 @@ jobs:
           sleep 5
           curl -sf http://localhost:8080/v1/health
 
+      # Structural performance guarantees: that the indexes can serve the
+      # queries, that the rate limit and buckets are configured usefully. The
+      # latency thresholds report but do not enforce here, because a CI database
+      # holds a few rows and everything is fast at that size -- a pass would be
+      # evidence of nothing. Run this against a loaded cluster for the timings.
+      - name: Verify performance invariants
+        env:
+          CONTEXT0_API_KEY: ${{ env.E2E_API_KEY }}
+        run: scripts/verify_perf.sh
+
       - name: Run E2E tests
         env:
           CONTEXT0_E2E_HTTP: http://localhost:8080
