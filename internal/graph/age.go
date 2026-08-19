@@ -795,12 +795,28 @@ func (r *AGERepository) CreateSession(ctx context.Context, sess model.Session) e
 	})
 }
 
+// ErrSessionNotFound is returned when no session exists with the given ID.
+var ErrSessionNotFound = errors.New("session not found")
+
+// ErrSessionAlreadyEnded is returned when a session has already been ended.
+// Callers must distinguish this from a successful end: EndSession is paired
+// with a gauge decrement, and repeating it drives that gauge negative.
+var ErrSessionAlreadyEnded = errors.New("session already ended")
+
 // EndSession sets the ended_at timestamp on a session node to the current
-// UTC time and returns the updated session. The Cypher SET clause performs
-// an in-place property update on the matched vertex.
+// UTC time and returns the updated session.
+//
+// The match is restricted to sessions that have not already ended, so ending
+// a session twice is rejected rather than silently overwriting the original
+// timestamp. Doing this in the MATCH rather than as a read-then-write in Go
+// keeps it atomic: two concurrent EndSession calls for the same session both
+// matched under a check-then-set, and both decremented ActiveSessions.
 func (r *AGERepository) EndSession(ctx context.Context, id uuid.UUID) (model.Session, error) {
 	now := time.Now().UTC()
-	const q = `MATCH (s:Session {id: $id}) SET s.ended_at = $ended_at RETURN properties(s)`
+	const q = `MATCH (s:Session {id: $id})
+WHERE s.ended_at IS NULL
+SET s.ended_at = $ended_at
+RETURN properties(s)`
 	rows, err := r.cypher(ctx, q, params{
 		"id":       id.String(),
 		"ended_at": now.Format(time.RFC3339),
@@ -814,10 +830,28 @@ func (r *AGERepository) EndSession(ctx context.Context, id uuid.UUID) (model.Ses
 		return model.Session{}, fmt.Errorf("scan session: %w", err)
 	}
 	if !found {
-		return model.Session{}, fmt.Errorf("session not found: %s", id)
+		// The session either does not exist or was already ended. Tell those
+		// apart with a follow-up read so the caller gets an accurate status
+		// code; this only runs on the failure path.
+		if exists, err := r.sessionExists(ctx, id); err == nil && exists {
+			return model.Session{}, fmt.Errorf("%w: %s", ErrSessionAlreadyEnded, id)
+		}
+		return model.Session{}, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
 	}
 
 	return props.toModel(), nil
+}
+
+// sessionExists reports whether a Session vertex with the given ID is present,
+// regardless of whether it has ended.
+func (r *AGERepository) sessionExists(ctx context.Context, id uuid.UUID) (bool, error) {
+	const q = `MATCH (s:Session {id: $id}) RETURN properties(s)`
+	rows, err := r.cypher(ctx, q, params{"id": id.String()})
+	if err != nil {
+		return false, err
+	}
+	_, found, err := scanOne[sessionProps](rows)
+	return found, err
 }
 
 // LinkMemoryToSession creates a :contains edge from a Session to a Memory,

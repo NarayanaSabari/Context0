@@ -17,6 +17,7 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -237,14 +238,49 @@ func TestCreateMemory_HostileContent(t *testing.T) {
 //
 // The check is node count rather than a surviving canary, because this payload
 // class adds nodes; a survivor-style assertion would not notice an extra one.
+//
+// The count is scoped to this test's project. A global MATCH (n) count made the
+// assertion depend on nothing else in the suite writing to the same database,
+// so it failed spuriously as soon as another package's tests ran concurrently
+// against the shared instance. The injected payloads all target the Memory
+// label in this project, so a project-scoped count still detects every one of
+// them while staying immune to unrelated traffic.
 func TestCreateMemory_InjectedCypherDoesNotExecute(t *testing.T) {
 	repo, ctx := testRepo(t)
 	projectID := newProjectID(t)
 
-	before, err := repo.NodeCount(ctx)
-	if err != nil {
-		t.Fatalf("node count: %v", err)
+	countProjectNodes := func() int64 {
+		t.Helper()
+		rows, err := repo.cypher(ctx,
+			`MATCH (n:Memory {project_id: $pid}) RETURN count(n)`,
+			params{"pid": projectID})
+		if err != nil {
+			t.Fatalf("count project nodes: %v", err)
+		}
+		n, found, err := scanOne[int64](rows)
+		if err != nil || !found {
+			t.Fatalf("scan count: err=%v found=%v", err, found)
+		}
+		return n
 	}
+
+	// An injected CREATE lands outside this project, so also watch for any
+	// node carrying the injected marker anywhere in the graph.
+	countInjectedNodes := func() int64 {
+		t.Helper()
+		rows, err := repo.cypher(ctx,
+			`MATCH (n) WHERE n.id = 'INJECTED' RETURN count(n)`, params{})
+		if err != nil {
+			t.Fatalf("count injected nodes: %v", err)
+		}
+		n, found, err := scanOne[int64](rows)
+		if err != nil || !found {
+			t.Fatalf("scan injected count: err=%v found=%v", err, found)
+		}
+		return n
+	}
+
+	before := countProjectNodes()
 
 	payloads := []string{
 		// Append a second CREATE.
@@ -268,15 +304,18 @@ func TestCreateMemory_InjectedCypherDoesNotExecute(t *testing.T) {
 		}
 	}
 
-	after, err := repo.NodeCount(ctx)
-	if err != nil {
-		t.Fatalf("node count: %v", err)
-	}
+	after := countProjectNodes()
 
 	// Exactly one node per stored memory: no injected extras, nothing deleted.
 	if delta := after - before; delta != int64(len(payloads)) {
 		t.Errorf("node count changed by %d, want %d -- injected Cypher executed",
 			delta, len(payloads))
+	}
+
+	// The CREATE payload builds a node with id 'INJECTED' and no project_id,
+	// which a project-scoped count alone would miss.
+	if n := countInjectedNodes(); n != 0 {
+		t.Errorf("found %d node(s) with id 'INJECTED' -- injected CREATE executed", n)
 	}
 
 	// And nothing was mass-overwritten.
@@ -716,9 +755,36 @@ func TestEmbeddingRoundTripAndVectorSearch(t *testing.T) {
 	}
 }
 
+// TestNodeAndEdgeCount checks that the graph-wide counters reflect writes.
+//
+// NodeCount and EdgeCount aggregate the whole graph, so an exact delta assumes
+// this test is the only writer. Against a shared database -- which is how the
+// suite runs, and how CI runs it -- another package's tests write concurrently
+// and the exact delta fails spuriously. The graph-wide check is therefore a
+// lower bound, and the exact accounting is asserted per project, where this
+// test owns every write.
 func TestNodeAndEdgeCount(t *testing.T) {
 	repo, ctx := testRepo(t)
 	projectID := newProjectID(t)
+
+	countScoped := func(q string) int64 {
+		t.Helper()
+		rows, err := repo.cypher(ctx, q, params{"pid": projectID})
+		if err != nil {
+			t.Fatalf("scoped count: %v", err)
+		}
+		n, found, err := scanOne[int64](rows)
+		if err != nil || !found {
+			t.Fatalf("scan scoped count: err=%v found=%v", err, found)
+		}
+		return n
+	}
+	const nodeQ = `MATCH (n:Memory {project_id: $pid}) RETURN count(n)`
+	const edgeQ = `MATCH (a:Memory {project_id: $pid})-[e]->(b:Memory {project_id: $pid}) RETURN count(e)`
+
+	if n := countScoped(nodeQ); n != 0 {
+		t.Fatalf("fresh project already holds %d nodes", n)
+	}
 
 	beforeNodes, err := repo.NodeCount(ctx)
 	if err != nil {
@@ -751,11 +817,22 @@ func TestNodeAndEdgeCount(t *testing.T) {
 		t.Fatalf("edge count: %v", err)
 	}
 
-	if afterNodes-beforeNodes != 2 {
-		t.Errorf("node count rose by %d, want 2", afterNodes-beforeNodes)
+	// Exact, within the project this test owns.
+	if n := countScoped(nodeQ); n != 2 {
+		t.Errorf("project holds %d nodes, want 2", n)
 	}
-	if afterEdges-beforeEdges != 1 {
-		t.Errorf("edge count rose by %d, want 1", afterEdges-beforeEdges)
+	if n := countScoped(edgeQ); n != 1 {
+		t.Errorf("project holds %d edges, want 1", n)
+	}
+
+	// Graph-wide: the counters must have observed at least this test's writes.
+	// A counter stuck at a constant, or one that ignores new vertices, fails
+	// here regardless of what else is running.
+	if delta := afterNodes - beforeNodes; delta < 2 {
+		t.Errorf("graph-wide node count rose by %d, want at least 2", delta)
+	}
+	if delta := afterEdges - beforeEdges; delta < 1 {
+		t.Errorf("graph-wide edge count rose by %d, want at least 1", delta)
 	}
 }
 
@@ -1659,5 +1736,76 @@ func TestSearchByVector_SurvivesIndexChurn(t *testing.T) {
 	}
 	if results[0].Score <= 0 {
 		t.Errorf("top hit similarity = %f, want > 0", results[0].Score)
+	}
+}
+
+// TestEndSessionPreservesOriginalTimestamp: a repeated end must be rejected
+// without disturbing the session that was already recorded.
+//
+// EndSession set ended_at unconditionally, so a second call overwrote the
+// original timestamp and returned success. That both corrupted session
+// duration and let the caller decrement ActiveSessions twice.
+func TestEndSessionPreservesOriginalTimestamp(t *testing.T) {
+	repo, ctx := testRepo(t)
+
+	sess := model.Session{
+		ID:        uuid.New(),
+		ProjectID: "end-session-idempotency",
+		AgentID:   "agent",
+		StartedAt: time.Now().UTC(),
+	}
+	if err := repo.CreateSession(ctx, sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	ended, err := repo.EndSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("first EndSession: %v", err)
+	}
+	if ended.EndedAt == nil {
+		t.Fatal("first EndSession returned a session with no ended_at")
+	}
+	original := *ended.EndedAt
+
+	// A full second apart, so an overwrite is visible at the stored
+	// timestamp's resolution rather than hidden by it.
+	time.Sleep(1100 * time.Millisecond)
+
+	if _, err := repo.EndSession(ctx, sess.ID); !errors.Is(err, ErrSessionAlreadyEnded) {
+		t.Fatalf("second EndSession returned %v, want ErrSessionAlreadyEnded", err)
+	}
+
+	// Read the vertex back rather than trusting the returned value.
+	const q = `MATCH (s:Session {id: $id}) RETURN properties(s)`
+	rows, err := repo.cypher(ctx, q, params{"id": sess.ID.String()})
+	if err != nil {
+		t.Fatalf("query session: %v", err)
+	}
+	props, found, err := scanOne[sessionProps](rows)
+	if err != nil || !found {
+		t.Fatalf("scan session: err=%v found=%v", err, found)
+	}
+	stored := props.toModel()
+	if stored.EndedAt == nil {
+		t.Fatal("ended_at was cleared by the rejected call")
+	}
+	if !stored.EndedAt.Equal(original) {
+		t.Errorf("ended_at moved from %v to %v: the rejected end overwrote the "+
+			"original timestamp, so session duration is measured from the last "+
+			"stray request instead of the real end", original, *stored.EndedAt)
+	}
+}
+
+// TestEndSessionUnknownIDIsNotFound keeps the two failure modes distinct, so a
+// stale retry is not reported as a bad session ID.
+func TestEndSessionUnknownIDIsNotFound(t *testing.T) {
+	repo, ctx := testRepo(t)
+
+	_, err := repo.EndSession(ctx, uuid.New())
+	if !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("EndSession on an unknown ID returned %v, want ErrSessionNotFound", err)
+	}
+	if errors.Is(err, ErrSessionAlreadyEnded) {
+		t.Error("an unknown session was reported as already ended")
 	}
 }

@@ -7,6 +7,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	pb "github.com/context0/context0/api/gen/context0/v1"
@@ -75,6 +76,21 @@ func (s *SessionService) EndSession(ctx context.Context, req *pb.EndSessionReque
 
 	sess, err := s.repo.EndSession(ctx, id)
 	if err != nil {
+		// Only a session that this call actually transitioned to ended may
+		// decrement the gauge. Ending an already-ended session used to succeed
+		// and decrement again, which drove context0_active_sessions negative
+		// and broke anything alerting on it.
+		switch {
+		case errors.Is(err, graph.ErrSessionAlreadyEnded):
+			// Aborted, not FailedPrecondition: grpc-gateway maps Aborted to
+			// 409 Conflict, which describes a well-formed request that
+			// conflicts with current state. FailedPrecondition maps to 400,
+			// which tells an HTTP client its request was malformed when it
+			// was not.
+			return nil, status.Errorf(codes.Aborted, "session already ended: %s", req.Id)
+		case errors.Is(err, graph.ErrSessionNotFound):
+			return nil, status.Errorf(codes.NotFound, "session not found: %s", req.Id)
+		}
 		return nil, status.Errorf(codes.Internal, "failed to end session: %v", err)
 	}
 
