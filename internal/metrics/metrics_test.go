@@ -1,7 +1,13 @@
 package metrics
 
 import (
+	"context"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"os"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -153,5 +159,158 @@ func TestHistogramsUseTheTunedBuckets(t *testing.T) {
 			t.Errorf("%s puts the measured p50 and p99 in the same bucket (%v): "+
 				"it is not using the tuned buckets", name, bucketOf(0.115))
 		}
+	}
+}
+
+// TestSetPoolStatsSourcePopulatesGauges covers the sampler against a real
+// pool.
+//
+// The existing tests only cover the nil-pool guards, so nothing verified that
+// a live pool actually produces gauge values. Pool exhaustion is this
+// service's most likely saturation point, and these gauges are the only thing
+// that names it -- a sampler that silently never ran would leave the same
+// blind spot the metrics were added to remove, while /metrics still listed
+// the series.
+func TestSetPoolStatsSourcePopulatesGauges(t *testing.T) {
+	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+	}
+
+	saved := poolStatsSource
+	t.Cleanup(func() { poolStatsSource = saved })
+	PoolConnections.Reset()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+
+	SetPoolStatsSource(ctx, pool)
+
+	if poolStatsSource == nil {
+		t.Fatal("a live pool was not installed as the stats source")
+	}
+
+	// poolWaitSeconds must read through the installed source rather than
+	// returning the no-pool zero.
+	if got := poolWaitSeconds(); got < 0 {
+		t.Errorf("poolWaitSeconds() = %v, want a non-negative duration", got)
+	}
+
+	// The sampler ticks every 5s; wait for the gauges to be populated rather
+	// than sleeping for a fixed period.
+	deadline := time.Now().Add(20 * time.Second)
+	var maxConns float64
+	for time.Now().Before(deadline) {
+		maxConns = testutil.ToFloat64(PoolConnections.WithLabelValues("max"))
+		if maxConns > 0 {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	if maxConns <= 0 {
+		t.Fatalf("the pool sampler never populated the max gauge (got %v); "+
+			"pool saturation would be invisible", maxConns)
+	}
+
+	// Every documented state must be reported, or a partially populated set
+	// makes "acquired == max" impossible to evaluate.
+	for _, state := range []string{"acquired", "idle", "total", "max", "constructing"} {
+		g := PoolConnections.WithLabelValues(state)
+		if v := testutil.ToFloat64(g); v < 0 {
+			t.Errorf("gauge %q = %v, want a non-negative count", state, v)
+		}
+	}
+
+	total := testutil.ToFloat64(PoolConnections.WithLabelValues("total"))
+	if total > maxConns {
+		t.Errorf("total connections %v exceeds max %v", total, maxConns)
+	}
+}
+
+// TestSetPoolStatsSourceStopsWithContext: the sampler is a goroutine for the
+// life of the process, and one that outlived its context would keep touching
+// a closed pool.
+func TestSetPoolStatsSourceStopsWithContext(t *testing.T) {
+	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+	}
+
+	saved := poolStatsSource
+	t.Cleanup(func() { poolStatsSource = saved })
+
+	before := runtime.NumGoroutine()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	SetPoolStatsSource(ctx, pool)
+
+	cancel()
+	pool.Close()
+
+	// The sampler selects on ctx.Done(), so it should exit promptly.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() <= before+1 {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Errorf("goroutine count stayed at %d (started from %d) after the context "+
+		"was cancelled; the pool sampler may not be stopping",
+		runtime.NumGoroutine(), before)
+}
+
+// TestPoolWaitSecondsReadsTheInstalledSource: the nil guard exists so the
+// metric works before the pool is built, but forcing it always-true makes the
+// metric permanently zero -- which reads as "no request has ever waited on the
+// pool", the exact opposite of what a saturated pool looks like.
+//
+// TestPoolWaitSecondsWithoutPool covers the nil case; this covers the case
+// where a source is installed and must actually be consulted. It uses a real
+// pool because pgxpool.Stat wraps an internal struct that cannot be
+// constructed from outside the package.
+func TestPoolWaitSecondsReadsTheInstalledSource(t *testing.T) {
+	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+	}
+
+	saved := poolStatsSource
+	t.Cleanup(func() { poolStatsSource = saved })
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	var called bool
+	poolStatsSource = func() *pgxpool.Stat {
+		called = true
+		return pool.Stat()
+	}
+
+	got := poolWaitSeconds()
+	if !called {
+		t.Fatal("poolWaitSeconds did not consult the installed stats source; " +
+			"the metric would report zero wait no matter how saturated the pool is")
+	}
+	if got < 0 {
+		t.Errorf("poolWaitSeconds() = %v, want a non-negative duration", got)
 	}
 }

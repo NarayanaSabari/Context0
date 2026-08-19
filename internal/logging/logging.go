@@ -16,6 +16,7 @@ package logging
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -40,6 +41,13 @@ type Options struct {
 // packages that call slog directly are covered without threading a logger
 // through every constructor.
 func Setup(opts Options) *slog.Logger {
+	return setup(opts, os.Stdout)
+}
+
+// setup is Setup with an injectable destination, so tests can assert on the
+// records this configuration actually produces rather than rebuilding an
+// equivalent logger by hand and testing that instead.
+func setup(opts Options, w io.Writer) *slog.Logger {
 	level := parseLevel(opts.Level)
 
 	handlerOpts := &slog.HandlerOptions{
@@ -52,9 +60,9 @@ func Setup(opts Options) *slog.Logger {
 
 	var handler slog.Handler
 	if strings.EqualFold(opts.Format, "text") {
-		handler = slog.NewTextHandler(os.Stdout, handlerOpts)
+		handler = slog.NewTextHandler(w, handlerOpts)
 	} else {
-		handler = slog.NewJSONHandler(os.Stdout, handlerOpts)
+		handler = slog.NewJSONHandler(w, handlerOpts)
 	}
 
 	logger := slog.New(handler)

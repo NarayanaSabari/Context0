@@ -107,6 +107,55 @@ def run_tests(pkg_path: str, timeout: int) -> bool:
         return False
 
 
+
+def comment_and_string_spans(src: str):
+    """Byte ranges covered by comments or string/rune literals.
+
+    Mutating inside a comment changes nothing, so the mutant always survives
+    and is reported as a test gap. A comment reading "acquired == max" in
+    internal/metrics produced exactly that: a survivor pointing at prose.
+    Mutating inside a string literal is worse than useless -- it can change an
+    SQL query or an error message into something that no longer compiles or
+    silently alters behaviour unrelated to the guard under test.
+    """
+    spans = []
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if c == '/' and i + 1 < n and src[i + 1] == '/':
+            j = src.find('\n', i)
+            j = n if j == -1 else j
+            spans.append((i, j))
+            i = j
+        elif c == '/' and i + 1 < n and src[i + 1] == '*':
+            j = src.find('*/', i + 2)
+            j = n if j == -1 else j + 2
+            spans.append((i, j))
+            i = j
+        elif c in '"`\'':
+            quote = c
+            j = i + 1
+            while j < n:
+                if src[j] == '\\' and quote != '`':
+                    j += 2
+                    continue
+                if src[j] == quote:
+                    j += 1
+                    break
+                if src[j] == '\n' and quote != '`':
+                    break
+                j += 1
+            spans.append((i, min(j, n)))
+            i = min(j, n)
+        else:
+            i += 1
+    return spans
+
+
+def in_spans(pos: int, spans) -> bool:
+    return any(lo <= pos < hi for lo, hi in spans)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("packages", nargs="*", default=None)
@@ -146,12 +195,17 @@ def main():
             original = src.read_text()
             applied = 0
 
+            skip_spans = comment_and_string_spans(original)
+
             for name, pattern, repl, _ in MUTATIONS:
                 if applied >= args.max_per_file:
                     break
                 for m in list(re.finditer(pattern, original)):
                     if applied >= args.max_per_file:
                         break
+                    # Only mutate real code.
+                    if in_spans(m.start(), skip_spans):
+                        continue
                     mutated = original[:m.start()] + re.sub(pattern, repl, m.group(0), count=1) + original[m.end():]
                     if mutated == original:
                         continue

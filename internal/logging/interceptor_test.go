@@ -138,3 +138,56 @@ func TestInterceptorProvidesLoggerToHandler(t *testing.T) {
 		t.Error("the handler's logger did not reach the configured output")
 	}
 }
+
+// TestInterceptorHandlesNilLogger: the interceptor is constructed during
+// server wiring, where a logger that has not been built yet is easy to pass.
+// Falling back to slog.Default() keeps that from panicking on the first RPC.
+//
+// Without the guard, the nil logger is only dereferenced when a request
+// actually fails -- so the process starts, serves healthy traffic, and panics
+// the first time something goes wrong, which is the worst possible moment.
+func TestInterceptorHandlesNilLogger(t *testing.T) {
+	interceptor := UnaryServerInterceptor(nil)
+
+	// A failing handler, because that is the path that logs.
+	_, err := interceptor(
+		context.Background(),
+		"request",
+		&grpc.UnaryServerInfo{FullMethod: "/context0.v1.MemoryService/Store"},
+		func(ctx context.Context, req any) (any, error) {
+			return nil, status.Error(codes.Internal, "boom")
+		},
+	)
+	if err == nil {
+		t.Fatal("expected the handler error to propagate")
+	}
+
+	// And the success path, which also touches the logger.
+	if _, err := interceptor(
+		context.Background(),
+		"request",
+		&grpc.UnaryServerInfo{FullMethod: "/context0.v1.MemoryService/Query"},
+		func(ctx context.Context, req any) (any, error) { return "ok", nil },
+	); err != nil {
+		t.Fatalf("success path returned an error: %v", err)
+	}
+
+	// The handler must still receive a usable logger from the context, not a
+	// nil one that panics on first use.
+	if _, err := interceptor(
+		context.Background(),
+		"request",
+		&grpc.UnaryServerInfo{FullMethod: "/context0.v1.MemoryService/Store"},
+		func(ctx context.Context, req any) (any, error) {
+			l := FromContext(ctx)
+			if l == nil {
+				t.Error("FromContext returned nil inside the handler")
+				return nil, nil
+			}
+			l.Info("handler logging through the context logger")
+			return "ok", nil
+		},
+	); err != nil {
+		t.Fatalf("handler returned an error: %v", err)
+	}
+}
