@@ -1,7 +1,17 @@
 package service
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	pb "github.com/context0/context0/api/gen/context0/v1"
+	"github.com/context0/context0/internal/graph"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"os"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/context0/context0/pkg/model"
 	"github.com/google/uuid"
@@ -158,5 +168,220 @@ func TestMergeResults_IsDeterministic(t *testing.T) {
 				t.Fatalf("mergeResults order varies between identical calls at %d", j)
 			}
 		}
+	}
+}
+
+// failingEmbedder fails every Embed call, standing in for an embedding
+// provider that is down, rate-limited, or misconfigured.
+type failingEmbedder struct{ calls atomic.Int64 }
+
+func (e *failingEmbedder) Embed(string) ([]float32, error) {
+	e.calls.Add(1)
+	return nil, errors.New("embedding provider unavailable")
+}
+
+func (e *failingEmbedder) Dimension() int { return 384 }
+
+// TestStoreSucceedsWhenEmbeddingFails pins the tradeoff the embedding path is
+// built around: an embedding failure must not lose the write.
+//
+// The provider is a network dependency and the most likely thing to be down.
+// Failing the Store would turn a degraded vector index into total write
+// unavailability, so the memory is stored and the failure is logged instead.
+// The cost is that the memory is absent from vector search until it is
+// re-embedded, which is why the log is at Error.
+//
+// Nothing asserted any of this: mutation testing skipped the whole embedding
+// block and every test still passed.
+func TestStoreSucceedsWhenEmbeddingFails(t *testing.T) {
+	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	pool, err := graph.NewPool(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	repo := graph.NewAGERepository(pool, 384)
+	if err := repo.InitSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+
+	embedder := &failingEmbedder{}
+	svc := NewMemoryService(repo, embedder)
+
+	projectID := fmt.Sprintf("embed-failure-%d", time.Now().UnixNano())
+	resp, err := svc.Store(ctx, &pb.StoreRequest{
+		Content:   "the deploy target is production",
+		ProjectId: projectID,
+		Type:      pb.MemoryType_MEMORY_TYPE_SEMANTIC,
+	})
+	if err != nil {
+		t.Fatalf("Store failed because embedding failed: %v -- "+
+			"an unavailable embedding provider must not make the service "+
+			"unable to accept writes", err)
+	}
+	if embedder.calls.Load() == 0 {
+		t.Fatal("the embedder was never called; the test proves nothing")
+	}
+
+	// The memory must be readable, which is the whole point of not failing.
+	id, err := uuid.Parse(resp.Memory.Id)
+	if err != nil {
+		t.Fatalf("bad memory id: %v", err)
+	}
+	got, err := repo.GetMemory(ctx, id)
+	if err != nil {
+		t.Fatalf("stored memory is unreadable after an embedding failure: %v", err)
+	}
+	if got.Content != "the deploy target is production" {
+		t.Errorf("content = %q, want the stored content", got.Content)
+	}
+
+	// And it must still be findable by keyword, the fallback the comment in
+	// StoreMemory relies on when it calls the failure non-fatal.
+	results, err := repo.QueryMemories(ctx, graph.QueryFilter{
+		ProjectID: projectID,
+		Keywords:  []string{"deploy"},
+		TopK:      10,
+	})
+	if err != nil {
+		t.Fatalf("keyword query: %v", err)
+	}
+	if len(results) == 0 {
+		t.Error("a memory whose embedding failed is not findable by keyword " +
+			"either, so the write is effectively lost")
+	}
+}
+
+// TestStoreLinksToSession covers the session_id branch of Store, which nothing
+// exercised: a valid ID must link the memory to the session, and an invalid one
+// must be rejected as a bad argument rather than stored unlinked.
+//
+// Silently dropping the link would be the worst outcome. The memory would exist
+// but not belong to the session that produced it, so any later "what happened
+// in this session" traversal returns an incomplete answer with no error to
+// explain it.
+func TestStoreLinksToSession(t *testing.T) {
+	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	pool, err := graph.NewPool(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	repo := graph.NewAGERepository(pool, 384)
+	if err := repo.InitSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+	svc := NewMemoryService(repo, nil)
+	sessions := NewSessionService(repo)
+
+	projectID := fmt.Sprintf("session-link-%d", time.Now().UnixNano())
+	start, err := sessions.StartSession(ctx, &pb.StartSessionRequest{
+		ProjectId: projectID,
+		AgentId:   "linker",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	stored, err := svc.Store(ctx, &pb.StoreRequest{
+		Content:   "a memory produced inside a session",
+		ProjectId: projectID,
+		Type:      pb.MemoryType_MEMORY_TYPE_SEMANTIC,
+		SessionId: start.Session.Id,
+	})
+	if err != nil {
+		t.Fatalf("store with a valid session_id: %v", err)
+	}
+
+	// The edge must exist, not merely the memory.
+	sessID, err := uuid.Parse(start.Session.Id)
+	if err != nil {
+		t.Fatalf("bad session id: %v", err)
+	}
+	memID, err := uuid.Parse(stored.Memory.Id)
+	if err != nil {
+		t.Fatalf("bad memory id: %v", err)
+	}
+	var linked int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM cypher('context0', $$
+			MATCH (s:Session {id: $sid})-[:contains]->(m:Memory {id: $mid})
+			RETURN m
+		$$, $1) AS (m agtype)`,
+		fmt.Sprintf(`{"sid": %q, "mid": %q}`, sessID, memID),
+	).Scan(&linked); err != nil {
+		t.Fatalf("read session link: %v", err)
+	}
+	if linked != 1 {
+		t.Errorf("found %d contains edges from session %v to memory %v, want 1: "+
+			"the memory was stored but not linked, so the session's history is "+
+			"silently incomplete", linked, sessID, memID)
+	}
+
+	// A malformed session_id is the caller's error and must be reported.
+	for _, bad := range []string{"not-a-uuid", "12345"} {
+		if _, err := svc.Store(ctx, &pb.StoreRequest{
+			Content:   "memory with a bad session id",
+			ProjectId: projectID,
+			Type:      pb.MemoryType_MEMORY_TYPE_SEMANTIC,
+			SessionId: bad,
+		}); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("Store with session_id %q returned %v, want InvalidArgument", bad, err)
+		}
+	}
+
+	// No session_id at all is valid and must not be treated as an error.
+	if _, err := svc.Store(ctx, &pb.StoreRequest{
+		Content:   "a memory with no session",
+		ProjectId: projectID,
+		Type:      pb.MemoryType_MEMORY_TYPE_SEMANTIC,
+	}); err != nil {
+		t.Errorf("Store without a session_id failed: %v", err)
+	}
+}
+
+// TestStoreWithoutEmbedderSucceeds: the embedder is optional, and a nil one
+// disables vector search rather than breaking writes.
+func TestStoreWithoutEmbedderSucceeds(t *testing.T) {
+	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	pool, err := graph.NewPool(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	repo := graph.NewAGERepository(pool, 384)
+	if err := repo.InitSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+
+	// Explicitly nil: NewMemoryService documents this as supported.
+	svc := NewMemoryService(repo, nil)
+
+	projectID := fmt.Sprintf("no-embedder-%d", time.Now().UnixNano())
+	if _, err := svc.Store(ctx, &pb.StoreRequest{
+		Content:   "stored with vector search disabled",
+		ProjectId: projectID,
+		Type:      pb.MemoryType_MEMORY_TYPE_SEMANTIC,
+	}); err != nil {
+		t.Fatalf("Store with a nil embedder failed: %v -- the embedder is "+
+			"documented as optional, so this configuration must accept writes", err)
 	}
 }

@@ -62,23 +62,54 @@ func concurrentTestService(t *testing.T) (*MemoryService, context.Context) {
 }
 
 // runConcurrently fires fn from more goroutines than the pool has connections
-// and asserts that the batch finishes promptly.
+// and asserts that the batch does not serialise.
 //
-// The deadline matters as much as the success check. A request that holds two
-// connections does not necessarily fail: callers queue, the pool drains, and
-// everything eventually succeeds -- just orders of magnitude slower. Measured
-// against the real deadlock, this batch took 20s instead of 0.08s while still
-// returning no errors. Asserting on elapsed time is what turns that into a
-// detectable failure.
+// The timing check matters as much as the success check. A request that holds
+// two connections does not necessarily fail: callers queue, the pool drains,
+// and everything eventually succeeds -- just orders of magnitude slower.
+// Measured against the real deadlock, this batch took 20s instead of 0.08s
+// while still returning no errors.
+//
+// The threshold is a multiple of this machine's own measured single-call
+// latency rather than a wall-clock constant. A fixed budget conflates "the
+// pool is starved" with "the machine is busy", and failed spuriously when the
+// full suite ran every package in parallel against one database. Calibrating
+// against a serial baseline keeps the comparison meaningful on a loaded
+// machine, because both numbers move together.
 func runConcurrently(t *testing.T, ctx context.Context, name string, fn func(context.Context, int) error) {
 	t.Helper()
 
 	const (
 		workers = 12 // comfortably above the 4-connection pool
-		// Generous against real work (the healthy case is milliseconds) and far
-		// below the seconds-scale stall that connection starvation produces.
-		budget = 5 * time.Second
+		// With a 4-connection pool, 12 workers need at least 3 sequential
+		// rounds, so ~3x baseline is the floor for a healthy run. Full
+		// serialisation -- one connection's worth of throughput, which is what
+		// double-acquiring produces -- costs 12x or more. 8x sits between the
+		// two: high enough to absorb scheduling noise and pool churn, low
+		// enough that a starved pool cannot hide under it.
+		serialisationFactor = 8
+		// A floor for the baseline, so a sub-millisecond warm call does not
+		// produce a budget too tight to be meaningful.
+		minBaseline = 250 * time.Millisecond
+		// An absolute ceiling: past this the batch is stalled regardless of
+		// what the baseline says.
+		hardCap = 60 * time.Second
 	)
+
+	// Measure one call on its own. This also warms caches and the pool, so the
+	// baseline is not inflated by first-call costs the batch will not pay.
+	baseStart := time.Now()
+	if err := fn(ctx, -1); err != nil {
+		t.Fatalf("%s: baseline call failed: %v", name, err)
+	}
+	baseline := time.Since(baseStart)
+	if baseline < minBaseline {
+		baseline = minBaseline
+	}
+	budget := time.Duration(serialisationFactor) * baseline
+	if budget > hardCap {
+		budget = hardCap
+	}
 
 	var wg sync.WaitGroup
 	errs := make(chan error, workers)
@@ -88,7 +119,7 @@ func runConcurrently(t *testing.T, ctx context.Context, name string, fn func(con
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			c, cancel := context.WithTimeout(ctx, budget)
+			c, cancel := context.WithTimeout(ctx, hardCap)
 			defer cancel()
 			errs <- fn(c, i)
 		}(i)
@@ -99,7 +130,7 @@ func runConcurrently(t *testing.T, ctx context.Context, name string, fn func(con
 
 	select {
 	case <-done:
-	case <-time.After(budget * 3):
+	case <-time.After(hardCap):
 		t.Fatalf("%s: concurrent calls never completed; a single request is "+
 			"probably holding more than one pool connection", name)
 	}
@@ -113,9 +144,10 @@ func runConcurrently(t *testing.T, ctx context.Context, name string, fn func(con
 	}
 
 	if elapsed > budget {
-		t.Errorf("%s: %d concurrent calls took %s, well past the %s budget; "+
-			"requests are serialising on the connection pool",
-			name, workers, elapsed, budget)
+		t.Errorf("%s: %d concurrent calls took %s against a %s single-call "+
+			"baseline (budget %s, %dx); requests are serialising on the "+
+			"connection pool",
+			name, workers, elapsed, baseline, budget, serialisationFactor)
 	}
 }
 
