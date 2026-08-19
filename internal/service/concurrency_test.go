@@ -93,6 +93,37 @@ func concurrentTestService(t *testing.T) (*MemoryService, context.Context) {
 func runConcurrently(t *testing.T, ctx context.Context, name string, fn func(context.Context, int) error) {
 	t.Helper()
 
+	// Measured up to three times, failing only if the ratio is bad every time.
+	//
+	// This is a timing comparison against a database the rest of the suite is
+	// also using. One package holds a 126s vector-search test that writes
+	// 2,750 embeddings, and a batch measured entirely inside that window reads
+	// as serialised when nothing is wrong -- observed at 9.09 on a run whose
+	// other five iterations were clean.
+	//
+	// Retrying does not weaken the check. The defect it guards -- a request
+	// holding two pool connections -- is deterministic: it does not stop
+	// happening on the second attempt, and in practice it does not merely
+	// inflate the ratio but stops the batch completing at all, which the hard
+	// cap catches on the first pass. External load is the only thing that
+	// varies between attempts, so re-measuring is exactly the right response.
+	const attempts = 3
+	for attempt := 1; attempt <= attempts; attempt++ {
+		last := attempt == attempts
+		if measureConcurrency(t, ctx, name, fn, last) {
+			return
+		}
+		t.Logf("%s: ratio check failed on attempt %d of %d, re-measuring",
+			name, attempt, attempts)
+	}
+}
+
+// measureConcurrency runs one measurement. It reports whether the batch beat
+// its sequential reference; when report is true it fails the test instead of
+// returning false.
+func measureConcurrency(t *testing.T, ctx context.Context, name string, fn func(context.Context, int) error, report bool) bool {
+	t.Helper()
+
 	const (
 		workers = 12 // comfortably above the 4-connection pool
 		// A healthy run is near 1/3 of sequential; a serialised one is near
@@ -177,16 +208,20 @@ func runConcurrently(t *testing.T, ctx context.Context, name string, fn func(con
 		t.Logf("%s: sequential pass took %s, below the %s needed to measure "+
 			"serialisation; skipping the ratio check",
 			name, sequential, minMeasurable)
-		return
+		return true
 	}
 
 	ratio := concurrent.Seconds() / sequential.Seconds()
 	if ratio > maxRatio {
+		if !report {
+			return false
+		}
 		t.Errorf("%s: %d calls took %s concurrently vs %s sequentially "+
 			"(ratio %.2f, want below %.2f); concurrency bought almost nothing, "+
 			"so requests are serialising on the connection pool",
 			name, workers, concurrent, sequential, ratio, maxRatio)
 	}
+	return true
 }
 
 // TestConcurrent_StoreAndQuery covers the two endpoints that carry essentially
