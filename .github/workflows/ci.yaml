@@ -262,6 +262,16 @@ jobs:
           MIN_VERTICES_FOR_LATENCY: "2000"
         run: scripts/verify_perf.sh
 
+      # The Python SDK is a published interface with no coverage: a route
+      # table and per-field response parsing that renames everything on the
+      # way in. A broken route or a renamed field would reach users with
+      # nothing to catch it.
+      - name: Run Python SDK E2E tests
+        env:
+          CONTEXT0_ENDPOINT: localhost:8080
+          CONTEXT0_API_KEY: ${{ env.E2E_API_KEY }}
+        run: python3 sdk/python/tests/test_e2e.py
+
       - name: Run E2E tests
         env:
           CONTEXT0_E2E_HTTP: http://localhost:8080
