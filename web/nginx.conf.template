@@ -1,9 +1,26 @@
+# Access log format that records the path without the query string.
+#
+# The default combined format logs "$request", which includes the full query
+# string -- so loading the UI as /?key=ctx0_... wrote the API key verbatim into
+# this log, where it then survives log shipping and retention. Verified against
+# a live deployment before this change.
+#
+# $uri is the path after normalisation, so the log stays useful for debugging
+# routes and status codes while carrying no parameters. $http_referer is
+# dropped for the same reason: a page opened with ?key= sends that whole URL as
+# the Referer of every request it makes.
+log_format no_query '$remote_addr - $remote_user [$time_local] '
+                    '"$request_method $uri $server_protocol" '
+                    '$status $body_bytes_sent "$http_user_agent"';
+
 server {
     # 8080, not 80: binding a port below 1024 requires NET_BIND_SERVICE, and
     # this container drops all capabilities and runs as a non-root user.
     listen 8080;
     root /usr/share/nginx/html;
     index index.html;
+
+    access_log /var/log/nginx/access.log no_query;
 
     # SPA: serve index.html for all non-file routes
     location / {
@@ -15,5 +32,15 @@ server {
         proxy_pass http://${API_HOST}:${API_PORT};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+
+        # Do not forward the Referer upstream. If the UI was opened with a
+        # ?key= link, the browser sends that URL -- key included -- as the
+        # Referer on every subsequent API call, which would put the credential
+        # into the API's logs as well as this one.
+        proxy_set_header Referer "";
     }
+
+    # Tell the browser not to leak this page's URL to other origins, for the
+    # same reason.
+    add_header Referrer-Policy "same-origin" always;
 }

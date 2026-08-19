@@ -269,6 +269,24 @@ if [[ -n "$web_np" ]]; then
       curl -s -o /dev/null -w '%{http_code}' "http://localhost:$web_np/" 2>/dev/null)"
 fi
 
+# The UI accepts an API key as a ?key= URL parameter for convenience. A
+# credential in a URL ends up in browser history, Referer headers, and every
+# access log on the path -- verified before the fix by loading /?key=ctx0_...
+# and finding it verbatim in the web pod's log.
+web_np_leak=$(kubectl get svc context0-web -n "$NS" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null)
+if [[ -n "$web_np_leak" ]]; then
+  probe_secret="ctx0_verify_probe_$$"
+  docker exec "${KIND_NODE:-context0-dev-control-plane}" \
+    curl -s -o /dev/null "http://localhost:$web_np_leak/?key=$probe_secret" 2>/dev/null || true
+  sleep 2
+  check "the web server does not log API keys from URLs" "0" \
+    "$(kubectl logs -n "$NS" deploy/context0-web --tail=30 2>/dev/null | grep -c "$probe_secret" || true)"
+  check "the web server sets a Referrer-Policy" "same-origin" \
+    "$(docker exec "${KIND_NODE:-context0-dev-control-plane}" \
+      curl -sI "http://localhost:$web_np_leak/" 2>/dev/null \
+      | awk -F': ' 'tolower($1)=="referrer-policy"{print $2}' | tr -d '\r')"
+fi
+
 check "the API can still reach Postgres through the policy" "200" \
   "$(kubectl exec -n "$NS" "$(api_pod)" -- wget -q -S -O /dev/null http://localhost:8080/readyz 2>&1 \
     | awk '/HTTP\//{print $2; exit}')"

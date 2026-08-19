@@ -7,8 +7,42 @@
 
 import type { HealthResponse, MemoryResult, SubgraphResponse } from './types'
 
-/** API key initialized from the `?key=` URL search parameter, if present. */
-let apiKey = new URLSearchParams(window.location.search).get('key') ?? ''
+/**
+ * API key for API requests.
+ *
+ * Seeded from a `?key=` URL parameter for convenience, then immediately
+ * stripped from the address bar.
+ *
+ * A credential in a URL is a credential in places nobody intends to put one:
+ * browser history, the Referer header on any outbound link, and every proxy
+ * and web server access log on the path. Verified against this deployment --
+ * loading `/?key=ctx0_...` wrote the key verbatim into the web pod's nginx
+ * access log, where it survives log shipping and retention.
+ *
+ * Removing it from the URL after reading does not undo a log line already
+ * written by the server that served the page, so this is mitigation rather
+ * than a cure: it stops the key propagating any further, into history,
+ * bookmarks, screenshots and Referer headers. Prefer entering it in the
+ * sidebar, which never puts it in a URL at all.
+ */
+function readKeyFromURL(): string {
+  const params = new URLSearchParams(window.location.search)
+  const key = params.get('key')
+  if (!key) return ''
+
+  // Strip it from the address bar without a reload, so it is not carried into
+  // history, bookmarks, or the Referer of anything the user clicks next.
+  params.delete('key')
+  const query = params.toString()
+  window.history.replaceState(
+    {},
+    '',
+    window.location.pathname + (query ? `?${query}` : '') + window.location.hash,
+  )
+  return key
+}
+
+let apiKey = readKeyFromURL()
 
 /**
  * Updates the in-memory API key used for subsequent requests.
