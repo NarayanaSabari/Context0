@@ -173,8 +173,33 @@ def _cycle(client, stats, projects):
     if random.random() < 0.3:
         client.profile(project)
     if random.random() < 0.2:
-        client.extract(project, f"user: we switched to {topic} last week\n"
-                                f"user: I prefer {topic.split()[0]} for this")
+        # Alternate the two shapes a client actually sends. The newline form was
+        # the only one exercised here, which is why a single-line conversation
+        # collapsing into one memory went unnoticed: every test agreed with
+        # every other test and with nothing a real HTTP caller does.
+        if random.random() < 0.5:
+            conversation = (f"user: we switched to {topic} last week\n"
+                            f"user: I prefer {topic.split()[0]} for this")
+            expect_min = 2
+        else:
+            conversation = (f"User: We switched to {topic} last week. "
+                            f"Assistant: Noted. "
+                            f"User: I prefer {topic.split()[0]} for this.")
+            expect_min = 2
+
+        extracted = client.extract(project, conversation)
+        if extracted is not None:
+            memories = extracted.get("memories", [])
+            if len(memories) < expect_min:
+                stats.violation(
+                    f"extract returned {len(memories)} memories for a "
+                    f"{'multi-line' if chr(10) in conversation else 'single-line'} "
+                    f"conversation containing {expect_min} distinct facts")
+            for m in memories:
+                content = m.get("content", "")
+                if "Assistant:" in content or "User:" in content:
+                    stats.violation(
+                        f"extracted memory still contains a speaker label: {content[:60]!r}")
     if random.random() < 0.1:
         client.health()
 

@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -388,6 +389,56 @@ func TestAuthRejectsInvalidKey(t *testing.T) {
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expected 401 for invalid key, got %d", resp.StatusCode)
+	}
+}
+
+// TestExtractSeparatesTurnsInASingleLineConversation covers the shape an HTTP
+// client actually sends.
+//
+// Extraction split on newlines only, so a conversation delivered as one JSON
+// string -- which is what any API caller does unless it deliberately embeds
+// "\n" -- became a single memory containing the whole exchange, speaker labels
+// and all. The unit tests all fed it newline-separated input, so they agreed
+// with each other and with nothing a real client does; this asserts the
+// behaviour over the wire instead.
+func TestExtractSeparatesTurnsInASingleLineConversation(t *testing.T) {
+	projectID := fmt.Sprintf("e2e-extract-%d", time.Now().UnixNano())
+
+	resp := httpPost(t, "/v1/memories/extract", map[string]any{
+		"conversation": "User: I prefer PostgreSQL over MySQL for this project. " +
+			"Assistant: Noted. " +
+			"User: We deploy on Kubernetes every Friday.",
+		"project_id": projectID,
+	})
+
+	memories, _ := resp["memories"].([]any)
+	if len(memories) < 2 {
+		t.Fatalf("extract returned %d memories for a single-line conversation "+
+			"containing two distinct facts; the turns were not separated", len(memories))
+	}
+
+	var sawPostgres, sawDeploy bool
+	for _, m := range memories {
+		mem, _ := m.(map[string]any)
+		content, _ := mem["content"].(string)
+
+		// A speaker label in the content means another turn was swallowed.
+		if strings.Contains(content, "Assistant:") || strings.Contains(content, "User:") {
+			t.Errorf("extracted memory still contains a speaker label: %q", content)
+		}
+		if strings.Contains(content, "PostgreSQL") {
+			sawPostgres = true
+			if strings.Contains(content, "Kubernetes") {
+				t.Errorf("two distinct facts were merged into one memory: %q", content)
+			}
+		}
+		if strings.Contains(content, "Kubernetes") {
+			sawDeploy = true
+		}
+	}
+	if !sawPostgres || !sawDeploy {
+		t.Errorf("lost a fact: postgres=%v deploy=%v across %d memories",
+			sawPostgres, sawDeploy, len(memories))
 	}
 }
 
