@@ -101,7 +101,8 @@ func detectPair(newMem, oldMem model.Memory) *Contradiction {
 
 	for _, nt := range newTriples {
 		for _, ot := range oldTriples {
-			if nt.subject == ot.subject && nt.verb == ot.verb && nt.object != ot.object {
+			if nt.subject == ot.subject && nt.verb == ot.verb &&
+				nt.object != ot.object && !refines(nt.object, ot.object) {
 				// Same subject + verb but different object → contradiction.
 				return &Contradiction{
 					NewMemory:  newMem,
@@ -155,6 +156,35 @@ type triple struct {
 	subject string
 	verb    string
 	object  string
+}
+
+// refines reports whether one object is a word-prefix of the other, which means
+// the two statements elaborate rather than conflict.
+//
+// extractTriples truncates an object to its first three meaningful words, so a
+// memory that adds detail to an earlier one produces a longer object sharing the
+// shorter one's prefix: "the cache uses Redis" and "the cache uses Redis for
+// sessions" yield objects "redis" and "redis for sessions". Treating that as a
+// value change marked the pair a contradiction at 0.85 confidence and wrote a
+// supersedes edge, retiring a fact the new memory only expanded on.
+//
+// Comparison is word-wise, not by string prefix, so "go" does not refine
+// "golang" -- those are different values and a genuine conflict.
+func refines(a, b string) bool {
+	aw := strings.Fields(a)
+	bw := strings.Fields(b)
+	if len(aw) == 0 || len(bw) == 0 {
+		return false
+	}
+	if len(aw) > len(bw) {
+		aw, bw = bw, aw
+	}
+	for i, w := range aw {
+		if bw[i] != w {
+			return false
+		}
+	}
+	return true
 }
 
 // extractTriples scans text for "subject verb object" patterns by searching for

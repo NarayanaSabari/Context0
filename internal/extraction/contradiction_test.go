@@ -206,3 +206,128 @@ func TestExtractTriples(t *testing.T) {
 		})
 	}
 }
+
+// TestElaborationIsNotContradiction pins the boundary between a memory that
+// changes a fact and one that adds detail to it.
+//
+// extractTriples truncates an object to its first three meaningful words, so a
+// later memory that elaborates on an earlier one produces a longer object that
+// starts with the shorter one. Comparing those with != made the pair a
+// contradiction at 0.85 confidence, which is above the 0.5 threshold in
+// detectAndSupersede, so a supersedes edge retired a fact the new memory had
+// only expanded on.
+//
+// Found by mutation testing: forcing the subject/verb/object comparison to
+// always report a contradiction left the suite green, which showed nothing
+// asserted when detection must stay silent.
+func TestElaborationIsNotContradiction(t *testing.T) {
+	notContradictory := []struct {
+		name   string
+		newMem string
+		oldMem string
+		why    string
+	}{
+		{
+			name:   "object gains trailing detail",
+			newMem: "The cache uses Redis for sessions",
+			oldMem: "The cache uses Redis",
+			why:    "the value is unchanged; the new memory only says more about it",
+		},
+		{
+			name:   "measurement gains a qualifier",
+			newMem: "Deployment takes 5 minutes on a warm cache",
+			oldMem: "Deployment takes 5 minutes",
+			why:    "same measurement, narrower condition",
+		},
+		{
+			name:   "identical content",
+			newMem: "The staging database runs Postgres 18",
+			oldMem: "The staging database runs Postgres 18",
+			why:    "a memory cannot contradict itself",
+		},
+		{
+			name:   "different subjects, same verb",
+			newMem: "The API server uses Go",
+			oldMem: "The web frontend uses TypeScript",
+			why:    "two components can hold different values at once",
+		},
+		{
+			name:   "different subjects sharing a value",
+			newMem: "The build requires Node 20",
+			oldMem: "The test suite requires Node 20",
+			why:    "distinct subjects, no conflict",
+		},
+	}
+
+	for _, tc := range notContradictory {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DetectContradictions(
+				semanticMemory(tc.newMem),
+				[]model.Memory{semanticMemory(tc.oldMem)},
+			)
+			if len(got) > 0 {
+				t.Errorf("reported a contradiction between %q and %q (reason %q, confidence %.2f), "+
+					"but %s. A false positive writes a supersedes edge that retires a valid fact.",
+					tc.newMem, tc.oldMem, got[0].Reason, got[0].Confidence, tc.why)
+			}
+		})
+	}
+
+	// The same code path must still catch real value changes, or the guard
+	// above would have been bought by disabling detection.
+	contradictory := []struct {
+		name   string
+		newMem string
+		oldMem string
+	}{
+		{"changed attribute", "The service is degraded", "The service is healthy"},
+		{"changed value", "Alice speaks Spanish", "Alice speaks French"},
+		{"changed technology", "The backend uses Go", "The backend uses Python"},
+	}
+
+	for _, tc := range contradictory {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DetectContradictions(
+				semanticMemory(tc.newMem),
+				[]model.Memory{semanticMemory(tc.oldMem)},
+			)
+			if len(got) == 0 {
+				t.Errorf("missed a real contradiction between %q and %q", tc.newMem, tc.oldMem)
+			}
+		})
+	}
+}
+
+// TestRefinesDistinguishesPrefixFromDifferentValue: refinement is decided
+// word-wise, so a value that merely starts with the same letters is still a
+// conflict.
+func TestRefinesDistinguishesPrefixFromDifferentValue(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"redis", "redis for sessions", true},
+		{"redis for sessions", "redis", true},
+		{"redis", "redis", true},
+		{"go", "golang", false}, // different values, not an elaboration
+		{"postgres", "mysql", false},
+		{"node 20", "node 22", false}, // same first word, different version
+		{"", "redis", false},
+	}
+	for _, tc := range cases {
+		if got := refines(tc.a, tc.b); got != tc.want {
+			t.Errorf("refines(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
+
+// semanticMemory builds a semantic memory in a fixed project, which is what
+// DetectContradictions requires before it compares anything.
+func semanticMemory(content string) model.Memory {
+	return model.Memory{
+		ID:        uuid.New(),
+		ProjectID: "contradiction-test",
+		Type:      model.MemoryTypeSemantic,
+		Content:   content,
+	}
+}
