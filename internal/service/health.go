@@ -38,6 +38,13 @@ import (
 // on any human timescale.
 const statsTTL = 5 * time.Second
 
+// statsTimeout bounds the shared recompute.
+//
+// Once the flight stops borrowing a caller's context it has no deadline of its
+// own, so a database that accepts the connection and then stalls would pin the
+// flight and every caller waiting on it indefinitely.
+const statsTimeout = 10 * time.Second
+
 // healthRepo is the subset of the repository this service uses. Narrow by
 // design: it keeps the caching behaviour testable without a live database,
 // which is the only way to assert how many times the counts are actually
@@ -135,11 +142,26 @@ func (s *HealthService) graphStats(ctx context.Context) (graphStats, error) {
 			return cached, nil
 		}
 
-		nodes, err := s.repo.NodeCount(ctx)
+		// The shared work must not run on one caller's context.
+		//
+		// singleflight collapses concurrent callers into a single execution
+		// that captures whichever context arrived first. When that caller goes
+		// away -- a disconnected client, a request that timed out -- the shared
+		// computation is cancelled, and every other caller collapsed into the
+		// same flight receives that cancellation despite their own contexts
+		// being healthy. Reproduced: one caller cancelling made a concurrent
+		// Health call fail with "context canceled".
+		//
+		// These counts are a cache refresh on a TTL, not work owned by any one
+		// request, so the flight takes its own bounded context.
+		flightCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statsTimeout)
+		defer cancel()
+
+		nodes, err := s.repo.NodeCount(flightCtx)
 		if err != nil {
 			return graphStats{}, err
 		}
-		edges, err := s.repo.EdgeCount(ctx)
+		edges, err := s.repo.EdgeCount(flightCtx)
 		if err != nil {
 			return graphStats{}, err
 		}

@@ -297,3 +297,101 @@ func TestHealthWithholdsStatisticsFromAnonymousCallers(t *testing.T) {
 			authed.NodeCount, authed.Version)
 	}
 }
+
+// blockingRepo blocks in NodeCount until released or its context ends, so a
+// second caller collapses into the same singleflight flight.
+type blockingRepo struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (r *blockingRepo) Ping(context.Context) error { return nil }
+
+func (r *blockingRepo) NodeCount(ctx context.Context) (int64, error) {
+	r.once.Do(func() { close(r.entered) })
+	select {
+	case <-r.release:
+		return 42, nil
+	case <-ctx.Done():
+		return -1, ctx.Err()
+	}
+}
+
+func (r *blockingRepo) EdgeCount(context.Context) (int64, error) { return 99, nil }
+
+// TestHealthSurvivesADisconnectedCaller covers a defect in how the shared
+// stats recompute borrowed a context.
+//
+// singleflight collapses concurrent callers into one execution, and that
+// execution captured whichever caller's context arrived first. When that
+// caller went away -- a disconnected client, a request that hit its deadline --
+// the shared computation was cancelled and every other caller waiting on the
+// same flight received the cancellation, despite their own contexts being
+// perfectly healthy.
+//
+// The visible failure is a health check reporting Internal because an
+// unrelated client hung up, which is exactly when a health check must not lie.
+// Found when a full parallel test run failed with "failed to get graph
+// statistics: context canceled" in tests that never cancelled anything.
+func TestHealthSurvivesADisconnectedCaller(t *testing.T) {
+	repo := &blockingRepo{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	h := newTestHealth(repo)
+
+	// Caller A starts the flight, then disconnects.
+	ctxA, cancelA := context.WithCancel(authedCtx())
+	doneA := make(chan struct{})
+	go func() {
+		defer close(doneA)
+		_, _ = h.Health(ctxA, &pb.HealthRequest{})
+	}()
+
+	select {
+	case <-repo.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first caller never reached the repository")
+	}
+
+	// Caller B joins the same flight with a healthy context.
+	errB := make(chan error, 1)
+	go func() {
+		_, err := h.Health(authedCtx(), &pb.HealthRequest{})
+		errB <- err
+	}()
+
+	// Give B time to collapse into the flight, then disconnect A.
+	time.Sleep(200 * time.Millisecond)
+	cancelA()
+
+	// The work can now finish.
+	close(repo.release)
+
+	select {
+	case err := <-errB:
+		if err != nil {
+			t.Errorf("a healthy caller's Health failed because another caller "+
+				"disconnected: %v -- one client hanging up must not fail the "+
+				"health check for everyone sharing the recompute", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Error("the healthy caller never returned")
+	}
+	<-doneA
+}
+
+// TestHealthStatsRecomputeIsBounded: once the shared flight stops borrowing a
+// caller's context it has no deadline of its own, so a database that accepts
+// the connection and then stalls would pin the flight and every caller waiting
+// on it. statsTimeout is what bounds that.
+func TestHealthStatsRecomputeIsBounded(t *testing.T) {
+	if statsTimeout <= 0 {
+		t.Fatal("the shared stats recompute has no timeout; a stalled database " +
+			"would pin every caller waiting on the flight")
+	}
+	if statsTimeout > time.Minute {
+		t.Errorf("statsTimeout is %s, too long to bound a health check", statsTimeout)
+	}
+}
