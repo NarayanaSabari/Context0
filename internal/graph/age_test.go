@@ -1447,22 +1447,29 @@ func TestCreateMemory_TimestampsHaveSubSecondPrecision(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get memory: %v", err)
 		}
+		// Nanoseconds, not a formatted string. RFC3339Nano strips trailing
+		// zeros, so a write landing exactly on a millisecond boundary renders
+		// as "...49Z" with no fractional part and looks identical to a
+		// second-precision value -- which failed this test roughly once in a
+		// thousand runs while the storage format was entirely correct.
 		seen[got.CreatedAt.Format(time.RFC3339Nano)]++
+		// The real property: the millisecond component that was written must
+		// come back. Truncating to seconds is what produced the 153-memory tie
+		// groups, and it is visible here as a stored value that differs from
+		// the written one by the sub-second part.
+		if want, got2 := mem.CreatedAt.Truncate(time.Millisecond).UTC(),
+			got.CreatedAt.Truncate(time.Millisecond).UTC(); !want.Equal(got2) {
+			t.Errorf("timestamp lost precision in storage: wrote %s, read back %s",
+				want.Format(time.RFC3339Nano), got2.Format(time.RFC3339Nano))
+			break
+		}
 	}
 
 	// Not a strict "all distinct" assertion: several writes genuinely land in
 	// the same millisecond, and how many depends on machine speed. The bug was
 	// an entire second collapsing to one value (153 memories shared a
-	// timestamp), so the property under test is that the stored value carries
-	// sub-second detail at all.
-	for ts := range seen {
-		if !strings.Contains(ts, ".") {
-			t.Errorf("stored timestamp %q has no fractional seconds; "+
-				"second-precision timestamps make created_at ordering arbitrary "+
-				"within a busy second", ts)
-			break
-		}
-	}
+	// timestamp), so the property under test is that distinct sub-second values
+	// survive the round trip at all.
 	if len(seen) < 3 {
 		t.Errorf("%d rapid writes produced only %d distinct timestamps; "+
 			"sub-second precision appears to be lost", n, len(seen))
