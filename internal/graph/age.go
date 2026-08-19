@@ -528,8 +528,8 @@ func (r *AGERepository) IncrementAccessCount(ctx context.Context, id uuid.UUID) 
 // paid before the response could be written. Batching makes the cost
 // independent of top_k.
 //
-// A literal id list, not a parameter: see uuidLiteralList. Both parameterized
-// forms make AGE scan the whole Memory label.
+// A literal id list, not a parameter: see uuidLiteralList. The parameterized
+// forms depend on fresh planner statistics to reach the index.
 func (r *AGERepository) IncrementAccessCounts(ctx context.Context, ids []uuid.UUID) error {
 	if len(ids) == 0 {
 		return nil
@@ -1075,16 +1075,33 @@ func (r *AGERepository) getEdgesAround(ctx context.Context, centerID uuid.UUID) 
 //     strings, the assumption fails loudly rather than silently reopening the
 //     injection hole.
 //
-// It exists because AGE cannot use the id property index for `WHERE m.id =
-// wanted` after UNWIND, nor for a parameterized `IN $ids`. Only a literal list
-// plans as an index scan. Measured at 64,070 vertices, ten ids:
+// It exists because the parameterized forms depend on planner statistics to
+// reach the index, and the literal form does not.
+//
+// The original measurement, at 64,070 vertices with ten ids:
 //
 //	UNWIND + WHERE m.id = wanted   24.5ms   (Seq Scan over all 64,070)
 //	WHERE m.id IN $ids             76.2ms   (Seq Scan)
 //	WHERE m.id IN ['literal',...]   0.4ms   (Bitmap Index Scan)
 //
-// Both parameterized forms scan the whole label, so their cost grows with the
-// size of the graph rather than the size of the request.
+// Re-measured later at 101,446 vertices with fresh statistics, the
+// parameterized UNWIND *does* use the index (0.157ms), as does the literal form
+// (0.219ms). So the original reading was not the whole story: what was actually
+// being observed was stale statistics on the id expression index, not an
+// absolute inability of AGE to use it.
+//
+// The literal form is kept because the difference reappears exactly when it
+// hurts. With the statistics removed -- which is the state after a bulk import,
+// a restore, or any window where autoanalyze has not caught up on a
+// fast-growing table -- the two diverge sharply:
+//
+//	UNWIND over $ids              158.7ms   (Seq Scan over all 101,446)
+//	WHERE m.id IN ['literal',...]   0.23ms  (Bitmap Index Scan)
+//
+// A literal list gives the planner a constant it can match against the
+// expression index without consulting statistics at all, so this path degrades
+// gracefully instead of falling off a cliff at the worst moment. That is worth
+// the narrow, type-checked exception to parameterisation documented above.
 func uuidLiteralList(ids []uuid.UUID) (string, error) {
 	var b strings.Builder
 	b.WriteByte('[')
@@ -1131,11 +1148,11 @@ func isPlainUUID(s string) bool {
 // Two details here are both counter-intuitive and both measured, so do not
 // "simplify" either one without re-running EXPLAIN:
 //
-//  1. A literal `IN [...]` list, not a parameter and not UNWIND. Both
-//     parameterized forms make AGE scan the whole Memory label, so their cost
-//     grows with the size of the graph rather than the size of the request.
-//     See uuidLiteralList for the measurements and for why inlining these
-//     particular values is safe.
+//  1. A literal `IN [...]` list, not a parameter and not UNWIND. The
+//     parameterized forms reach the index only while planner statistics are
+//     fresh, and collapse to a full label scan when they are not -- which is
+//     the state after a bulk import or a restore. See uuidLiteralList for the
+//     measurements and for why inlining these particular values is safe.
 //  2. Two directed matches, not one undirected `-[e]-`. AGE cannot drive an
 //     undirected pattern from the edge indexes and degrades to a full label
 //     scan. The union of both directions is exactly the undirected set.
