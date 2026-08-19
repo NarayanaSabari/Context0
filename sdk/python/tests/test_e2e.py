@@ -24,7 +24,7 @@ import uuid
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from context0 import Context0Client  # noqa: E402
+from context0 import Context0Client, SessionAlreadyEndedError  # noqa: E402
 
 ENDPOINT = os.environ.get("CONTEXT0_ENDPOINT", "localhost:50051")
 KEY = os.environ.get("CONTEXT0_API_KEY", "")
@@ -167,6 +167,49 @@ def main():
         check("a bad key is rejected", False, "the request succeeded")
     except RuntimeError as e:
         check("a bad key is rejected", "401" in str(e), str(e))
+
+    section("9. Session lifecycle")
+    # The server rejects a repeat end with 409 Conflict, so a client that
+    # retries after a timeout, or one whose context manager ends a session the
+    # body already ended, must not be handed a spurious failure.
+    sess = client.start_session(agent_id="sdk-test")
+    check("start_session returns an id", bool(sess.id), f"got {sess!r}")
+
+    ended = client.end_session(sess.id)
+    check("end_session succeeds once", bool(ended.id), f"got {ended!r}")
+
+    try:
+        client.end_session(sess.id)
+        check("a repeated end is rejected", False, "the second end succeeded")
+    except SessionAlreadyEndedError as e:
+        check("a repeated end is rejected", "409" in str(e), str(e))
+    except RuntimeError as e:
+        check("a repeated end is rejected", False,
+              f"raised the wrong type; a caller cannot tell a stale retry "
+              f"from a real failure: {e}")
+
+    # The context manager ends the session on exit. If the body already ended
+    # it, the 409 from that cleanup must not surface.
+    try:
+        with client.session(agent_id="sdk-test") as s:
+            client.end_session(s.id)
+        check("the context manager tolerates an already-ended session", True)
+    except Exception as e:
+        check("the context manager tolerates an already-ended session", False,
+              f"exit raised {type(e).__name__}: {e}")
+
+    # And it must never replace the caller's own exception with its cleanup
+    # failure, which is what turns a real bug into an unrelated stack trace.
+    sentinel = ValueError("the failure the caller needs to see")
+    try:
+        with client.session(agent_id="sdk-test") as s:
+            client.end_session(s.id)
+            raise sentinel
+    except ValueError as e:
+        check("the caller's exception survives session cleanup", e is sentinel, str(e))
+    except Exception as e:
+        check("the caller's exception survives session cleanup", False,
+              f"the original ValueError was replaced by {type(e).__name__}: {e}")
 
     print(f"\n=== {PASSED} passed, {FAILED} failed ===")
     for f in FAILURES:

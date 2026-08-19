@@ -91,6 +91,15 @@ _REL_TYPES = {
 }
 
 # Maps each SDK operation to its REST verb and path template.
+class SessionAlreadyEndedError(RuntimeError):
+    """Raised when ending a session that has already ended.
+
+    The server answers a repeat end with 409 Conflict. That is a state
+    conflict rather than a bad request, and a caller retrying after a timeout
+    needs to tell it apart from a real failure.
+    """
+
+
 _ROUTES: dict[str, tuple[str, str]] = {
     "store": ("POST", "/v1/memories"),
     "query": ("GET", "/v1/memories/query"),
@@ -225,12 +234,24 @@ class Context0Client:
 
     @contextmanager
     def session(self, agent_id: str = "python-sdk") -> Generator[Session, None, None]:
-        """Context manager for session lifecycle."""
+        """Context manager for session lifecycle.
+
+        The session is ended on exit. Ending one the caller has already ended
+        is not an error here: the server rejects a repeat end with 409
+        Conflict, and raising that from a ``finally`` block would replace
+        whatever exception the body was already raising. The caller would be
+        shown "session already ended" instead of the failure they need to
+        debug.
+        """
         sess = self.start_session(agent_id)
         try:
             yield sess
         finally:
-            self.end_session(sess.id)
+            try:
+                self.end_session(sess.id)
+            except SessionAlreadyEndedError:
+                # The caller ended it themselves; the desired state holds.
+                pass
 
     def health(self) -> HealthStatus:
         """Get engine health status."""
@@ -273,6 +294,15 @@ class Context0Client:
                 return {}
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8")
+            if e.code == 409:
+                # 409 Conflict is a state conflict, not a malformed request:
+                # the call was well-formed and merely late. Raising it as its
+                # own type lets a caller -- including the session context
+                # manager -- treat "already in the desired state" differently
+                # from a genuine failure.
+                raise SessionAlreadyEndedError(
+                    f"Context0 API error ({e.code}): {body}"
+                ) from e
             raise RuntimeError(f"Context0 API error ({e.code}): {body}") from e
 
 
