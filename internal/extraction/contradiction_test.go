@@ -1,6 +1,7 @@
 package extraction
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -329,5 +330,123 @@ func semanticMemory(content string) model.Memory {
 		ProjectID: "contradiction-test",
 		Type:      model.MemoryTypeSemantic,
 		Content:   content,
+	}
+}
+
+// TestNegationContradictionsAreDetected covers the negation strategy, which
+// was missing half of the contradictions it exists to catch.
+//
+// Strategy 3 fires when two memories have high keyword overlap and exactly one
+// carries a negation. Overlap was measured on the raw text, so the negation's
+// own words counted as differences: "the backend does not use Python" against
+// "the backend uses Python" scored 0.333 Jaccard and fell below the 0.4
+// threshold. The more direct the contradiction, the more words the negated
+// form adds, so the clearest cases were the ones most likely to be missed --
+// the superseded fact stayed live alongside the one that replaced it.
+//
+// Similarity is now measured with negation markers and their auxiliaries
+// removed, since strategy 3 tests for those separately.
+func TestNegationContradictionsAreDetected(t *testing.T) {
+	contradictory := []struct {
+		name   string
+		newMem string
+		oldMem string
+	}{
+		{"negated verb with auxiliary", "The backend does not use Python", "The backend uses Python"},
+		{"negated employment", "Alice does not work at Acme", "Alice works at Acme"},
+		{"negated state", "The service is not healthy", "The service is healthy"},
+		{"no longer", "We no longer deploy on Fridays", "We deploy on Fridays"},
+		{"negated flag", "The cache is not enabled", "The cache is enabled"},
+	}
+
+	for _, tc := range contradictory {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DetectContradictions(
+				semanticMemory(tc.newMem),
+				[]model.Memory{semanticMemory(tc.oldMem)},
+			)
+			if len(got) == 0 {
+				t.Errorf("no contradiction between %q and %q; the superseded "+
+					"fact stays live alongside the one that replaced it",
+					tc.newMem, tc.oldMem)
+			}
+		})
+	}
+}
+
+// TestNegationDoesNotContradictUnrelatedMemories: the overlap threshold is
+// what keeps strategy 3 from firing on any pair where one side happens to
+// contain "not". Removing it would make every negated memory contradict
+// unrelated facts across the whole project.
+func TestNegationDoesNotContradictUnrelatedMemories(t *testing.T) {
+	unrelated := []struct {
+		newMem string
+		oldMem string
+	}{
+		{"The build does not use Bazel", "Coffee is served in the kitchen"},
+		{"Alice never travels to Berlin", "The invoice total is 42 euros"},
+		{"The database is not sharded", "The design review is on Thursday"},
+		{"We don't support Windows", "The office moved to the third floor"},
+	}
+
+	for _, tc := range unrelated {
+		got := DetectContradictions(
+			semanticMemory(tc.newMem),
+			[]model.Memory{semanticMemory(tc.oldMem)},
+		)
+		if len(got) > 0 {
+			t.Errorf("reported a contradiction between unrelated memories %q "+
+				"and %q (reason %q): a negation alone is not a conflict",
+				tc.newMem, tc.oldMem, got[0].Reason)
+		}
+	}
+}
+
+// TestStripNegationWordsKeepsTheTopic: stripping must remove polarity without
+// removing the subject matter, or unrelated memories start looking similar.
+func TestStripNegationWordsKeepsTheTopic(t *testing.T) {
+	got := stripNegationWords("the backend does not use python")
+	for _, want := range []string{"backend", "use", "python"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stripNegationWords dropped %q: %q", want, got)
+		}
+	}
+	for _, unwanted := range []string{"not", "does"} {
+		if strings.Contains(got, " "+unwanted+" ") || strings.HasPrefix(got, unwanted+" ") {
+			t.Errorf("stripNegationWords kept %q: %q", unwanted, got)
+		}
+	}
+
+	// A sentence with no negation must survive untouched.
+	plain := "the backend uses python"
+	if got := stripNegationWords(plain); got != plain {
+		t.Errorf("stripNegationWords(%q) = %q, want it unchanged", plain, got)
+	}
+}
+
+// TestExtractTriplesRejectsEmptyParts: a triple with an empty subject or
+// object would compare equal to every other empty-part triple on subject+verb
+// while differing on the other field, which strategy 2 reads as a value change.
+func TestExtractTriplesRejectsEmptyParts(t *testing.T) {
+	// Text where a verb sits at the very start or end, leaving nothing on one
+	// side to extract.
+	for _, text := range []string{"uses go", "the backend uses", "is", " is "} {
+		for _, tr := range extractTriples(text) {
+			if tr.subject == "" || tr.object == "" {
+				t.Errorf("extractTriples(%q) produced %+v with an empty part; "+
+					"two such triples contradict each other spuriously", text, tr)
+			}
+		}
+	}
+
+	// A pair of memories that each have a dangling verb must not contradict.
+	got := DetectContradictions(
+		semanticMemory("uses go"),
+		[]model.Memory{semanticMemory("uses rust")},
+	)
+	for _, c := range got {
+		if strings.HasPrefix(c.Reason, " ") || strings.Contains(c.Reason, ": :") {
+			t.Errorf("contradiction built from an empty triple part: %q", c.Reason)
+		}
 	}
 }

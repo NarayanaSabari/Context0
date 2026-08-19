@@ -115,7 +115,15 @@ func detectPair(newMem, oldMem model.Memory) *Contradiction {
 	}
 
 	// Strategy 3: High keyword overlap but negation present.
-	overlap := keywordOverlap(newLower, oldLower)
+	//
+	// Similarity is measured with the negation and its auxiliary removed.
+	// Those words are exactly what strategy 3 tests for separately, so leaving
+	// them in the Jaccard set makes a sentence look less similar to its own
+	// negation: "the backend does not use Python" against "the backend uses
+	// Python" scored 0.333 and fell under the threshold. Half of a sample of
+	// plainly contradictory pairs was missed that way, and the more direct the
+	// contradiction, the more words the negated form adds.
+	overlap := keywordOverlap(stripNegationWords(newLower), stripNegationWords(oldLower))
 	if overlap >= 0.4 {
 		negations := []string{"not ", "don't ", "doesn't ", "no longer ", "never ", "isn't ", "aren't ", "wasn't "}
 		newNeg := hasAny(newLower, negations)
@@ -223,6 +231,34 @@ func extractTriples(text string) []triple {
 	}
 
 	return triples
+}
+
+// negationWords are dropped before measuring similarity. They mark a negation
+// rather than a topic, and strategy 3 detects them on its own.
+//
+// The auxiliaries matter as much as the negation itself: English negation
+// usually inserts a verb ("uses" -> "does not use"), so both the auxiliary and
+// the inflection change. Removing the auxiliary lets the stems line up.
+var negationWords = map[string]bool{
+	"not": true, "no": true, "never": true, "longer": true,
+	"don't": true, "doesn't": true, "didn't": true,
+	"isn't": true, "aren't": true, "wasn't": true, "weren't": true,
+	"cannot": true, "can't": true, "won't": true,
+	"does": true, "do": true, "did": true,
+}
+
+// stripNegationWords removes negation markers so two statements can be
+// compared on topic rather than on polarity.
+func stripNegationWords(text string) string {
+	fields := strings.Fields(text)
+	kept := make([]string, 0, len(fields))
+	for _, w := range fields {
+		if negationWords[strings.Trim(w, ".,;:!?\"'()-")] {
+			continue
+		}
+		kept = append(kept, w)
+	}
+	return strings.Join(kept, " ")
 }
 
 // keywordOverlap calculates the Jaccard similarity coefficient between the

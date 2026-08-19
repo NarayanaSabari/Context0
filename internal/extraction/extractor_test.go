@@ -213,3 +213,46 @@ func TestExtract_DoesNotSplitOrdinaryProse(t *testing.T) {
 		}
 	}
 }
+
+// TestExtractIgnoresSpeakerOnlyLines: a line that is nothing but a speaker
+// label carries no content, and storing it would put an empty memory in the
+// graph that matches queries by recency while saying nothing.
+//
+// stripSpeaker returns "" for these. The explicit guard in Extract is
+// belt-and-braces: isNoise("") is also true, so classifyLine rejects them a
+// second time. Mutation testing flagged the guard as unprotected, and it is --
+// removing it changes nothing, which makes it an equivalent mutant rather than
+// a test gap. The invariant is worth pinning either way, because it is the
+// second layer that currently holds it up.
+func TestExtractIgnoresSpeakerOnlyLines(t *testing.T) {
+	// Padded past the 10-character minimum so the length filter is not what
+	// rejects them; the empty-content guard has to be what does.
+	transcript := strings.Join([]string{
+		"user:                    ",
+		"assistant:               ",
+		"Alice:                   ",
+		"user: I prefer dark mode in the editor",
+		"moderator:               ",
+	}, "\n")
+
+	got := Extract(transcript)
+
+	for _, m := range got {
+		if strings.TrimSpace(m.Content) == "" {
+			t.Errorf("extracted an empty memory %+v; it would match queries by "+
+				"recency while carrying no information", m)
+		}
+	}
+
+	// The one real utterance must still be extracted, so the guard cannot be
+	// satisfied by dropping everything.
+	var found bool
+	for _, m := range got {
+		if strings.Contains(strings.ToLower(m.Content), "dark mode") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the real utterance was not extracted; got %d memories: %+v", len(got), got)
+	}
+}
