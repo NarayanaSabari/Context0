@@ -355,7 +355,50 @@ lo=$(grep -c 'context0_request_duration_seconds_bucket{.*le="0.125"' <<<"$mx" ||
 check "latency buckets resolve the range this service operates in" "present" \
   "$([[ "$lo" -gt 0 ]] && echo present || echo missing)"
 
-section "14. Multi-replica behaviour (only when replicas > 1)"
+section "14. Session lifecycle accounting"
+# context0_active_sessions is a gauge decremented by EndSession. EndSession
+# used to accept a repeat end, so a retried request -- a client timeout, an
+# at-least-once queue -- decremented it again and drove the gauge negative:
+# one start plus three ends left it at -2. Anything alerting or scaling on it
+# was then reading a number that could not occur.
+key=$(kubectl get secret -n "$NS" context0-api-keys -o jsonpath='{.data}' \
+  | python3 -c "import sys,json,base64; d=json.load(sys.stdin); print(base64.b64decode(list(d.values())[0]).decode().split(',')[0])")
+
+gauge() {
+  kubectl exec -n "$NS" "$(api_pod)" -- wget -q -O- http://localhost:8080/metrics 2>/dev/null \
+    | awk '/^context0_active_sessions /{print $2; exit}'
+}
+
+before_gauge=$(gauge)
+sid=$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c \
+  "wget -q -O- --header='X-API-Key: $key' --header='Content-Type: application/json' \
+   --post-data='{\"project_id\":\"verify-session\",\"agent_id\":\"verify\"}' \
+   http://localhost:8080/v1/sessions 2>/dev/null" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['session']['id'])" 2>/dev/null)
+
+check "a session can be started" "started" \
+  "$([[ -n "$sid" ]] && echo started || echo failed)"
+
+end_status() {
+  kubectl exec -n "$NS" "$(api_pod)" -- sh -c \
+    "wget -q -S -O /dev/null --header='X-API-Key: $key' --header='Content-Type: application/json' \
+     --post-data='{}' 'http://localhost:8080/v1/sessions/$1/end' 2>&1" 2>/dev/null \
+    | awk '/HTTP\//{print $2; exit}'
+}
+
+check "the first end succeeds" "200" "$(end_status "$sid")"
+# 409 Conflict, not 400: the request is well-formed and merely late, and a
+# client cannot tell a retry-to-ignore from a bug it must fix if both are 400.
+check "a repeated end is rejected as a conflict" "409" "$(end_status "$sid")"
+check "a third end is still rejected" "409" "$(end_status "$sid")"
+check "ending an unknown session is not found" "404" \
+  "$(end_status 6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8)"
+
+# The invariant that actually matters: after one start and three ends the
+# gauge is exactly where it began.
+check "the active-session gauge returns to its starting value" "$before_gauge" "$(gauge)"
+
+section "15. Multi-replica behaviour (only when replicas > 1)"
 replicas=$(kubectl get deploy context0-api -n "$NS" -o jsonpath='{.spec.replicas}')
 if [[ "${replicas:-1}" -gt 1 ]]; then
   check "a PodDisruptionBudget exists" "context0-api" \
@@ -390,7 +433,7 @@ else
   printf '  skipped: replicas=%s (PDB and topology spread are gated on >1)\n' "${replicas:-1}"
 fi
 
-section "15. Recoverability"
+section "16. Recoverability"
 # /dev/shm defaults to 64Mi in Kubernetes, which is not enough to build the
 # pgvector HNSW index in one allocation: at 94k embeddings the build asked for
 # 131MB and failed. The live database never hits this, because its index grew a
