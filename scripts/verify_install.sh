@@ -60,6 +60,10 @@ section() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 cleanup() {
   [[ -n "${KEEP:-}" ]] && { echo "KEEP set; leaving namespaces in place"; return; }
+  # Guard the expansion: bash 3.2 treats "${arr[@]}" on an empty array as an
+  # unbound variable under `set -u`, so an early exit (a missing image, say)
+  # would fail inside the trap and bury the real error message.
+  [[ "${#NAMESPACES[@]}" -eq 0 ]] && return
   for ns in "${NAMESPACES[@]}"; do
     helm uninstall "$(basename "$ns")" -n "$ns" >/dev/null 2>&1
     kubectl delete ns "$ns" --wait=false >/dev/null 2>&1
@@ -69,14 +73,40 @@ NAMESPACES=()
 trap cleanup EXIT
 
 # The images the chart references must exist in the cluster, or every install
-# fails on ImagePullBackOff for reasons that have nothing to do with the docs.
+# waits out its timeout on ImagePullBackOff for reasons that have nothing to do
+# with the docs. Overridable because CI tags images differently from local dev,
+# and a hardcoded tag here means the script hangs rather than fails.
+API_REPO="${API_IMAGE_REPO:-context0-api}"
+API_TAG="${API_IMAGE_TAG:-dev}"
+PG_REPO="${PG_IMAGE_REPO:-context0/postgres-age-vector}"
+PG_TAG="${PG_IMAGE_TAG:-dev}"
+
 IMAGE_ARGS=(
-  --set api.image.repository=context0-api
-  --set api.image.tag=dev
+  --set "api.image.repository=$API_REPO"
+  --set "api.image.tag=$API_TAG"
   --set api.image.pullPolicy=IfNotPresent
+  --set "postgres.image.repository=$PG_REPO"
+  --set "postgres.image.tag=$PG_TAG"
+  --set postgres.image.pullPolicy=IfNotPresent
   --set web.enabled=false
   --set postgres.storage=1Gi
 )
+
+# Fail fast rather than waiting out five minutes of ImagePullBackOff per
+# install: a missing image is a setup error, not a documentation defect, and it
+# should say so immediately.
+for img in "$API_REPO:$API_TAG" "$PG_REPO:$PG_TAG"; do
+  if ! docker image inspect "$img" >/dev/null 2>&1; then
+    echo "error: image $img not found locally." >&2
+    echo "       Build it first, or set API_IMAGE_TAG / PG_IMAGE_TAG." >&2
+    exit 1
+  fi
+done
+
+# Shorter than the 5m default: these installs are two pods on a local cluster
+# with images already present. Anything slower is stuck, and waiting longer
+# only delays the report.
+WAIT_TIMEOUT="${WAIT_TIMEOUT:-3m}"
 
 section "1. The chart refuses to install without credentials"
 # The guard that started all this. If it regresses, every install below would
@@ -96,7 +126,7 @@ kubectl delete ns "$ns" --ignore-not-found --wait=true >/dev/null 2>&1
 out=$(helm install context0 ./charts/context0 -n "$ns" --create-namespace \
   --set postgres.password="$(openssl rand -base64 24 | tr -d '/+=')" \
   --set auth.apiKeys="$key" \
-  "${IMAGE_ARGS[@]}" --wait --timeout 5m 2>&1)
+  "${IMAGE_ARGS[@]}" --wait --timeout "$WAIT_TIMEOUT" 2>&1)
 check "the documented helm install succeeds" "STATUS: deployed" "$out"
 
 # Rendering is not working. A chart that installs and then crash-loops has
@@ -125,7 +155,7 @@ kubectl create secret generic my-api-keys -n "$ns" \
 out=$(helm install context0 ./charts/context0 -n "$ns" \
   --set postgres.existingSecret=my-postgres-secret \
   --set auth.existingSecret=my-api-keys \
-  "${IMAGE_ARGS[@]}" --wait --timeout 5m 2>&1)
+  "${IMAGE_ARGS[@]}" --wait --timeout "$WAIT_TIMEOUT" 2>&1)
 check "the existingSecret install succeeds" "STATUS: deployed" "$out"
 check "the API pod becomes ready with operator-managed Secrets" "true" \
   "$(kubectl get pod -n "$ns" -l app=context0-api \
@@ -169,7 +199,7 @@ check "make deploy passes credentials to helm" "auth.apiKeys" "$recipe"
 check "make deploy passes a database password to helm" "postgres.password" "$recipe"
 
 out=$(eval "${recipe//-n context0 /-n $ns }" \
-  "${IMAGE_ARGS[*]}" --wait --timeout 5m 2>&1 || true)
+  "${IMAGE_ARGS[*]}" --wait --timeout "$WAIT_TIMEOUT" 2>&1 || true)
 check "make deploy's install succeeds from scratch" "STATUS: deployed" "$out"
 check "the generated key works against the deployment" "make deploy verification" \
   "$(kubectl exec -n "$ns" deploy/context0-api -- sh -c \

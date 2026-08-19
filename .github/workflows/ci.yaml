@@ -203,10 +203,13 @@ jobs:
       # commits: the unit tests, the 64 cluster checks and the soak all start
       # from a deployment that is already up.
       - name: Verify documented install paths
-        run: |
-          docker tag context0/context0:ci context0-api:dev
-          kind load docker-image context0-api:dev --name context0-e2e
-          scripts/verify_install.sh
+        env:
+          # CI tags images :ci; the script defaults to the local dev tags.
+          API_IMAGE_REPO: context0/context0
+          API_IMAGE_TAG: ci
+          PG_IMAGE_REPO: context0/postgres-age-vector
+          PG_IMAGE_TAG: ci
+        run: scripts/verify_install.sh
 
       - name: Deploy
         run: |
