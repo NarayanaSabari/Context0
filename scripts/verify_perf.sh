@@ -288,5 +288,10 @@ else
 fi
 
 printf '\n\033[1m%s\033[0m\n' "=== $PASS passed, $FAIL failed ==="
+if [[ "$LATENCY_MEANINGFUL" -eq 0 ]]; then
+  printf '\033[33mLatency was measured but not enforced at %s vertices. A pass here means\n' "$VERTICES"
+  printf 'the structural guarantees hold, NOT that the service is fast: run this\n'
+  printf 'against a loaded cluster (>= %s vertices) for that.\033[0m\n' "$MIN_VERTICES_FOR_LATENCY"
+fi
 for f in "${FAILURES[@]:-}"; do [[ -n "$f" ]] && printf '  failed: %s\n' "$f"; done
 exit $((FAIL > 0 ? 1 : 0))

@@ -237,14 +237,29 @@ jobs:
           sleep 5
           curl -sf http://localhost:8080/v1/health
 
-      # Structural performance guarantees: that the indexes can serve the
-      # queries, that the rate limit and buckets are configured usefully. The
-      # latency thresholds report but do not enforce here, because a CI database
-      # holds a few rows and everything is fast at that size -- a pass would be
-      # evidence of nothing. Run this against a loaded cluster for the timings.
+      # Seeds enough data for the latency thresholds to mean something. Without
+      # this the CI database holds a handful of rows, everything is fast
+      # regardless, and a green run would say nothing about performance -- which
+      # is exactly the kind of check that looks like coverage and is not.
+      - name: Seed data for performance measurement
+        env:
+          CONTEXT0_API_KEY: ${{ env.E2E_API_KEY }}
+        run: |
+          kubectl -n context0 port-forward svc/context0-api 8080:8080 &
+          sleep 5
+          python3 scripts/soak.py --url http://localhost:8080 \
+            --key "$CONTEXT0_API_KEY" --workers 4 --minutes 2 || true
+
+      # Structural guarantees (index capability, rate limit, buckets, pool
+      # metrics) plus the latency thresholds, which enforce once the seeding
+      # above has put enough rows in the database.
       - name: Verify performance invariants
         env:
           CONTEXT0_API_KEY: ${{ env.E2E_API_KEY }}
+          # The seed run is bounded by CI time, so it will not reach the volume
+          # a real deployment has. Lowered to match what two minutes produces,
+          # while still being far more than "a handful of rows".
+          MIN_VERTICES_FOR_LATENCY: "2000"
         run: scripts/verify_perf.sh
 
       - name: Run E2E tests
