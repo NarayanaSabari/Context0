@@ -263,6 +263,35 @@ else
   printf '        with a fresh plan.\n'
 fi
 
+# Dead tuples are the other thing that moves the timings above, and unlike
+# statistics lag it is invisible in the query plan.
+#
+# HNSW keeps index entries for deleted rows until VACUUM removes them, and a
+# scan spends its budget walking them. Measured on this cluster: the scoped
+# query above read 94.0ms with 28,500 dead tuples on memory_embeddings and
+# 22,442 on the Memory vertex table, and 55.6ms after VACUUM ANALYZE on the
+# same data -- the graph had not changed at all.
+#
+# Reported rather than failed, for the same reason as the statistics ratio: a
+# database that has just absorbed a burst of writes and deletes is in a normal
+# state, not a broken one. But a reader comparing two runs of this script needs
+# to know which regime each was taken in, or a routine bloat difference reads
+# as a performance regression in the service.
+printf '\n\033[1m5b. Table bloat at measurement time\033[0m\n'
+for tbl in "memory_embeddings" "Memory"; do
+  read -r live dead <<<"$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc \
+    "SELECT greatest(n_live_tup,1), n_dead_tup FROM pg_stat_user_tables WHERE relname='$tbl';" 2>/dev/null \
+    | tail -1 | tr '|' ' ')"
+  pct=$(awk -v d="${dead:-0}" -v l="${live:-1}" 'BEGIN{printf "%.1f", 100*d/l}')
+  printf '  observed: %s has %s dead tuples against %s live (%s%%)\n' \
+    "$tbl" "${dead:-?}" "${live:-?}" "$pct"
+  if awk -v p="$pct" 'BEGIN{exit !(p > 10)}'; then
+    printf '  \033[33mINFO\033[0m  %s%% dead: the timings above are inflated by index entries for\n' "$pct"
+    printf '        rows that no longer exist. VACUUM ANALYZE before comparing this run\n'
+    printf '        against another.\n'
+  fi
+done
+
 section "6. Rate limit permits real throughput (e317412)"
 # The default was 100/min (1.6/s), which had never run because rate limiting
 # only engages once a key is configured. Enabling auth would have throttled
