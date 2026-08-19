@@ -332,6 +332,20 @@ make kind-down
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full development workflow, branching strategy, and release process.
 
+### Verifying a change
+
+Beyond `go test`, the repository carries checks that run against a deployed
+cluster rather than a mock:
+
+| Script | What it checks |
+|---|---|
+| `scripts/verify_k8s.sh` | Checks a live deployment (80 at present): probes, security contexts, credentials, NetworkPolicy, PDB evictions, metrics, recoverability, session accounting |
+| `scripts/verify_install.sh` | Installs from scratch into a fresh cluster, as a new user would |
+| `scripts/verify_perf.sh` | Each performance claim printed next to its observed value, with the statistics and bloat regime it was measured in |
+| `scripts/backup.sh` | Dump, restore, and verify -- the restore path is the one that silently skipped the HNSW index |
+| `scripts/soak.py` | Long-running invariant checks under continuous load |
+| `scripts/mutate.py` | Whether the tests fail when the code is wrong; see [docs/mutation-testing.md](docs/mutation-testing.md) |
+
 ## Contributing
 
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
