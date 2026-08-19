@@ -78,15 +78,28 @@ func main() {
 	}
 
 	// Execute the consolidation pipeline: merge, decay, prune.
+	//
+	// A degraded run -- one where most items failed -- returns an error, so the
+	// process exits non-zero and the CronJob is marked Failed. Before this, a
+	// run against a database refusing connections logged "consolidation
+	// complete" and exited 0, so nothing anywhere indicated that the
+	// maintenance had not happened.
 	result, err := service.RunConsolidation(ctx, repo, consolCfg)
 	if err != nil {
-		fatal("consolidation failed", err)
+		slog.Error("consolidation failed",
+			slog.Int("merged", result.EdgesMerged),
+			slog.Int("decayed", result.MemoriesDecayed),
+			slog.Int("pruned", result.MemoriesPruned),
+			slog.Int("failed", result.Failures()),
+			slog.Any("error", err))
+		os.Exit(1)
 	}
 
 	slog.Info("consolidation complete",
 		slog.Int("merged", result.EdgesMerged),
 		slog.Int("decayed", result.MemoriesDecayed),
-		slog.Int("pruned", result.MemoriesPruned))
+		slog.Int("pruned", result.MemoriesPruned),
+		slog.Int("failed", result.Failures()))
 }
 
 // fatal logs a structured error and exits non-zero. See the equivalent in
