@@ -1528,3 +1528,139 @@ func TestUUIDLiteralListRenders(t *testing.T) {
 		t.Errorf("uuidLiteralList(nil) = %q, want []", empty)
 	}
 }
+
+// TestSearchByVector_ScopedSearchIsNotLostAmongProjects covers a recall
+// failure that only appears once a deployment holds many projects.
+//
+// pgvector applies a WHERE filter to whatever the HNSW index returns, so a
+// scoped search competes with every other project's vectors for the scan
+// budget. Reproduced deterministically at 40,000 embeddings across 500
+// projects: a two-row project returned one row, and the one it returned was the
+// worse match. Raising hnsw.ef_search to 1000 and the scan budget tenfold did
+// not help; a sequential scan returned both, which is what showed the loss was
+// the index rather than the data.
+//
+// The fix is an index on project_id, letting the planner filter first. This
+// test seeds enough projects to make the failure reachable -- fewer, and it
+// passes for the wrong reason.
+func TestSearchByVector_ScopedSearchIsNotLostAmongProjects(t *testing.T) {
+	repo, ctx := testRepo(t)
+
+	// Background: many projects, many vectors, none of them the answer.
+	const backgroundProjects = 60
+	const perProject = 40
+	for p := 0; p < backgroundProjects; p++ {
+		proj := newProjectID(t)
+		for i := 0; i < perProject; i++ {
+			mem := newMemory(proj, fmt.Sprintf("noise %d-%d", p, i))
+			if err := repo.CreateMemory(ctx, mem); err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			t.Cleanup(func() { _ = repo.DeleteMemory(context.Background(), mem.ID) })
+			vec := make([]float32, testEmbeddingDim)
+			// Spread the noise across the space, close to the query direction
+			// so it genuinely competes for the scan budget.
+			vec[0] = float32(i%10) / 10.0
+			vec[1+(i%(testEmbeddingDim-1))] = 1
+			if err := repo.StoreEmbedding(ctx, mem.ID, proj, vec); err != nil {
+				t.Fatalf("store embedding: %v", err)
+			}
+		}
+	}
+
+	// The needle: a project with exactly two memories.
+	project := newProjectID(t)
+	target := storeMemory(t, repo, ctx, newMemory(project, "the one that matches"))
+	other := storeMemory(t, repo, ctx, newMemory(project, "the one that does not"))
+
+	targetVec := make([]float32, testEmbeddingDim)
+	targetVec[0] = 1
+	otherVec := make([]float32, testEmbeddingDim)
+	otherVec[testEmbeddingDim-1] = 1
+	if err := repo.StoreEmbedding(ctx, target.ID, project, targetVec); err != nil {
+		t.Fatalf("store embedding: %v", err)
+	}
+	if err := repo.StoreEmbedding(ctx, other.ID, project, otherVec); err != nil {
+		t.Fatalf("store embedding: %v", err)
+	}
+
+	results, err := repo.SearchByVector(ctx, targetVec, project, 2)
+	if err != nil {
+		t.Fatalf("vector search: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("scoped search returned %d of 2 memories in its project, with "+
+			"%d background projects present: the filter is being applied after "+
+			"the index search instead of before it", len(results), backgroundProjects)
+	}
+	if results[0].Memory.ID != target.ID {
+		t.Errorf("nearest neighbour = %q, want %q", results[0].Memory.Content, target.Content)
+	}
+	if results[0].Score <= 0 {
+		t.Errorf("top hit similarity = %f, want > 0", results[0].Score)
+	}
+}
+
+// TestSearchByVector_SurvivesIndexChurn covers a recall failure that only
+// appears after deletes.
+//
+// An HNSW index keeps entries for deleted rows until VACUUM removes them, and a
+// scan stops once it has examined hnsw.max_scan_tuples. On a table with many
+// dead entries the budget is spent reaching them, so live rows that plainly
+// match are never returned: a two-row project returned one row, with the wrong
+// one first, intermittently -- 6 failures in 20 runs against a churned table,
+// and zero immediately after a VACUUM.
+//
+// This is not a synthetic worry. Deletes come from consolidation pruning and
+// from DeleteMemory, so churn is the normal state of a long-lived deployment.
+func TestSearchByVector_SurvivesIndexChurn(t *testing.T) {
+	repo, ctx := testRepo(t)
+
+	// Create and delete enough embeddings to leave dead entries behind.
+	churn := newProjectID(t)
+	for i := 0; i < 200; i++ {
+		mem := newMemory(churn, fmt.Sprintf("churn %d", i))
+		if err := repo.CreateMemory(ctx, mem); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		vec := make([]float32, testEmbeddingDim)
+		vec[i%testEmbeddingDim] = 1
+		if err := repo.StoreEmbedding(ctx, mem.ID, churn, vec); err != nil {
+			t.Fatalf("store embedding: %v", err)
+		}
+		if err := repo.DeleteMemory(ctx, mem.ID); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+	}
+
+	// Now the real data, in its own project.
+	project := newProjectID(t)
+	target := storeMemory(t, repo, ctx, newMemory(project, "the one that matches"))
+	other := storeMemory(t, repo, ctx, newMemory(project, "the one that does not"))
+
+	targetVec := make([]float32, testEmbeddingDim)
+	targetVec[0] = 1
+	otherVec := make([]float32, testEmbeddingDim)
+	otherVec[testEmbeddingDim-1] = 1
+	if err := repo.StoreEmbedding(ctx, target.ID, project, targetVec); err != nil {
+		t.Fatalf("store embedding: %v", err)
+	}
+	if err := repo.StoreEmbedding(ctx, other.ID, project, otherVec); err != nil {
+		t.Fatalf("store embedding: %v", err)
+	}
+
+	results, err := repo.SearchByVector(ctx, targetVec, project, 2)
+	if err != nil {
+		t.Fatalf("vector search: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("search returned %d of 2 matching memories after index churn; "+
+			"dead HNSW entries exhausted the scan budget", len(results))
+	}
+	if results[0].Memory.ID != target.ID {
+		t.Errorf("nearest neighbour = %q, want %q", results[0].Memory.Content, target.Content)
+	}
+	if results[0].Score <= 0 {
+		t.Errorf("top hit similarity = %f, want > 0", results[0].Score)
+	}
+}

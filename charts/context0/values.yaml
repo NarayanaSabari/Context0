@@ -85,8 +85,8 @@ postgres:
   # likely caching and makes index scans look as cheap as they really are.
   # Raise all four together with the resource limits.
   tuning:
-    sharedBuffers: 256MB
-    effectiveCacheSize: 768MB
+    sharedBuffers: 512MB
+    effectiveCacheSize: 1536MB
     workMem: 16MB
     # Used for index builds, including the pgvector HNSW index, which is far
     # faster when the graph fits in this.
@@ -108,12 +108,22 @@ postgres:
   # is used when it happens to be free. Set postgres.resources.limits.cpu only
   # where a hard cap is required for quota or noisy-neighbour policy, and size
   # it well above 1.5 cores if so.
+  # 2Gi, not 1Gi. The budget at 1Gi did not add up once /dev/shm was sized for
+  # HNSW index builds: 256Mi of shm (medium: Memory counts against the pod
+  # limit) plus 320MB shared_buffers plus work_mem per connection left too
+  # little headroom, and a six-worker soak OOM-killed Postgres six times.
+  #
+  # Sized from what the parts actually claim rather than a round number:
+  #   /dev/shm            256 MB   (index builds)
+  #   shared_buffers      512 MB   (~25% of the limit)
+  #   work_mem x 10       160 MB   (per sort, per connection)
+  #   effective headroom  ~1 GB    (query execution, page cache, WAL buffers)
   resources:
     requests:
-      memory: "512Mi"
+      memory: "1Gi"
       cpu: "1500m"
     limits:
-      memory: "1Gi"
+      memory: "2Gi"
 
 # Consolidation CronJob
 consolidation:

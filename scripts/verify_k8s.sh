@@ -103,11 +103,42 @@ check "rollout never drops below the replica count" "0" \
   "$(jq -r '.spec.strategy.rollingUpdate.maxUnavailable' <<<"$spec")"
 
 section "6. Postgres tuning applied to the running server"
-for setting in shared_buffers:256MB work_mem:16MB maintenance_work_mem:128MB effective_cache_size:768MB; do
-  name="${setting%%:*}"; want="${setting##*:}"
-  check "$name" "$want" \
+# Expected values are read from the chart rather than repeated here. Hardcoding
+# them duplicated the chart's numbers, and when the memory limit was raised to
+# stop Postgres being OOM-killed, this section failed on the *correct* new
+# values -- a check reporting a fix as a regression.
+#
+# What matters is that what the chart asks for is what the server is running,
+# not what any particular number is.
+for name in shared_buffers work_mem maintenance_work_mem effective_cache_size; do
+  # sharedBuffers, workMem, maintenanceWorkMem, effectiveCacheSize
+  key=$(awk -v n="$name" 'BEGIN{
+    split(n, p, "_"); out=p[1];
+    for (i=2; i<=length(p); i++) out = out toupper(substr(p[i],1,1)) substr(p[i],2);
+    print out
+  }')
+  want=$(awk -v k="$key:" '$1==k {print $2; exit}' charts/context0/values.yaml)
+  [[ -n "$want" ]] || { printf '  \033[33mSKIP\033[0m  %s not found in values.yaml\n' "$key"; continue; }
+  check "$name matches the chart ($key: $want)" "$want" \
     "$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc "SHOW $name;" 2>/dev/null | tr -d '[:space:]')"
 done
+
+# The reason the limit was raised: /dev/shm is medium: Memory, so it counts
+# against the pod limit alongside shared_buffers and per-connection work_mem.
+# At 1Gi those did not fit and a six-worker soak OOM-killed Postgres six times.
+mem_limit=$(kubectl get sts postgres-age -n "$NS" -o jsonpath='{.spec.template.spec.containers[0].resources.limits.memory}' 2>/dev/null)
+shm_mb=$(kubectl exec -n "$NS" postgres-age-0 -- sh -c "df -m /dev/shm | awk 'NR==2{print \$2}'" 2>/dev/null)
+sb_mb=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc \
+  "SELECT setting::bigint*8/1024 FROM pg_settings WHERE name='shared_buffers';" 2>/dev/null | tr -d '[:space:]')
+limit_mb=$(awk -v l="$mem_limit" 'BEGIN{ gsub(/Gi/,"",l); if (l ~ /Mi/) { gsub(/Mi/,"",l); print l } else { print l*1024 } }')
+printf '  observed: limit %s, /dev/shm %sMi, shared_buffers %sMB\n' "$mem_limit" "${shm_mb:-?}" "${sb_mb:-?}"
+check "shm + shared_buffers leave room under the memory limit" "ok" \
+  "$(awk -v s="${shm_mb:-0}" -v b="${sb_mb:-0}" -v l="${limit_mb:-1024}" \
+     'BEGIN{ print ((s+b) < l*0.55) ? "ok" : "too tight" }')"
+
+check "postgres has not been OOM-killed" "0" \
+  "$(kubectl get pod postgres-age-0 -n "$NS" \
+     -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null)"
 
 section "7. Performance work reaches the cluster, not just the laptop"
 check "property indexes created automatically on first boot" "memory_id_idx" \

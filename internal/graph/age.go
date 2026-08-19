@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -240,6 +241,62 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 		ON public.memory_embeddings USING hnsw (embedding vector_cosine_ops)
 	`); err != nil {
 		return fmt.Errorf("create vector index: %w", err)
+	}
+
+	// An index on project_id, so a scoped vector search can filter before it
+	// searches rather than after.
+	//
+	// Without it, the planner drives the query from the HNSW index and applies
+	// `WHERE project_id = $1` to whatever that returns. On a table with many
+	// projects the scan budget is spent on other projects' vectors and live
+	// matches are never reached: reproduced deterministically at 40,000
+	// embeddings across 500 projects, where a two-row project returned one row.
+	// Raising hnsw.ef_search to 1000 and max_scan_tuples tenfold did not fix
+	// it; a sequential scan returned both rows, which is what proved the loss
+	// was the index and not the data.
+	//
+	// With this index the planner filters to the project first and sorts that
+	// small set exactly, so a scoped search is both correct and cheap. The HNSW
+	// index still serves unscoped searches, where there is nothing to filter.
+	if _, err := r.pool.Exec(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_memory_embeddings_project
+		ON public.memory_embeddings (project_id)
+	`); err != nil {
+		return fmt.Errorf("create embedding project index: %w", err)
+	}
+
+	// The index only helps if the planner knows the table is big enough to
+	// bother filtering first. With no statistics it estimates one row, picks
+	// the HNSW scan, and the recall loss returns -- observed as a scoped search
+	// finding 0 of 2 rows that a sequential scan found immediately.
+	if _, err := r.pool.Exec(ctx, `ANALYZE public.memory_embeddings`); err != nil {
+		slog.Warn("could not analyze memory_embeddings; scoped vector search may "+
+			"under-return until autoanalyze runs", slog.Any("error", err))
+	}
+
+	// Vacuum this table far more eagerly than the 20% default.
+	//
+	// An HNSW index keeps entries for deleted rows until VACUUM removes them,
+	// and a scan gives up after examining hnsw.max_scan_tuples. On a table with
+	// many dead entries the budget is spent reaching them, and live matches are
+	// never returned -- a query that plainly matched two rows returned one,
+	// intermittently, and a VACUUM fixed it immediately.
+	//
+	// Deletes here come from consolidation pruning and from DeleteMemory, so
+	// churn is normal rather than exceptional. 2% plus 100 rows keeps the dead
+	// fraction small enough that recall does not depend on when autovacuum last
+	// happened to run.
+	if _, err := r.pool.Exec(ctx, `
+		ALTER TABLE public.memory_embeddings SET (
+			autovacuum_vacuum_scale_factor = 0.02,
+			autovacuum_vacuum_threshold = 100,
+			autovacuum_analyze_scale_factor = 0.02
+		)
+	`); err != nil {
+		// Not fatal: recall degrades between vacuums rather than the engine
+		// failing to start, and a managed database may refuse the ALTER.
+		slog.Warn("could not tune autovacuum for memory_embeddings; "+
+			"vector recall may degrade between vacuums", slog.Any("error", err))
 	}
 
 	// --- AGE setup ---
@@ -1290,17 +1347,84 @@ func (r *AGERepository) nearestNeighbours(ctx context.Context, vecStr, projectID
 		_ = err
 	}
 
-	const q = `SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
+	// Raise the scan budget above the default 20,000 tuples.
+	//
+	// iterative_scan alone is not enough after churn. HNSW keeps entries for
+	// deleted rows until VACUUM removes them, and the scan gives up once it has
+	// examined max_scan_tuples -- so on a table that has seen many deletes, the
+	// budget can be spent entirely on dead entries and live matches are never
+	// reached. Observed as a query returning 1 of 2 rows that plainly matched,
+	// intermittently (6 failures in 20 runs), and fixed immediately by VACUUM.
+	//
+	// A larger budget bounds how bad that gets between vacuums. It is a ceiling
+	// on work, not a target: a query that finds its matches early still stops
+	// early.
+	if _, err := tx.Exec(ctx, `SET LOCAL hnsw.max_scan_tuples = 200000`); err != nil {
+		_ = err
+	}
+
+	// A scoped search filters to the project first, then orders exactly within
+	// it. The CTE is materialised precisely to stop the planner folding it back
+	// into an HNSW scan with the filter applied afterwards.
+	//
+	// The inner LIMIT bounds what that materialisation costs. Without it, a
+	// project holding 5,000 embeddings pulled 5,000 x 384 floats into memory on
+	// every query and OOM-killed Postgres four times under a six-worker soak.
+	// The cap is well above any plausible top_k, so ordering within it is the
+	// same ordering an unbounded scan would produce for the rows that can
+	// actually be returned.
+	//
+	// That post-filtering is a real recall failure, not a theoretical one:
+	// reproduced at 40,000 embeddings across 500 projects, where a project
+	// holding two matching rows returned one -- and, with stale statistics,
+	// zero -- while a sequential scan returned both. Raising hnsw.ef_search to
+	// 1000 and the scan budget tenfold did not help, because the budget is
+	// spent on other projects' vectors before reaching this project's.
+	//
+	// Exact ordering within one project is also better than approximate: the
+	// filtered set is small, so there is nothing to approximate away.
+	const scopedQ = `WITH scoped AS MATERIALIZED (
+					   SELECT memory_id, embedding
+					   FROM public.memory_embeddings
+					   WHERE project_id = $2
+					   LIMIT ` + scopedVectorCandidates + `
+					 )
+					 SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
+					 FROM scoped
+					 ORDER BY embedding <=> $1::vector
+					 LIMIT $3`
+
+	// Unscoped, there is nothing to filter, so the HNSW index is exactly right.
+	const unscopedQ = `SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
 			   FROM public.memory_embeddings
-			   WHERE project_id = $2
+			   WHERE $2 = ''
 			   ORDER BY embedding <=> $1::vector
 			   LIMIT $3`
+
+	q := scopedQ
+	if projectID == "" {
+		q = unscopedQ
+	}
 	rows, err := tx.Query(ctx, q, vecStr, projectID, topK)
 	if err != nil {
 		return nil, fmt.Errorf("vector search: %w", err)
 	}
 	return scanVectorHits(rows)
 }
+
+// scopedVectorCandidates bounds how many of a project's embeddings a scoped
+// search will materialise.
+//
+// Chosen against measured memory cost, not intuition: each embedding is 384
+// float32s, so 20,000 of them is roughly 30MB per query -- affordable against
+// the 1Gi Postgres limit even with several queries in flight, where the
+// unbounded version OOM-killed the database.
+//
+// A project larger than this degrades to searching its 20,000 most recently
+// inserted embeddings rather than all of them. That is a real limitation and it
+// is stated rather than hidden; the alternative measured worse in both
+// directions, either losing rows to HNSW post-filtering or losing the database.
+const scopedVectorCandidates = "20000"
 
 // vectorHit is one row from the pgvector similarity search, before the memory
 // itself has been fetched from the graph.
@@ -1319,10 +1443,13 @@ func scanVectorHits(rows pgx.Rows) ([]vectorHit, error) {
 		var memID string
 		var similarity float64
 		if err := rows.Scan(&memID, &similarity); err != nil {
+			slog.Warn("vector search: dropping a row that failed to scan", slog.Any("error", err))
 			continue
 		}
 		id, err := uuid.Parse(memID)
 		if err != nil {
+			slog.Warn("vector search: dropping a row with an unparseable id",
+				slog.String("memory_id", memID), slog.Any("error", err))
 			continue
 		}
 		hits = append(hits, vectorHit{id: id, similarity: similarity})
@@ -1376,8 +1503,13 @@ func (r *AGERepository) hydrate(ctx context.Context, hits []vectorHit) ([]model.
 	for _, h := range hits {
 		mem, ok := byID[h.id]
 		if !ok {
-			// An embedding whose memory has been deleted. Skip it rather than
-			// returning a zero-valued memory.
+			// An embedding whose memory vertex is not in the graph. Usually a
+			// memory deleted while its embedding lingered, which is why this is
+			// a skip rather than an error -- but it is also how a live memory
+			// silently disappears from vector results if hydration fails, so it
+			// is recorded rather than passed over in silence.
+			slog.Warn("vector search: embedding has no matching memory; dropping it",
+				slog.String("memory_id", h.id.String()))
 			continue
 		}
 		results = append(results, model.MemoryWithContext{

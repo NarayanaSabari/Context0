@@ -89,6 +89,18 @@ jobs:
         with:
           go-version: "1.26"
 
+      # docker-compose requires credentials to be supplied rather than shipping
+      # defaults, so generate them per run. A fixed value in a public workflow
+      # is a published credential even when it only reaches an ephemeral runner.
+      - name: Generate compose credentials
+        run: |
+          {
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "CONTEXT0_API_KEYS=ctx0_$(openssl rand -hex 6)_$(openssl rand -hex 24)"
+          } > .env
+          # Exported for the test DSN below, which must match.
+          grep POSTGRES_PASSWORD .env >> "$GITHUB_ENV"
+
       - name: Start PostgreSQL + AGE + pgvector
         run: |
           docker compose up -d postgres
@@ -102,7 +114,7 @@ jobs:
 
       - name: Run graph integration tests
         env:
-          CONTEXT0_TEST_DATABASE_URL: postgres://context0:context0@localhost:5432/context0?sslmode=disable
+          CONTEXT0_TEST_DATABASE_URL: postgres://context0:${{ env.POSTGRES_PASSWORD }}@localhost:5432/context0?sslmode=disable
         run: go test ./internal/graph/... -race -count=1 -v
 
       - name: Stop services
