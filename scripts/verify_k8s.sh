@@ -140,6 +140,15 @@ check "postgres has not been OOM-killed" "0" \
   "$(kubectl get pod postgres-age-0 -n "$NS" \
      -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null)"
 
+# The cgroup's own counter, not the restart count: restarts only show a kill
+# that already happened, while this shows whether the limit was ever reached.
+# Reading total memory.current instead would be misleading -- most of it is
+# reclaimable page cache, and after a 15-minute soak it sat at 1946MB of 2048MB
+# while oom_kill stayed 0 and anonymous memory was only 410MB.
+check "postgres never reached its memory limit" "0" \
+  "$(kubectl exec -n "$NS" postgres-age-0 -- \
+     awk '/^oom_kill /{print $2}' /sys/fs/cgroup/memory.events 2>/dev/null | tr -d '[:space:]')"
+
 section "7. Performance work reaches the cluster, not just the laptop"
 check "property indexes created automatically on first boot" "memory_id_idx" \
   "$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc \
