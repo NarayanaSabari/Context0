@@ -8,6 +8,7 @@
 package extraction
 
 import (
+	"regexp"
 	"strings"
 	"time"
 
@@ -37,7 +38,7 @@ type ExtractedMemory struct {
 //  5. Deduplicates by exact content (case-insensitive).
 func Extract(conversation string) []ExtractedMemory {
 	var memories []ExtractedMemory
-	lines := strings.Split(conversation, "\n")
+	lines := splitUtterances(conversation)
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -59,6 +60,61 @@ func Extract(conversation string) []ExtractedMemory {
 
 	// Deduplicate by content similarity.
 	return dedup(memories)
+}
+
+// splitUtterances breaks a conversation into individual turns.
+//
+// Newlines are the obvious separator and were the only one, which meant a
+// conversation sent as a single JSON string -- the normal shape for an HTTP API
+// client -- was treated as one utterance. Sending
+//
+//	"User: I prefer PostgreSQL. Assistant: Noted. User: We deploy on Fridays."
+//
+// produced exactly one memory whose content was the entire string including
+// "Assistant: Noted.", while the same text with newlines produced two clean
+// ones. Two distinct facts silently became one polluted record, and nothing
+// reported a problem.
+//
+// So a speaker label also starts a new turn, wherever it appears. The pattern
+// is deliberately narrow -- one or two capitalised words followed by ": ",
+// anchored to a sentence boundary -- so it does not fire inside ordinary prose
+// like "The rule is: never deploy on Friday", where the text before the colon
+// is not a name.
+func splitUtterances(conversation string) []string {
+	var out []string
+	for _, line := range strings.Split(conversation, "\n") {
+		out = append(out, splitOnSpeakerLabels(line)...)
+	}
+	return out
+}
+
+// speakerLabel matches a speaker prefix appearing mid-line.
+var speakerLabel = regexp.MustCompile(`(^|[.!?]\s+)([A-Z][A-Za-z0-9_-]{0,20}(?:\s+[A-Z][A-Za-z0-9_-]{0,20})?):\s`)
+
+// splitOnSpeakerLabels cuts one line at each embedded speaker label.
+func splitOnSpeakerLabels(line string) []string {
+	locs := speakerLabel.FindAllStringSubmatchIndex(line, -1)
+	if len(locs) == 0 {
+		return []string{line}
+	}
+
+	var parts []string
+	prev := 0
+	for _, loc := range locs {
+		// The turn starts where the speaker's name does, not at the preceding
+		// sentence boundary the pattern anchored on.
+		start := loc[4]
+		if start > prev {
+			if seg := strings.TrimSpace(line[prev:start]); seg != "" {
+				parts = append(parts, seg)
+			}
+		}
+		prev = start
+	}
+	if seg := strings.TrimSpace(line[prev:]); seg != "" {
+		parts = append(parts, seg)
+	}
+	return parts
 }
 
 // stripSpeaker removes a leading "Speaker: " prefix from a conversation line.

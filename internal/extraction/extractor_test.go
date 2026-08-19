@@ -1,6 +1,7 @@
 package extraction
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -147,4 +148,68 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// TestExtract_SingleLineConversation covers the shape an HTTP client actually
+// sends.
+//
+// Extraction split on newlines only, so a conversation delivered as one JSON
+// string -- which is what any API caller does unless they deliberately embed
+// "\n" -- was treated as a single utterance. The result was one memory whose
+// content was the whole conversation, "Assistant: Noted." included, where the
+// newline-separated form produced two clean ones.
+//
+// Nothing failed. The API returned 200 and a memory, so the only symptom was
+// worse recall later, from a record that mixed two facts with filler.
+func TestExtract_SingleLineConversation(t *testing.T) {
+	const oneLine = "User: I prefer PostgreSQL over MySQL for this project. " +
+		"Assistant: Noted. User: We deploy on Kubernetes every Friday."
+
+	got := Extract(oneLine)
+
+	if len(got) < 2 {
+		t.Fatalf("extracted %d memories from a single-line conversation, want at least 2; "+
+			"the turns were not separated", len(got))
+	}
+
+	// No memory may carry another speaker's turn inside it.
+	for _, m := range got {
+		if strings.Contains(m.Content, "Assistant:") || strings.Contains(m.Content, "User:") {
+			t.Errorf("memory content still contains a speaker label: %q", m.Content)
+		}
+	}
+
+	// Both distinct facts must survive as separate memories.
+	var sawPostgres, sawDeploy bool
+	for _, m := range got {
+		if strings.Contains(m.Content, "PostgreSQL") {
+			sawPostgres = true
+			if strings.Contains(m.Content, "Kubernetes") {
+				t.Errorf("two separate facts were merged into one memory: %q", m.Content)
+			}
+		}
+		if strings.Contains(m.Content, "Kubernetes") {
+			sawDeploy = true
+		}
+	}
+	if !sawPostgres || !sawDeploy {
+		t.Errorf("lost a fact: postgres=%v deploy=%v; got %d memories",
+			sawPostgres, sawDeploy, len(got))
+	}
+}
+
+// TestExtract_DoesNotSplitOrdinaryProse is the counterpart: the speaker pattern
+// must not fire on a colon that is merely punctuation, or every "the rule is:"
+// sentence gets torn in half.
+func TestExtract_DoesNotSplitOrdinaryProse(t *testing.T) {
+	for _, s := range []string{
+		"We always run the tests first: it catches the obvious mistakes early.",
+		"The deployment window is 09:00 to 17:00 on weekdays only.",
+		"Remember this: the database prefers batched writes over single inserts.",
+	} {
+		parts := splitOnSpeakerLabels(s)
+		if len(parts) != 1 {
+			t.Errorf("split ordinary prose into %d parts: %q -> %v", len(parts), s, parts)
+		}
+	}
 }
