@@ -1529,46 +1529,33 @@ func TestUUIDLiteralListRenders(t *testing.T) {
 	}
 }
 
-// TestSearchByVector_ScopedSearchIsNotLostAmongProjects covers a recall
-// failure that only appears once a deployment holds many projects.
+// TestSearchByVector_ScopedSearchIsNotLostWithoutStatistics covers a recall
+// failure that appears when the planner has no statistics for the embeddings
+// table.
 //
-// pgvector applies a WHERE filter to whatever the HNSW index returns, so a
-// scoped search competes with every other project's vectors for the scan
-// budget. Reproduced deterministically at 40,000 embeddings across 500
-// projects: a two-row project returned one row, and the one it returned was the
-// worse match. Raising hnsw.ef_search to 1000 and the scan budget tenfold did
-// not help; a sequential scan returned both, which is what showed the loss was
-// the index rather than the data.
+// pgvector applies a WHERE filter to whatever the HNSW index returns. With
+// current statistics the planner sees the project filter is selective, uses the
+// project index, and everything is fine. Without them it estimates one row,
+// drives the query from the HNSW index instead, and the filter is applied to
+// whatever that returned -- so a project holding two matching rows returns one.
 //
-// The fix is an index on project_id, letting the planner filter first. This
-// test seeds enough projects to make the failure reachable -- fewer, and it
-// passes for the wrong reason.
-func TestSearchByVector_ScopedSearchIsNotLostAmongProjects(t *testing.T) {
+// That is not a rare state. It is where a table sits after a bulk import, after
+// a restore, and during the window before autoanalyze catches up on a
+// fast-growing table.
+//
+// Measured directly against this deployment with pg_statistic cleared:
+//
+//	plain filtered query   1 of 2 rows
+//	the shipped CTE form   2 of 2 rows
+//
+// The earlier version of this test seeded 2,400 rows and asserted the same
+// property, which passed with the fix reverted: the surrounding table already
+// held 147,000 rows with fresh statistics, so the planner made the right choice
+// regardless and the test proved nothing. It now removes the statistics, which
+// is the condition that actually distinguishes the two forms.
+func TestSearchByVector_ScopedSearchIsNotLostWithoutStatistics(t *testing.T) {
 	repo, ctx := testRepo(t)
 
-	// Background: many projects, many vectors, none of them the answer.
-	const backgroundProjects = 60
-	const perProject = 40
-	for p := 0; p < backgroundProjects; p++ {
-		proj := newProjectID(t)
-		for i := 0; i < perProject; i++ {
-			mem := newMemory(proj, fmt.Sprintf("noise %d-%d", p, i))
-			if err := repo.CreateMemory(ctx, mem); err != nil {
-				t.Fatalf("create: %v", err)
-			}
-			t.Cleanup(func() { _ = repo.DeleteMemory(context.Background(), mem.ID) })
-			vec := make([]float32, testEmbeddingDim)
-			// Spread the noise across the space, close to the query direction
-			// so it genuinely competes for the scan budget.
-			vec[0] = float32(i%10) / 10.0
-			vec[1+(i%(testEmbeddingDim-1))] = 1
-			if err := repo.StoreEmbedding(ctx, mem.ID, proj, vec); err != nil {
-				t.Fatalf("store embedding: %v", err)
-			}
-		}
-	}
-
-	// The needle: a project with exactly two memories.
 	project := newProjectID(t)
 	target := storeMemory(t, repo, ctx, newMemory(project, "the one that matches"))
 	other := storeMemory(t, repo, ctx, newMemory(project, "the one that does not"))
@@ -1584,14 +1571,24 @@ func TestSearchByVector_ScopedSearchIsNotLostAmongProjects(t *testing.T) {
 		t.Fatalf("store embedding: %v", err)
 	}
 
+	// Put the planner in the state a fresh import or restore leaves it in.
+	// Restored afterwards so the rest of the suite is unaffected.
+	if _, err := repo.pool.Exec(ctx,
+		`DELETE FROM pg_statistic WHERE starelid = 'public.memory_embeddings'::regclass`); err != nil {
+		t.Skipf("cannot clear planner statistics (needs table ownership): %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = repo.pool.Exec(context.Background(), `ANALYZE public.memory_embeddings`)
+	})
+
 	results, err := repo.SearchByVector(ctx, targetVec, project, 2)
 	if err != nil {
 		t.Fatalf("vector search: %v", err)
 	}
 	if len(results) != 2 {
-		t.Fatalf("scoped search returned %d of 2 memories in its project, with "+
-			"%d background projects present: the filter is being applied after "+
-			"the index search instead of before it", len(results), backgroundProjects)
+		t.Fatalf("scoped search returned %d of 2 memories in its project with no "+
+			"planner statistics: the filter is being applied after the index "+
+			"search instead of before it", len(results))
 	}
 	if results[0].Memory.ID != target.ID {
 		t.Errorf("nearest neighbour = %q, want %q", results[0].Memory.Content, target.Content)
