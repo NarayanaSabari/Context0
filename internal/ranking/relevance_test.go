@@ -226,3 +226,109 @@ func TestRankResultsIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// TestScoringSignalsRejectHostileInputs covers the guards that keep a bad input
+// from producing NaN, which would corrupt ranking rather than merely misrank.
+//
+// NaN is the specific danger: every comparison against it is false, so a single
+// NaN score makes sort.SliceStable's ordering arbitrary and silently scrambles
+// the results the user gets back. None of these guards had a test -- found by
+// mutation testing, which removed each one and saw the suite stay green.
+func TestScoringSignalsRejectHostileInputs(t *testing.T) {
+	t.Run("negative access count", func(t *testing.T) {
+		// accessCount is read from the database, where an interrupted
+		// decrement or a manual edit can leave it negative. Without the guard,
+		// log1p of a negative number is NaN.
+		for _, n := range []int64{-1, -5, -1000} {
+			got := frequencyFactor(n)
+			if math.IsNaN(got) || math.IsInf(got, 0) {
+				t.Errorf("frequencyFactor(%d) = %v; a non-finite score makes sort ordering arbitrary", n, got)
+			}
+			if got != 0 {
+				t.Errorf("frequencyFactor(%d) = %f, want 0", n, got)
+			}
+		}
+	})
+
+	t.Run("future timestamp", func(t *testing.T) {
+		// Clock skew between the writer and the ranker puts createdAt in the
+		// future. Without the guard the exponent is positive and recency
+		// exceeds 1, letting a skewed memory outrank everything.
+		now := time.Now()
+		got := recencyFactor(now.Add(48*time.Hour), now)
+		if got > 1.0 {
+			t.Errorf("recencyFactor for a future timestamp = %f, want <= 1.0: "+
+				"clock skew must not create an unbeatable score", got)
+		}
+		if math.IsNaN(got) {
+			t.Errorf("recencyFactor for a future timestamp = NaN")
+		}
+	})
+
+	t.Run("out-of-range relevance", func(t *testing.T) {
+		// Cosine distance from pgvector and lexical ratios can drift outside
+		// [0,1] through floating-point error. clamp01 is what stops that
+		// leaking into the composite score.
+		for _, in := range []float64{-0.1, -1e9, 1.0000001, 1e9} {
+			got := clamp01(in)
+			if got < 0 || got > 1 {
+				t.Errorf("clamp01(%v) = %v, outside [0,1]", in, got)
+			}
+		}
+		// The boundaries themselves must pass through unchanged, or every
+		// perfect match is quietly discounted.
+		if got := clamp01(0); got != 0 {
+			t.Errorf("clamp01(0) = %v, want 0", got)
+		}
+		if got := clamp01(1); got != 1 {
+			t.Errorf("clamp01(1) = %v, want 1", got)
+		}
+	})
+}
+
+// TestLexicalRelevanceIgnoresEmptyKeywords: a query that tokenises to an empty
+// string must not count toward the denominator, or every result is scored
+// against a keyword nothing can match.
+func TestLexicalRelevanceIgnoresEmptyKeywords(t *testing.T) {
+	// One real keyword plus noise that should be discarded.
+	withNoise := LexicalRelevance("the memory mentions prometheus", nil,
+		[]string{"prometheus", "", "   ", "prometheus"})
+	clean := LexicalRelevance("the memory mentions prometheus", nil,
+		[]string{"prometheus"})
+
+	if withNoise != clean {
+		t.Errorf("empty and duplicate keywords changed the score: %f with noise, %f clean",
+			withNoise, clean)
+	}
+	if withNoise <= 0 {
+		t.Errorf("a matching keyword scored %f, want > 0", withNoise)
+	}
+
+	// A query whose tokens are ALL empty carries no searchable terms, which is
+	// the same situation as an empty keyword list: every candidate is equally
+	// relevant, so relevance must be a constant that cannot distort the
+	// recency, frequency and type signals that still differentiate results.
+	//
+	// Without the distinct==0 guard this divides by zero and yields NaN, which
+	// makes sort ordering arbitrary. Found by mutation testing.
+	for _, keywords := range [][]string{
+		{""},
+		{"", "  ", "\t"},
+		{"the", ""}, // "the" survives tokenising but may be filtered upstream
+	} {
+		got := LexicalRelevance("any content at all", nil, keywords)
+		if math.IsNaN(got) {
+			t.Errorf("LexicalRelevance with keywords %#v = NaN; "+
+				"a non-finite relevance makes ranking order arbitrary", keywords)
+		}
+		if got < 0 || got > 1 {
+			t.Errorf("LexicalRelevance with keywords %#v = %f, outside [0,1]", keywords, got)
+		}
+	}
+
+	// The documented contract for a query with no searchable terms.
+	if got := LexicalRelevance("any content", nil, []string{"", "   "}); got != 1.0 {
+		t.Errorf("LexicalRelevance with only empty keywords = %f, want 1.0 "+
+			"(no lexical evidence means every candidate is equally relevant)", got)
+	}
+}

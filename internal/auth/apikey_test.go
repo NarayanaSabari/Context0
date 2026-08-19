@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -428,4 +429,141 @@ func TestRateLimitSetsRetryAfter(t *testing.T) {
 	if err != nil || secs < 1 {
 		t.Errorf("Retry-After = %q, want a positive integer number of seconds", got)
 	}
+}
+
+// TestRateLimitBucketEviction covers the bound that keeps the per-key rate
+// limit map from growing without limit.
+//
+// The bucket map is keyed by the verified API key, so it only grows when a key
+// is accepted -- but a deployment that rotates keys, or one running with many
+// valid keys, accumulates one bucket per key for the life of the process. The
+// eviction path had no test at all: mutation testing removed the `oldestKey !=
+// ""` guard and every test still passed.
+func TestRateLimitBucketEviction(t *testing.T) {
+	t.Run("map stays bounded", func(t *testing.T) {
+		// A high rate limit so nothing is rejected for being over quota; this
+		// test is about map growth, not throttling.
+		a := NewAPIKeyAuth([]string{"k"}, 1000000)
+
+		// Push well past the cap. Each distinct key creates a bucket.
+		for i := 0; i < maxBuckets+500; i++ {
+			a.allowRequest(fmt.Sprintf("key-%d", i))
+		}
+
+		a.mu.Lock()
+		n := len(a.buckets)
+		a.mu.Unlock()
+
+		if n > maxBuckets {
+			t.Errorf("bucket map grew to %d entries, above the %d cap: "+
+				"an unbounded map is a memory leak on the auth path", n, maxBuckets)
+		}
+	})
+
+	t.Run("evicts the idlest key, not an active one", func(t *testing.T) {
+		a := NewAPIKeyAuth([]string{"k"}, 1000000)
+
+		// Seed the map to exactly the cap.
+		for i := 0; i < maxBuckets; i++ {
+			a.allowRequest(fmt.Sprintf("seed-%d", i))
+		}
+
+		// Make one key clearly the most recently used, and one clearly idlest.
+		active := "seed-0"
+		a.allowRequest(active)
+
+		a.mu.Lock()
+		idlest := ""
+		var oldest time.Time
+		for k, b := range a.buckets {
+			if idlest == "" || b.lastTime.Before(oldest) {
+				idlest, oldest = k, b.lastTime
+			}
+		}
+		a.mu.Unlock()
+
+		// One more distinct key forces exactly one eviction.
+		a.allowRequest("newcomer")
+
+		a.mu.Lock()
+		_, idlestPresent := a.buckets[idlest]
+		_, activePresent := a.buckets[active]
+		_, newcomerPresent := a.buckets["newcomer"]
+		a.mu.Unlock()
+
+		if idlestPresent {
+			t.Errorf("key %q was the idlest but survived eviction", idlest)
+		}
+		if !activePresent {
+			t.Errorf("the most recently used key %q was evicted; "+
+				"evicting an active key resets its allowance mid-burst", active)
+		}
+		if !newcomerPresent {
+			t.Error("the new key was not inserted after eviction")
+		}
+	})
+
+	t.Run("a continuously active key is never evicted", func(t *testing.T) {
+		// Eviction resets the victim's allowance, so evicting a key that is
+		// mid-burst would let it bypass the rate limit. LRU is what prevents
+		// that: a key that keeps making requests is never the idlest.
+		const limit = 5
+		a := NewAPIKeyAuth([]string{"k"}, limit)
+
+		victim := "heavy-user"
+		for i := 0; i < limit; i++ {
+			if !a.allowRequest(victim) {
+				t.Fatalf("request %d was rejected before the quota was spent", i)
+			}
+		}
+		if a.allowRequest(victim) {
+			t.Fatal("quota was not enforced on the first pass")
+		}
+
+		// Churn other keys through the map while the victim keeps requesting,
+		// which is what a real over-quota caller does. Each touch refreshes the
+		// victim's lastTime, so it stays off the eviction list.
+		for i := 0; i < maxBuckets+50; i++ {
+			a.allowRequest(fmt.Sprintf("churn-%d", i))
+			if a.allowRequest(victim) {
+				t.Fatalf("over-quota key was allowed at churn iteration %d: "+
+					"its bucket was evicted and reset, bypassing the rate limit", i)
+			}
+		}
+	})
+
+	t.Run("map is bounded by configured keys on the real request path", func(t *testing.T) {
+		// The property that actually protects the process: allowRequest is
+		// only reached with an ID returned by verify(), so the map is bounded
+		// by the number of configured keys regardless of attacker input. The
+		// maxBuckets eviction above is defense in depth behind this.
+		a := NewAPIKeyAuth([]string{"real-key-1", "real-key-2"}, 1000000)
+
+		handler := a.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		// Hammer with distinct invalid keys, which is the input an attacker
+		// controls. None of them may create a bucket.
+		for i := 0; i < 2000; i++ {
+			req := httptest.NewRequest(http.MethodGet, "/v1/memories", nil)
+			req.Header.Set("X-API-Key", fmt.Sprintf("attacker-key-%d", i))
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+		}
+		// Plus legitimate traffic on the real keys.
+		for _, k := range []string{"real-key-1", "real-key-2"} {
+			req := httptest.NewRequest(http.MethodGet, "/v1/memories", nil)
+			req.Header.Set("X-API-Key", k)
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+		}
+
+		a.mu.Lock()
+		n := len(a.buckets)
+		a.mu.Unlock()
+
+		if n > 2 {
+			t.Errorf("bucket map holds %d entries for 2 configured keys: "+
+				"unauthenticated input must not allocate buckets", n)
+		}
+	})
 }
