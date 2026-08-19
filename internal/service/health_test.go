@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+
 	"errors"
+	"github.com/context0/context0/internal/auth"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -56,6 +58,14 @@ func newTestHealth(repo healthRepo) *HealthService {
 	return &HealthService{repo: repo, version: "test"}
 }
 
+// authedCtx marks a request as carrying a verified credential.
+//
+// Health withholds graph statistics from anonymous callers, so a test that
+// wants to exercise the counting path has to say who is asking.
+func authedCtx() context.Context {
+	return auth.WithAuthenticated(context.Background())
+}
+
 // TestHealthCachesGraphCounts: /v1/health is unauthenticated, so recomputing
 // two full table scans per call let anyone who can reach the port make the
 // database do unbounded work. Measured at 9.5k vertices this was 430ms serial
@@ -65,7 +75,7 @@ func TestHealthCachesGraphCounts(t *testing.T) {
 	h := newTestHealth(repo)
 
 	for range 50 {
-		resp, err := h.Health(context.Background(), &pb.HealthRequest{})
+		resp, err := h.Health(authedCtx(), &pb.HealthRequest{})
 		if err != nil {
 			t.Fatalf("health: %v", err)
 		}
@@ -95,7 +105,7 @@ func TestHealthCollapsesConcurrentRecomputes(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := h.Health(context.Background(), &pb.HealthRequest{}); err != nil {
+			if _, err := h.Health(authedCtx(), &pb.HealthRequest{}); err != nil {
 				t.Errorf("health: %v", err)
 			}
 		}()
@@ -113,7 +123,7 @@ func TestHealthRecomputesAfterTTL(t *testing.T) {
 	repo := &countingRepo{}
 	h := newTestHealth(repo)
 
-	if _, err := h.Health(context.Background(), &pb.HealthRequest{}); err != nil {
+	if _, err := h.Health(authedCtx(), &pb.HealthRequest{}); err != nil {
 		t.Fatalf("health: %v", err)
 	}
 	// Age the cache past its TTL rather than sleeping for it.
@@ -121,7 +131,7 @@ func TestHealthRecomputesAfterTTL(t *testing.T) {
 	h.statsAt = time.Now().Add(-statsTTL - time.Second)
 	h.mu.Unlock()
 
-	if _, err := h.Health(context.Background(), &pb.HealthRequest{}); err != nil {
+	if _, err := h.Health(authedCtx(), &pb.HealthRequest{}); err != nil {
 		t.Fatalf("health: %v", err)
 	}
 	if got := repo.nodeCalls.Load(); got != 2 {
@@ -136,7 +146,7 @@ func TestHealthFailsWhenDatabaseUnreachable(t *testing.T) {
 	h := newTestHealth(repo)
 
 	// Warm the cache while healthy.
-	if _, err := h.Health(context.Background(), &pb.HealthRequest{}); err != nil {
+	if _, err := h.Health(authedCtx(), &pb.HealthRequest{}); err != nil {
 		t.Fatalf("health: %v", err)
 	}
 
@@ -144,7 +154,49 @@ func TestHealthFailsWhenDatabaseUnreachable(t *testing.T) {
 	repo.failing = errors.New("connection refused")
 	repo.mu.Unlock()
 
-	if _, err := h.Health(context.Background(), &pb.HealthRequest{}); err == nil {
+	if _, err := h.Health(authedCtx(), &pb.HealthRequest{}); err == nil {
 		t.Error("health reported ok with the database unreachable")
+	}
+}
+
+// TestHealthWithholdsStatisticsFromAnonymousCallers pins the disclosure
+// boundary.
+//
+// This endpoint answers without a credential because Kubernetes probes cannot
+// present one. But it was returning the engine version, node count and edge
+// count to anyone who could reach the port: `context0 stats` with no API key
+// at all printed them. None is a secret alone; together they say what is
+// running and how much data is in it, which a liveness probe has no need for.
+func TestHealthWithholdsStatisticsFromAnonymousCallers(t *testing.T) {
+	repo := &countingRepo{}
+	h := newTestHealth(repo)
+
+	anon, err := h.Health(context.Background(), &pb.HealthRequest{})
+	if err != nil {
+		t.Fatalf("health must still answer without a credential: %v", err)
+	}
+	if anon.Status != "ok" {
+		t.Errorf("status = %q, want ok: probes depend on this", anon.Status)
+	}
+	if anon.NodeCount != 0 || anon.EdgeCount != 0 {
+		t.Errorf("anonymous caller received graph statistics: nodes=%d edges=%d",
+			anon.NodeCount, anon.EdgeCount)
+	}
+	if anon.Version != "" {
+		t.Errorf("anonymous caller received the version %q", anon.Version)
+	}
+	// The counts must not even be computed for an anonymous caller, or the
+	// endpoint remains a lever for making the database work.
+	if repo.nodeCalls.Load() != 0 {
+		t.Errorf("counted the graph for an anonymous caller (%d calls)", repo.nodeCalls.Load())
+	}
+
+	authed, err := h.Health(authedCtx(), &pb.HealthRequest{})
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+	if authed.NodeCount == 0 || authed.Version == "" {
+		t.Errorf("an authenticated caller lost the statistics: nodes=%d version=%q",
+			authed.NodeCount, authed.Version)
 	}
 }

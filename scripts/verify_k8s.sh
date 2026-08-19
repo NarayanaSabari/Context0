@@ -196,6 +196,23 @@ done
 
 # Keys are stored hashed, so the running process cannot hand back a credential
 # even if it is compromised or dumped.
+# /v1/health answers without a credential because probes cannot present one,
+# but it must not volunteer what is running and how much data is in it. Found
+# via the CLI: `context0 stats` with no API key returned the version, node
+# count and edge count.
+check "an anonymous caller gets no graph statistics" "0" \
+  "$(kubectl exec -n "$NS" "$(api_pod)" -- wget -q -O- http://localhost:8080/v1/health 2>/dev/null \
+    | grep -o '"nodeCount":"[0-9]*"' | grep -o '[0-9]*')"
+check "an anonymous caller gets no version" '"version":""' \
+  "$(kubectl exec -n "$NS" "$(api_pod)" -- wget -q -O- http://localhost:8080/v1/health 2>/dev/null \
+    | grep -o '"version":"[^"]*"')"
+# ...and an authenticated caller still gets them, or this is a regression
+# dressed up as a fix.
+check "an authenticated caller still gets the statistics" "ok" \
+  "$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c \
+    "wget -q -O- --header='X-API-Key: $key' http://localhost:8080/v1/health" 2>/dev/null \
+    | grep -qE '"nodeCount":"[1-9]' && echo ok || echo missing)"
+
 check "stored keys are hashes, not the plaintext key" "0" \
   "$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c 'cat /proc/1/environ 2>/dev/null | tr "\0" "\n" | grep -c "^CONTEXT0_API_KEYS=$key$"' 2>/dev/null || echo 0)"
 check "the API key never appears in logs" "0" \

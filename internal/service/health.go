@@ -19,6 +19,8 @@ package service
 
 import (
 	"context"
+
+	"github.com/context0/context0/internal/auth"
 	"sync"
 	"time"
 
@@ -85,6 +87,18 @@ func (s *HealthService) Health(ctx context.Context, _ *pb.HealthRequest) (*pb.He
 	// served from cache. Ping is a round trip to Postgres, not a scan.
 	if err := s.repo.Ping(ctx); err != nil {
 		return nil, status.Errorf(codes.Internal, "database unreachable: %v", err)
+	}
+
+	// An unauthenticated caller gets liveness and nothing else.
+	//
+	// This endpoint answers without a credential because Kubernetes probes
+	// cannot present one, but it was volunteering the version, node count and
+	// edge count to anyone who could reach the port -- `context0 stats` with no
+	// key at all returned them. Those are not secrets individually; together
+	// they are a free reconnaissance signal (what is running, and how much data
+	// is in it) that a probe has no need for.
+	if !auth.IsAuthenticated(ctx) {
+		return &pb.HealthResponse{Status: "ok"}, nil
 	}
 
 	stats, err := s.graphStats(ctx)

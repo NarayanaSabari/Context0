@@ -122,6 +122,26 @@ func (a *APIKeyAuth) verify(presented string) (string, bool) {
 	return "", false
 }
 
+// authedKey is the context key marking a request that presented a valid API
+// key. Unexported so no other package can forge it.
+type authedKey struct{}
+
+// WithAuthenticated marks ctx as carrying a verified credential.
+func WithAuthenticated(ctx context.Context) context.Context {
+	return context.WithValue(ctx, authedKey{}, true)
+}
+
+// IsAuthenticated reports whether the request presented a valid API key.
+//
+// Needed because a handful of endpoints must answer without credentials --
+// Kubernetes probes cannot present one -- while still not volunteering
+// everything they know to an anonymous caller. Defaults to false, so a handler
+// that forgets to check discloses less rather than more.
+func IsAuthenticated(ctx context.Context) bool {
+	v, _ := ctx.Value(authedKey{}).(bool)
+	return v
+}
+
 // UnaryInterceptor returns a gRPC unary server interceptor that validates
 // the API key from incoming metadata and enforces rate limits. Health check
 // RPCs are exempt from authentication.
@@ -130,8 +150,16 @@ func (a *APIKeyAuth) verify(presented string) (string, bool) {
 // forwards HTTP headers with a "grpcgateway-" prefix.
 func (a *APIKeyAuth) UnaryInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		// Skip auth for health checks so liveness probes always succeed.
+		// Health answers without a credential so probes always succeed, but it
+		// is not exempt from being *identified*: an anonymous caller reaches
+		// the handler with IsAuthenticated false, and the handler withholds the
+		// graph statistics. Before this, `context0 stats` with no key at all
+		// returned the version, node count and edge count to anyone who could
+		// reach the port.
 		if info.FullMethod == "/context0.v1.HealthService/Health" {
+			if keyID, ok := a.verify(apiKeyFromMetadata(ctx)); ok && a.allowRequest(keyID) {
+				return handler(WithAuthenticated(ctx), req)
+			}
 			return handler(ctx, req)
 		}
 
@@ -140,23 +168,13 @@ func (a *APIKeyAuth) UnaryInterceptor() grpc.UnaryServerInterceptor {
 			return handler(ctx, req)
 		}
 
-		// Extract gRPC metadata (carries HTTP headers in gateway mode).
-		md, ok := metadata.FromIncomingContext(ctx)
-		if !ok {
-			return nil, status.Error(codes.Unauthenticated, "missing metadata")
-		}
-
-		// Try the canonical header first, then the grpc-gateway prefixed form.
-		keys := md.Get(apiKeyHeader)
-		if len(keys) == 0 {
-			keys = md.Get("grpcgateway-" + apiKeyHeader)
-		}
-		if len(keys) == 0 {
+		presented := apiKeyFromMetadata(ctx)
+		if presented == "" {
 			return nil, status.Error(codes.Unauthenticated, "unauthorized")
 		}
 
 		// Validate the key against the allow-list.
-		keyID, ok := a.verify(keys[0])
+		keyID, ok := a.verify(presented)
 		if !ok {
 			return nil, status.Error(codes.Unauthenticated, "unauthorized")
 		}
@@ -169,6 +187,27 @@ func (a *APIKeyAuth) UnaryInterceptor() grpc.UnaryServerInterceptor {
 
 		return handler(ctx, req)
 	}
+}
+
+// apiKeyFromMetadata pulls the presented key out of gRPC metadata, returning
+// "" when absent.
+//
+// Two header names are checked because grpc-gateway forwards HTTP headers with
+// a "grpcgateway-" prefix, so a REST caller and a gRPC caller present the same
+// credential under different keys.
+func apiKeyFromMetadata(ctx context.Context) string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return ""
+	}
+	keys := md.Get(apiKeyHeader)
+	if len(keys) == 0 {
+		keys = md.Get("grpcgateway-" + apiKeyHeader)
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0]
 }
 
 // publicPaths are the only endpoints served without an API key.
@@ -201,6 +240,12 @@ var publicPaths = map[string]bool{
 func (a *APIKeyAuth) HTTPMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if publicPaths[r.URL.Path] {
+			// A probe presents no credential, but a real client hitting
+			// /v1/health may. Mark it so the handler can decide how much to
+			// disclose rather than treating every caller here as anonymous.
+			if keyID, ok := a.verify(r.Header.Get("X-API-Key")); ok && a.allowRequest(keyID) {
+				r = r.WithContext(WithAuthenticated(r.Context()))
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
