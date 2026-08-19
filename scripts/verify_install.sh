@@ -72,6 +72,18 @@ cleanup() {
 NAMESPACES=()
 trap cleanup EXIT
 
+# Remove a verified deployment immediately rather than leaving it up until the
+# script exits. Each install requests 1.5 cores for Postgres (sized from
+# measurement, see values.yaml), so three concurrent ones cannot be scheduled on
+# a 2-core CI runner: the later installs sat Pending until helm timed out, which
+# reads as "the documented install is broken" rather than "the runner is full".
+teardown() {
+  helm uninstall context0 -n "$1" >/dev/null 2>&1
+  # Synchronous: the PersistentVolumeClaim is released when the namespace
+  # finishes deleting, and the next install needs that capacity back.
+  kubectl delete ns "$1" --wait=true --timeout=90s >/dev/null 2>&1
+}
+
 # The images the chart references must exist in the cluster, or every install
 # waits out its timeout on ImagePullBackOff for reasons that have nothing to do
 # with the docs. Overridable because CI tags images differently from local dev,
@@ -141,6 +153,7 @@ stored=$(kubectl exec -n "$ns" deploy/context0-api -- sh -c \
    --post-data='{\"content\":\"install verification\",\"project_id\":\"verify\",\"type\":\"MEMORY_TYPE_SEMANTIC\"}' \
    http://localhost:8080/v1/memories" 2>/dev/null)
 check "the generated key authenticates a write" "install verification" "$stored"
+teardown "$ns"
 
 section "3. The README's 'bring your own Secrets' path works"
 ns=readme-existing
@@ -165,6 +178,7 @@ check "the API pod becomes ready with operator-managed Secrets" "true" \
 # managing credentials the operator believes they control.
 check "the chart created no Secret of its own" "0" \
   "$(kubectl get secret -n "$ns" -l app.kubernetes.io/managed-by=Helm --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+teardown "$ns"
 
 section "4. make deploy works from nothing"
 # The exact regression this script exists for: `make deploy` passed no
@@ -206,6 +220,7 @@ check "the generated key works against the deployment" "make deploy verification
     "wget -q -O- --header='X-API-Key: $DEV_API_KEY' --header='Content-Type: application/json' \
      --post-data='{\"content\":\"make deploy verification\",\"project_id\":\"v\",\"type\":\"MEMORY_TYPE_SEMANTIC\"}' \
      http://localhost:8080/v1/memories" 2>/dev/null)"
+teardown "$ns"
 
 section "5. The docs do not reference things that no longer exist"
 # Cheap, and it is exactly the class of rot that broke the README: a flag or a
