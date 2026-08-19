@@ -279,6 +279,41 @@ lo=$(grep -c 'context0_request_duration_seconds_bucket{.*le="0.125"' <<<"$mx" ||
 check "latency buckets resolve the range this service operates in" "present" \
   "$([[ "$lo" -gt 0 ]] && echo present || echo missing)"
 
+section "14. Multi-replica behaviour (only when replicas > 1)"
+replicas=$(kubectl get deploy context0-api -n "$NS" -o jsonpath='{.spec.replicas}')
+if [[ "${replicas:-1}" -gt 1 ]]; then
+  check "a PodDisruptionBudget exists" "context0-api" \
+    "$(kubectl get pdb context0-api -n "$NS" -o jsonpath='{.metadata.name}' 2>/dev/null)"
+
+  # The PDB must actually gate evictions, not merely exist. `kubectl delete`
+  # bypasses PDBs entirely, so this uses the eviction API -- which is what a
+  # node drain uses, and the only thing that exercises the guarantee.
+  # Read into an array without mapfile: macOS ships bash 3.2, where mapfile
+  # does not exist and the array silently stays empty.
+  pods=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && pods+=("$line")
+  done < <(kubectl get pods -n "$NS" -l app=context0-api \
+    --field-selector=status.phase=Running \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+  evict() {
+    kubectl create -f - --raw "/api/v1/namespaces/$NS/pods/$1/eviction" >/dev/null 2>&1 <<EOF && echo allowed || echo blocked
+{"apiVersion":"policy/v1","kind":"Eviction","metadata":{"name":"$1","namespace":"$NS"}}
+EOF
+  }
+  if [[ "${#pods[@]}" -lt 2 ]]; then
+    check "at least two running pods to evict" "2+" "${#pods[@]}"
+  else
+    check "the first eviction is allowed" "allowed" "$(evict "${pods[0]}")"
+    check "the second concurrent eviction is refused" "blocked" "$(evict "${pods[1]}")"
+  fi
+
+  # Wait for the fleet to come back before anything else runs.
+  kubectl rollout status deploy/context0-api -n "$NS" --timeout=180s >/dev/null 2>&1
+else
+  printf '  skipped: replicas=%s (PDB and topology spread are gated on >1)\n' "${replicas:-1}"
+fi
+
 printf '\n\033[1m%s\033[0m\n' "=== $PASS passed, $FAIL failed ==="
 for f in "${FAILURES[@]:-}"; do [[ -n "$f" ]] && printf '  failed: %s\n' "$f"; done
 exit $((FAIL > 0 ? 1 : 0))
