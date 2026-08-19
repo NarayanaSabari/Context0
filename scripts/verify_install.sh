@@ -222,6 +222,24 @@ check "the generated key works against the deployment" "make deploy verification
      http://localhost:8080/v1/memories" 2>/dev/null)"
 teardown "$ns"
 
+section "4b. docker compose, the other documented quickstart"
+# Not started here -- building and running four containers is slow and this
+# script already builds a cluster -- but the parts that broke are checked:
+# whether the file still ships a credential, and whether it refuses to start
+# without one. Both were true until this was looked at.
+# Only non-comment lines count: the comment explaining why the key was removed
+# necessarily names it, and matching that made this fail on its own explanation.
+check_empty "docker-compose.yaml ships no default API key" \
+  "$(grep -n 'ctx0_dev_key' docker-compose.yaml 2>/dev/null \
+    | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+check "compose requires an API key to be supplied" "required variable" \
+  "$(env -u CONTEXT0_API_KEYS -u POSTGRES_PASSWORD docker compose --env-file /dev/null config 2>&1 | tail -1)"
+
+# The web container listens on 8080 since it moved to nginx-unprivileged, so a
+# port mapping of :80 silently serves nothing.
+check "the web port mapping matches the container's listen port" "8080" \
+  "$(grep -oE '\$\{WEB_PORT:-[0-9]+\}:[0-9]+' docker-compose.yaml | awk -F'}:' '{print $2}')"
+
 section "5. The docs do not reference things that no longer exist"
 # Cheap, and it is exactly the class of rot that broke the README: a flag or a
 # file named in the docs that was renamed or deleted.

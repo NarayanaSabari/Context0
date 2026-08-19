@@ -24,7 +24,7 @@ services:
     environment:
       POSTGRES_DB: context0
       POSTGRES_USER: context0
-      POSTGRES_PASSWORD: context0
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
     ports:
       - "5432:5432"
     volumes:
@@ -46,12 +46,21 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      CONTEXT0_DATABASE_URL: "postgres://context0:context0@postgres:5432/context0?sslmode=disable"
+      CONTEXT0_DATABASE_URL: "postgres://context0:${POSTGRES_PASSWORD}@postgres:5432/context0?sslmode=disable"
       CONTEXT0_GRPC_PORT: "50051"
       CONTEXT0_HTTP_PORT: "8080"
-      CONTEXT0_API_KEYS: "ctx0_dev_key_1,ctx0_dev_key_2"
+      # No default key. `ctx0_dev_key_1` used to live here, and the chart
+      # shipped the same value -- a credential published in a public repo is a
+      # credential every unchanged install shares. Removed from the chart in
+      # a83af5a; this file was missed.
+      #
+      # Generate one and put it in .env (gitignored) beside this file:
+      #   echo "CONTEXT0_API_KEYS=$(go run ./cmd/cli keys generate)" >> .env
+      #   echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> .env
+      CONTEXT0_API_KEYS: "${CONTEXT0_API_KEYS:?set CONTEXT0_API_KEYS in .env - see the comment above}"
       # Local development: generous so benchmarks and the e2e suite are not
-      # throttled. Production should keep the 100/min default or lower.
+      # throttled. The shipped default is 6000/min (100/s), sized against a
+      # ~4ms store; see internal/auth for the measurements.
       CONTEXT0_RATE_LIMIT_PER_MINUTE: "100000"
       CONTEXT0_EMBEDDING_PROVIDER: "bag-of-words"
       # To use Ollama (if running on host):
@@ -59,8 +68,11 @@ services:
       # CONTEXT0_EMBEDDING_BASE_URL: http://host.docker.internal:11434
       # CONTEXT0_EMBEDDING_MODEL: nomic-embed-text
     ports:
-      - "8080:8080"
-      - "50051:50051"
+      # Host ports are overridable: a kind cluster or another local service may
+      # already hold 8080, and a hardcoded mapping turns that into a confusing
+      # "port is already allocated" rather than a one-line override.
+      - "${API_HTTP_PORT:-8080}:8080"
+      - "${API_GRPC_PORT:-50051}:50051"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/v1/health"]
       interval: 5s
@@ -79,7 +91,11 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "${WEB_PORT:-3000}:80"
+      # The container listens on 8080, not 80: the image is nginx-unprivileged
+      # so that the pod can satisfy the Pod Security "restricted" profile, and
+      # binding a port below 1024 would need a capability it drops. This
+      # mapping said :80 and silently served nothing after that change.
+      - "${WEB_PORT:-3000}:8080"
     restart: unless-stopped
 
   # ── Consolidation (one-off job, run manually) ───────────
@@ -94,7 +110,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      CONTEXT0_DATABASE_URL: "postgres://context0:context0@postgres:5432/context0?sslmode=disable"
+      CONTEXT0_DATABASE_URL: "postgres://context0:${POSTGRES_PASSWORD}@postgres:5432/context0?sslmode=disable"
       CONSOLIDATION_DECAY_HALF_LIFE_DAYS: "30"
       CONSOLIDATION_STALE_THRESHOLD: "0.1"
       CONSOLIDATION_PRUNE_AGE_DAYS: "30"

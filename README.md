@@ -55,10 +55,27 @@ helm install context0 ./charts/context0 -n context0 --create-namespace \
 ### Try it with Docker Compose
 
 ```bash
+# Generate credentials once, into .env (gitignored). Compose refuses to start
+# without them: this file used to ship a working API key, and a credential
+# published in a public repo is one every unchanged install shares.
+cat > .env <<EOF
+POSTGRES_PASSWORD=$(openssl rand -hex 16)
+CONTEXT0_API_KEYS=$(go run ./cmd/cli keys generate)
+EOF
+
 docker compose up
 ```
 
-This builds and starts PostgreSQL + Apache AGE + pgvector, the Context0 API, and the web UI. See [docker-compose.yaml](docker-compose.yaml) for service details.
+This builds and starts PostgreSQL + Apache AGE + pgvector, the Context0 API, and
+the web UI on <http://localhost:3000>. See
+[docker-compose.yaml](docker-compose.yaml) for service details.
+
+Host ports are overridable, for when something else already holds them:
+
+```bash
+echo "API_HTTP_PORT=18080" >> .env   # default 8080
+echo "WEB_PORT=13000"      >> .env   # default 3000
+```
 
 ### Try it on kind
 
