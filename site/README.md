@@ -1,6 +1,6 @@
 # The marketing site
 
-The landing page at <https://context0.sabarinarayana.com>.
+The landing page at <https://kora.sabarinarayana.com>.
 
 Separate from `web/`, which is the in-cluster graph UI shipped with the product.
 This one is a static marketing site: no API calls, no auth, no backend. It
@@ -166,7 +166,7 @@ check here.
 
 4. **Point the custom domain at the Pages project.** Workers & Pages ->
    `kora` -> Custom domains -> Set up a custom domain ->
-   `context0.sabarinarayana.com`.
+   `kora.sabarinarayana.com`.
 
    Cloudflare rewrites the DNS record itself and issues the certificate, so the
    old `CNAME -> narayanasabari.github.io` record should be removed. Unlike
@@ -176,7 +176,7 @@ check here.
 5. **Verify:**
 
    ```bash
-   curl -sI https://context0.sabarinarayana.com | head -1
+   curl -sI https://kora.sabarinarayana.com | head -1
    ```
 
 ### Rollbacks

@@ -36,7 +36,7 @@ export function Waitlist({ id = 'waitlist', onDark = false }: { id?: string; onD
 
     if (!configured) {
       console.warn(
-        '[context0] WAITLIST_ENDPOINT is not set in src/config.ts, so this signup was not stored anywhere.',
+        '[kora] WAITLIST_ENDPOINT is not set in src/config.ts, so this signup was not stored anywhere.',
       )
       setStatus('error')
       setMessage('Signups are not open yet. Watch the repository and you will not miss the release.')

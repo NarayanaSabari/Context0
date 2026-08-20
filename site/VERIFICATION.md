@@ -142,7 +142,7 @@ Honest gaps, so nobody reads more into the green checkmarks than is there:
   Safari's dynamic toolbar, and real network latency are unverified.
 - **The live domain.** Everything is measured against a local server serving
   `dist/`. Until the DNS record exists, nothing has been checked against
-  `context0.sabarinarayana.com` itself.
+  `kora.sabarinarayana.com` itself.
 - **The publish step.** `actions/upload-pages-artifact` is proven to produce a
   valid artifact, but `actions/deploy-pages` has never run: it is gated on
   `main`, and this work is still on a branch. The repository has zero Pages
