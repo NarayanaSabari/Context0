@@ -118,8 +118,17 @@ const browser = await chromium.launch()
         if (!text || el.childElementCount > 0) continue
         const style = getComputedStyle(el)
         if (style.visibility === 'hidden' || style.display === 'none') continue
+        // Screen-reader-only text is clipped to a 1px box and never painted, so
+        // its contrast against the page is meaningless. Measuring it produced a
+        // real-looking failure for the waitlist's "Email address" label, which
+        // no sighted visitor can see. verify-site.mjs already skips these for
+        // the same reason.
+        if (el.className.toString().includes('sr-only')) continue
+        if (el.closest('.sr-only')) continue
         const r = el.getBoundingClientRect()
         if (r.width === 0 || r.height === 0) continue
+        // A clipped element still reports a box, so check the clip too.
+        if (r.width <= 1 || r.height <= 1) continue
 
         const fg = parse(style.color)
         if (!fg) continue
@@ -298,3 +307,11 @@ findings.sort((a, b) => order[a.severity] - order[b.severity])
 console.log(`\n${findings.length} finding(s):\n`)
 for (const f of findings) console.log(`  [${f.severity}] ${f.message}`)
 console.log('')
+
+// Findings fail the build.
+//
+// This previously exited 0 and only printed, which meant `pnpm check` reported
+// success while listing real problems above it - including, once, a black
+// heading on a black panel measuring 1:1, which is invisible text. A check
+// nobody is forced to read is not a check.
+process.exit(1)

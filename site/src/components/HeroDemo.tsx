@@ -51,16 +51,18 @@ export function HeroDemo() {
       {/* Status strip */}
       <div className="mb-2.5 flex items-center justify-between gap-3 font-mono text-[10px] uppercase tracking-[0.12em] text-dim">
         <span>New session, next day</span>
-        <span className={`flex items-center gap-2 ${remembering ? 'text-accent' : 'text-muted'}`}>
+        <span className={`flex items-center gap-2 ${remembering ? 'text-heading' : 'text-dim'}`}>
           <span
-            className={`h-1.5 w-1.5 rounded-full ${remembering ? 'bg-accent' : 'bg-muted'}`}
+            className={`h-1.5 w-1.5 rounded-full ${
+              remembering ? 'bg-emphasis' : 'border border-dim bg-transparent'
+            }`}
             aria-hidden="true"
           />
           {remembering ? 'Memory on' : 'Memory off'}
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-line-bright bg-surface shadow-xl shadow-[rgba(23,22,38,0.08)]">
+      <div className="overflow-hidden rounded-xl border border-line-bright bg-surface shadow-xl shadow-black/[0.07]">
         {/* Yesterday's conversation */}
         <div className="border-b border-line px-5 py-4">
           <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.1em] text-dim">
@@ -74,7 +76,7 @@ export function HeroDemo() {
                   !remembering && faded ? 'opacity-25 blur-[2px]' : 'opacity-100 blur-0'
                 }`}
               >
-                <span className={turn.who === 'you' ? 'text-accent' : 'text-dim'}>{turn.who}</span>
+                <span className={turn.who === 'you' ? 'text-heading' : 'text-dim'}>{turn.who}</span>
                 <span className="min-w-0 text-body">{turn.text}</span>
               </div>
             ))}
@@ -84,24 +86,24 @@ export function HeroDemo() {
         {/* Today's question */}
         <div className="px-5 py-4">
           <div className="mb-3.5 grid grid-cols-[3.25rem_minmax(0,1fr)] gap-3 font-mono text-[11px] leading-relaxed">
-            <span className="text-accent">you</span>
+            <span className="text-heading">you</span>
             <span className="min-w-0 text-body">Which database does this project use?</span>
           </div>
 
           {remembering ? (
-            <div className="rounded-lg border border-accent/30 bg-accent/[0.06] p-3.5">
+            <div className="rounded-lg bg-emphasis p-3.5">
               <div className="grid grid-cols-[3.25rem_minmax(0,1fr)] gap-3 font-mono text-[11px] leading-relaxed">
-                <span className="text-accent">agent</span>
-                <span className="min-w-0 text-body">
+                <span className="text-on-emphasis/70">agent</span>
+                <span className="min-w-0 text-on-emphasis">
                   PostgreSQL. It replaced MySQL, and I know which one is current.
                 </span>
               </div>
             </div>
           ) : (
-            <div className="rounded-lg border border-danger/30 bg-danger/[0.05] p-3.5">
+            <div className="rounded-lg border border-dashed border-line-bright bg-surface-2/60 p-3.5">
               <div className="grid grid-cols-[3.25rem_minmax(0,1fr)] gap-3 font-mono text-[11px] leading-relaxed">
-                <span className="text-danger">agent</span>
-                <span className="min-w-0 text-body">
+                <span className="text-dim">agent</span>
+                <span className="min-w-0 text-dim">
                   I do not have enough context to answer that.
                 </span>
               </div>
@@ -117,10 +119,10 @@ export function HeroDemo() {
           className={`w-full border-t border-line px-5 py-3.5 text-left font-mono text-[11px] font-medium transition-colors ${
             remembering
               ? 'bg-surface-2 text-muted hover:bg-line'
-              : 'bg-brand/10 text-brand-ink hover:bg-brand/[0.16]'
+              : 'bg-emphasis text-on-emphasis hover:bg-emphasis-soft'
           }`}
         >
-          {remembering ? 'Replay without memory' : 'Replay with Context0 -->'}
+          {remembering ? 'Replay without memory' : 'Replay with kora -->'}
         </button>
       </div>
     </div>

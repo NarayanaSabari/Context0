@@ -6,7 +6,7 @@ import { site } from '../config'
 /**
  * Docs.
  *
- * A landing page rather than a documentation site. Context0 is pre-release,
+ * A landing page rather than a documentation site. kora is pre-release,
  * and documentation written against an API that has not shipped would be wrong
  * by the time anyone read it. So this explains the concepts, which are stable,
  * and links to the repository for anything that could change.
@@ -60,14 +60,14 @@ export function Docs() {
       <PageHeader
         eyebrow="Docs"
         title="Documentation is coming with the first release."
-        intro="Writing an API reference before the API is stable produces documentation that is wrong on arrival. Until Context0 ships, here are the ideas it is built on - those are not going to change - and the source, which is public today."
+        intro="Writing an API reference before the API is stable produces documentation that is wrong on arrival. Until kora ships, here are the ideas it is built on - those are not going to change - and the source, which is public today."
       />
 
       <section className="border-b border-line">
         <div className="mx-auto max-w-4xl px-6 py-[var(--space-section-tight)]">
           <h2 className="text-lg font-semibold tracking-[var(--tracking-tight)]">The ideas</h2>
           <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-muted">
-            Four terms cover most of how Context0 thinks about memory.
+            Four terms cover most of how kora thinks about memory.
           </p>
 
           <dl className="mt-10 divide-y divide-line border-y border-line">
@@ -76,7 +76,7 @@ export function Docs() {
                 key={concept.term}
                 className="grid gap-2 py-6 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)] sm:gap-8"
               >
-                <dt className="font-mono text-[13px] text-brand-ink">{concept.term}</dt>
+                <dt className="font-mono text-[13px] text-heading">{concept.term}</dt>
                 <dd className="text-[15px] leading-relaxed text-muted">{concept.body}</dd>
               </div>
             ))}
@@ -100,7 +100,7 @@ export function Docs() {
                 rel={link.external ? 'noopener noreferrer' : undefined}
                 className="group bg-surface p-6 transition-colors hover:bg-surface-2"
               >
-                <h3 className="flex items-center gap-2 text-[15px] font-semibold tracking-[var(--tracking-tight)] transition-colors group-hover:text-brand-ink">
+                <h3 className="flex items-center gap-2 text-[15px] font-semibold tracking-[var(--tracking-tight)] transition-colors group-hover:text-heading">
                   {link.title}
                   <span aria-hidden="true" className="text-dim">
                     -&gt;

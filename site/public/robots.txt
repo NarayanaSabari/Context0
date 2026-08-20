@@ -2,4 +2,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://context0.sabarinarayana.com/sitemap.xml
+Sitemap: https://kora.sabarinarayana.com/sitemap.xml

@@ -41,7 +41,7 @@ export function Blog() {
     <Page current="/blog/">
       <PageHeader
         eyebrow="Blog"
-        title="Notes from building Context0."
+        title="Notes from building kora."
         intro="Writing about agent memory, the design decisions behind this project, and what breaks along the way. No posts yet - the first ones are being written."
       />
 
@@ -70,7 +70,7 @@ export function Blog() {
                     <time className="font-mono text-[11px] uppercase tracking-[0.1em] text-dim">
                       {post.date}
                     </time>
-                    <h2 className="mt-2 text-xl font-semibold tracking-[var(--tracking-tight)] transition-colors group-hover:text-brand-ink">
+                    <h2 className="mt-2 text-xl font-semibold tracking-[var(--tracking-tight)] transition-colors group-hover:text-heading">
                       {post.title}
                     </h2>
                     <p className="mt-2 text-[15px] leading-relaxed text-muted">{post.summary}</p>

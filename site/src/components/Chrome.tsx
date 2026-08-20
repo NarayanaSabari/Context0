@@ -1,20 +1,33 @@
 import type { ReactNode } from 'react'
 import { site, nav } from '../config'
 
-/** The logo mark, inlined from public/favicon.svg so it needs no network
- *  request and inherits currentColor for the glow. */
-export function Mark({ className = 'h-6 w-6' }: { className?: string }) {
+/**
+ * The kora mark: four squares stepping down toward nothing.
+ *
+ * The shape is the product's own problem statement - context decaying until
+ * there is none left - which is why the nav pairs it with the wordmark and the
+ * hero does not need to explain it.
+ *
+ * Each square is ~0.66 of the one before it and they share a common centre
+ * line, so the sequence reads as one object receding rather than four separate
+ * blocks. Filled with currentColor, so it inherits the ink of whatever it sits
+ * in and carries no hue of its own.
+ *
+ * The favicon is a separate square-format file: this one is 3:1 and would be
+ * illegible in a browser tab.
+ */
+export function Mark({ className = 'h-5' }: { className?: string }) {
   return (
     <svg
-      viewBox="0 0 48 46"
-      className={`${className} glow-brand`}
-      fill="none"
+      viewBox="0 0 70 24"
+      className={`${className} w-auto`}
+      fill="currentColor"
       aria-hidden="true"
     >
-      <path
-        fill="#863bff"
-        d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"
-      />
+      <rect x="0" y="0" width="24" height="24" />
+      <rect x="28" y="4" width="16" height="16" />
+      <rect x="48" y="6.5" width="11" height="11" />
+      <rect x="63" y="8.5" width="7" height="7" />
     </svg>
   )
 }
@@ -38,10 +51,16 @@ export function Nav({ current }: { current?: string }) {
       >
         <a
           href="/"
-          className="flex shrink-0 items-center gap-2.5 py-2 text-[15px] font-semibold tracking-[var(--tracking-tight)]"
+          className="flex shrink-0 items-center gap-2.5 py-2"
+          aria-label={`${site.name} home`}
         >
-          <Mark className="h-5 w-5" />
-          {site.name}
+          <Mark className="h-[13px]" />
+          {/* The wordmark is lowercase and tightly tracked, matching the logo
+              lockup. It is deliberately not the display serif: the serif is the
+              editorial voice for headlines, the wordmark is the brand. */}
+          <span className="text-[17px] font-bold lowercase tracking-[-0.03em] text-heading">
+            {site.name}
+          </span>
         </a>
 
         <div className="flex items-center gap-1 sm:gap-2">
@@ -67,8 +86,8 @@ export function Nav({ current }: { current?: string }) {
             href={site.github}
             target="_blank"
             rel="noopener noreferrer"
-            aria-label="Context0 on GitHub"
-            className="ml-1 inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-line-bright px-2.5 text-[13px] text-body transition-colors hover:border-brand hover:bg-brand/[0.07] hover:text-brand-ink sm:px-3"
+            aria-label="kora on GitHub"
+            className="ml-1 inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-line-bright px-2.5 text-[13px] text-body transition-colors hover:border-emphasis hover:text-heading sm:px-3"
           >
             <GitHubIcon />
             <span className="hidden sm:inline">GitHub</span>
@@ -84,9 +103,12 @@ export function Footer() {
     <footer className="border-t border-line">
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-10 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2.5 text-sm text-muted">
-          <Mark className="h-4 w-4" />
+          <Mark className="h-[10px]" />
           <span>
-            {site.name} - {site.tagline}
+            <span className="font-bold lowercase tracking-[-0.02em] text-heading">
+              {site.name}
+            </span>{' '}
+            - {site.tagline}
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-[13px] text-muted">
@@ -139,7 +161,7 @@ export function Page({ current, children }: { current?: string; children: ReactN
 export function Eyebrow({ children }: { children: ReactNode }) {
   return (
     <p className="t-label mb-6 flex items-center gap-3 text-muted">
-      <span className="h-px w-8 bg-brand" aria-hidden="true" />
+      <span className="h-px w-8 bg-emphasis" aria-hidden="true" />
       {children}
     </p>
   )

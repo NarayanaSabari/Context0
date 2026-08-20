@@ -17,8 +17,13 @@ type Status = 'idle' | 'submitting' | 'done' | 'error'
  *
  * The unconfigured case also warns in the console, so whoever deploys the site
  * finds out during development rather than from a visitor.
+ *
+ * `onDark` renders the form for the inverted closing panel. It is a separate
+ * set of classes rather than a filter or an opacity trick because the contrast
+ * requirement flips completely: on white the button is black on white, and on
+ * black it has to be white on black, and both directions have to clear AA.
  */
-export function Waitlist({ id = 'waitlist' }: { id?: string }) {
+export function Waitlist({ id = 'waitlist', onDark = false }: { id?: string; onDark?: boolean }) {
   const configured = WAITLIST_ENDPOINT.length > 0
   const [status, setStatus] = useState<Status>('idle')
   const [message, setMessage] = useState('')
@@ -59,13 +64,17 @@ export function Waitlist({ id = 'waitlist' }: { id?: string }) {
   if (status === 'done') {
     return (
       <div
-        className="max-w-lg rounded-xl border border-accent/30 bg-accent/[0.06] p-5"
+        className={`max-w-lg rounded-xl border p-5 ${
+          onDark ? 'border-white/30 bg-white/[0.08]' : 'border-emphasis bg-surface'
+        }`}
         role="status"
         aria-live="polite"
       >
-        <p className="text-sm font-medium text-body">You are on the list.</p>
-        <p className="mt-1.5 text-sm text-muted">
-          One email when Context0 ships. Nothing else, ever.
+        <p className={`text-sm font-medium ${onDark ? 'text-on-emphasis' : 'text-heading'}`}>
+          You are on the list.
+        </p>
+        <p className={`mt-1.5 text-sm ${onDark ? 'text-on-emphasis/75' : 'text-muted'}`}>
+          One email when kora ships. Nothing else, ever.
         </p>
       </div>
     )
@@ -89,12 +98,20 @@ export function Waitlist({ id = 'waitlist' }: { id?: string }) {
           placeholder="you@company.com"
           aria-describedby={noteId}
           disabled={status === 'submitting'}
-          className="min-h-12 min-w-0 flex-1 rounded-lg border border-line-bright bg-surface px-4 text-sm text-body transition-colors placeholder:text-dim hover:border-brand/40 focus:border-brand focus:outline-none disabled:opacity-60"
+          className={`min-h-12 min-w-0 flex-1 rounded-lg border px-4 text-sm transition-colors focus:outline-none disabled:opacity-60 ${
+            onDark
+              ? 'border-white/25 bg-white/[0.06] text-on-emphasis placeholder:text-on-emphasis/50 hover:border-white/45 focus:border-white'
+              : 'border-line-bright bg-surface text-body placeholder:text-dim hover:border-emphasis/50 focus:border-emphasis'
+          }`}
         />
         <button
           type="submit"
           disabled={status === 'submitting'}
-          className="min-h-12 shrink-0 rounded-lg bg-brand px-6 text-sm font-semibold text-white transition-colors hover:bg-brand-deep disabled:opacity-60"
+          className={`min-h-12 shrink-0 rounded-lg px-6 text-sm font-semibold transition-colors disabled:opacity-60 ${
+            onDark
+              ? 'bg-on-emphasis text-emphasis hover:bg-white/85'
+              : 'bg-emphasis text-on-emphasis hover:bg-emphasis-soft'
+          }`}
         >
           {status === 'submitting' ? 'Joining...' : 'Join the waitlist'}
         </button>
@@ -102,7 +119,15 @@ export function Waitlist({ id = 'waitlist' }: { id?: string }) {
 
       <p
         id={noteId}
-        className={`mt-3 text-[13px] ${status === 'error' ? 'text-danger' : 'text-dim'}`}
+        className={`mt-3 text-[13px] ${
+          onDark
+            ? status === 'error'
+              ? 'font-medium text-on-emphasis'
+              : 'text-on-emphasis/65'
+            : status === 'error'
+              ? 'font-medium text-heading'
+              : 'text-dim'
+        }`}
         role={status === 'error' ? 'alert' : undefined}
       >
         {status === 'error' ? (
@@ -112,7 +137,11 @@ export function Waitlist({ id = 'waitlist' }: { id?: string }) {
               href={site.github}
               target="_blank"
               rel="noopener noreferrer"
-              className="underline decoration-danger/40 underline-offset-4 hover:decoration-danger"
+              className={`underline underline-offset-4 ${
+                onDark
+                  ? 'decoration-white/40 hover:decoration-white'
+                  : 'decoration-heading/40 hover:decoration-heading'
+              }`}
             >
               Open GitHub
             </a>

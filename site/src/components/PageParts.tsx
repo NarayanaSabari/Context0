@@ -73,8 +73,8 @@ export function ButtonLink({
     'inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors'
   const styles =
     variant === 'primary'
-      ? 'bg-brand text-white hover:bg-brand-deep'
-      : 'border border-line-bright text-body hover:border-brand hover:bg-brand/[0.07] hover:text-brand-ink'
+      ? 'bg-emphasis text-on-emphasis hover:bg-emphasis-soft'
+      : 'border border-line-bright text-body hover:border-emphasis hover:text-heading'
   return (
     <a
       href={href}

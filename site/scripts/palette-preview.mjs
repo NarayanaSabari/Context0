@@ -165,6 +165,14 @@ for (const [key, palette] of Object.entries(PALETTES)) {
         window.scrollTo(0, 0)
         await new Promise((r) => setTimeout(r, 400))
       })
+      // The header is sticky, so in a full-page capture it is painted wherever
+      // the viewport happened to be rather than at the top of the document,
+      // landing on top of the hero. Pinning it for the shot puts it back where
+      // a visitor sees it. This affects the screenshot only.
+      await tab.addStyleTag({
+        content: 'header.sticky { position: absolute !important; top: 0 !important; }',
+      })
+      await tab.waitForTimeout(200)
     }
     await tab.screenshot({
       path: join(out, `${key}-${view.label}.png`),

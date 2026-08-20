@@ -33,7 +33,7 @@ for (const page of PAGES) {
     const url = m[1]
     // Font stylesheets are exercised by every page load already.
     if (url.includes('fonts.googleapis.com') || url.includes('fonts.gstatic.com')) continue
-    if (url.startsWith('https://context0.sabarinarayana.com')) continue
+    if (url.startsWith('https://kora.sabarinarayana.com')) continue
     if (!links.has(url)) links.set(url, new Set())
     links.get(url).add(page)
   }

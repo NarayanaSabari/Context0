@@ -19,13 +19,13 @@ export function Releases() {
         title="No releases yet."
         intro={
           <>
-            Context0 has not cut its first release. When it does, every version will be
+            kora has not cut its first release. When it does, every version will be
             listed here with its changes, and published on{' '}
             <a
               href={`${site.github}/releases`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex min-h-6 items-center text-brand-ink underline decoration-brand/40 underline-offset-4 transition-colors hover:decoration-brand"
+              className="inline-flex min-h-6 items-center text-heading underline decoration-heading/40 underline-offset-4 transition-colors hover:decoration-heading"
             >
               GitHub Releases
             </a>{' '}
@@ -66,7 +66,7 @@ export function Releases() {
                 ['Major', 'Reserved for 1.0 and the stability promise that comes with it.'],
               ].map(([label, body]) => (
                 <div key={label} className="bg-surface p-6">
-                  <dt className="font-mono text-[11px] uppercase tracking-[0.1em] text-brand-ink">
+                  <dt className="font-mono text-[11px] uppercase tracking-[0.1em] text-heading">
                     {label}
                   </dt>
                   <dd className="mt-2.5 text-[14px] leading-relaxed text-muted">{body}</dd>

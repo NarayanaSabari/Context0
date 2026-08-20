@@ -62,7 +62,7 @@ for (const view of [
   await section.screenshot({ path: join(out, `demo-vector-${view.label}.png`) })
 
   // Switch to the graph lane and wait past the staged reveal.
-  await tab.getByRole('tab', { name: 'Context0' }).click()
+  await tab.getByRole('tab', { name: 'kora' }).click()
   await tab.waitForTimeout(1700)
   await section.screenshot({ path: join(out, `demo-graph-${view.label}.png`) })
 

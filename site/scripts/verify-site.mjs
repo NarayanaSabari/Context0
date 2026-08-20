@@ -88,7 +88,7 @@ const base = `http://localhost:${server.address().port}`
 const PAGES = [
   { url: '/', name: 'home', heading: /forgets/i },
   { url: '/releases/', name: 'releases', heading: /releases/i },
-  { url: '/blog/', name: 'blog', heading: /Context0/i },
+  { url: '/blog/', name: 'blog', heading: /kora/i },
   { url: '/docs/', name: 'docs', heading: /documentation/i },
 ]
 const WIDTHS = [

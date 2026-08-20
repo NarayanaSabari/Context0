@@ -9,7 +9,7 @@ import { site } from '../config'
  * The home page.
  *
  * Deliberately an overview, not a product tour. No API reference, no install
- * commands, no architecture diagram, no endpoint tables. Context0 is not
+ * commands, no architecture diagram, no endpoint tables. kora is not
  * released yet, so the job of this page is to explain the idea clearly enough
  * that the right person joins the waitlist. Depth belongs in the docs once
  * there is something to document.
@@ -62,15 +62,11 @@ export function Home() {
       {/* Hero */}
       <section className="relative overflow-hidden border-b border-line">
         <div className="bg-grid pointer-events-none absolute inset-0" aria-hidden="true" />
-        <div
-          className="pointer-events-none absolute -top-40 right-0 h-[30rem] w-[30rem] rounded-full bg-brand/[0.07] blur-[120px]"
-          aria-hidden="true"
-        />
 
         <div className="relative mx-auto grid max-w-6xl gap-14 px-6 py-[var(--space-section)] lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-center lg:gap-20">
           <div className="min-w-0">
-            <p className="t-label mb-7 inline-flex items-center gap-2.5 text-brand-ink">
-              <span className="h-1.5 w-1.5 rounded-full bg-brand" aria-hidden="true" />
+            <p className="t-label mb-7 inline-flex items-center gap-2.5 text-heading">
+              <span className="h-1.5 w-1.5 rounded-full bg-emphasis" aria-hidden="true" />
               In development - Apache 2.0
             </p>
 
@@ -81,7 +77,7 @@ export function Home() {
             </h1>
 
             <p className="t-lead mt-8 max-w-xl">
-              Context0 is an open-source memory engine for AI agents. It remembers what
+              kora is an open-source memory engine for AI agents. It remembers what
               matters across sessions, understands how those memories relate, and runs
               entirely on your own infrastructure.
             </p>
@@ -113,7 +109,7 @@ export function Home() {
                 question, still scores well, and still comes back as though it were true.
               </p>
               <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-muted">
-                Context0 records that one memory replaced another, and why. Ask it the same
+                kora records that one memory replaced another, and why. Ask it the same
                 question and it can follow that edge instead of guessing from wording.
               </p>
             </div>
@@ -142,10 +138,11 @@ export function Home() {
           <div className="reveal mt-16 grid gap-px overflow-hidden rounded-2xl border border-line bg-line sm:grid-cols-3">
             {CAPABILITIES.map((item, index) => (
               <div key={item.title} className="bg-surface p-8">
-                {/* brand-ink rather than brand: the solid brand tone is tuned
-                    for filled buttons, and at this size the darker text tone is
-                    the one that clears AA on the white card. */}
-                <span className="t-label text-brand-ink">
+                {/* The step number is set in full ink rather than a muted grey:
+                    with no accent colour available, weight and darkness are the
+                    only way to make it read as a marker rather than as more
+                    body copy. */}
+                <span className="t-label text-heading">
                   {String(index + 1).padStart(2, '0')}
                 </span>
                 <h3 className="mt-4 text-lg font-semibold tracking-[var(--tracking-tight)]">
@@ -168,7 +165,7 @@ export function Home() {
               <dl className="grid gap-10 sm:grid-cols-3">
                 {PRINCIPLES.map((item) => (
                   <div key={item.label}>
-                    <dt className="t-label text-brand-ink">{item.label}</dt>
+                    <dt className="t-label text-heading">{item.label}</dt>
                     <dd className="mt-3.5 text-[15px] leading-relaxed text-muted">
                       {item.body}
                     </dd>
@@ -183,28 +180,30 @@ export function Home() {
       {/* Closing call to action */}
       <section>
         <div className="mx-auto max-w-6xl px-6 py-[var(--space-section)]">
-          <div className="reveal relative overflow-hidden rounded-3xl border border-brand/25 bg-gradient-to-b from-brand/[0.07] to-transparent px-7 py-16 sm:px-14">
-            <div
-              className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full bg-brand/[0.10] blur-[100px]"
-              aria-hidden="true"
-            />
+          {/* The closing panel inverts: black card, white text. On a page with
+              no accent colour this is the one moment of full contrast, which
+              makes the final ask the loudest thing on the page without
+              introducing a hue to do it. */}
+          <div className="on-emphasis reveal relative overflow-hidden rounded-3xl bg-emphasis px-7 py-16 sm:px-14">
             <div className="relative">
-              <h2 className="t-title optical-left max-w-xl">Be there when it ships.</h2>
-              <p className="t-lead mt-5 max-w-lg">
-                Context0 is being built in the open. Join the waitlist for one email when the
+              <h2 className="t-title optical-left max-w-xl text-on-emphasis">
+                Be there when it ships.
+              </h2>
+              <p className="mt-5 max-w-lg text-[length:var(--text-lead)] leading-relaxed text-on-emphasis/75">
+                kora is being built in the open. Join the waitlist for one email when the
                 first release lands, or follow along on{' '}
                 <a
                   href={site.github}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex min-h-6 items-center text-brand-ink underline decoration-brand/40 underline-offset-4 transition-colors hover:decoration-brand"
+                  className="inline-flex min-h-6 items-center text-on-emphasis underline decoration-white/40 underline-offset-4 transition-colors hover:decoration-white"
                 >
                   GitHub
                 </a>
                 .
               </p>
               <div className="mt-10">
-                <Waitlist id="closing" />
+                <Waitlist id="closing" onDark />
               </div>
             </div>
           </div>

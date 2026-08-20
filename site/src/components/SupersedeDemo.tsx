@@ -4,9 +4,7 @@ import { useEffect, useState } from 'react'
  * The supersedes demonstration.
  *
  * The design brief calls this "the single strongest idea on the page" and asks
- * for it to be shown rather than asserted. Until now the word "supersede"
- * appeared once, in body copy, which is exactly the asserting the brief warned
- * against.
+ * for it to be shown rather than asserted.
  *
  * The comparison is deliberately like-for-like: the same question, against the
  * same stored memories, answered two ways. A vector store ranks every chunk
@@ -17,6 +15,16 @@ import { useEffect, useState } from 'react'
  *
  * Nothing here is invented: the query, the facts, and the edge types are the
  * ones from the brief.
+ *
+ * On correctness without colour: an earlier version encoded right and wrong as
+ * cyan and red, which is the encoding that fails for the ~8% of men with a
+ * colour vision deficiency and disappears entirely in print. The palette is
+ * monochrome now, so the distinction is carried by things that survive both:
+ *
+ * - The wrong answer is struck through and its row is recessed.
+ * - The current fact is a filled black panel; the stale one is outlined grey.
+ * - Every state also carries a word - "stale", "current", "supersedes" - so
+ *   nothing depends on noticing a visual treatment at all.
  */
 
 type Lane = 'vector' | 'graph'
@@ -67,7 +75,9 @@ export function SupersedeDemo() {
         </p>
       </div>
 
-      {/* Lane switch */}
+      {/* Lane switch. The selected lane is a solid black bar rather than a
+          tinted one, which is the strongest available "you are here" without
+          reaching for a hue. */}
       <div
         className="grid grid-cols-2 border-x border-line-bright"
         role="tablist"
@@ -76,7 +86,7 @@ export function SupersedeDemo() {
         {(
           [
             ['vector', 'Vector search'],
-            ['graph', 'Context0'],
+            ['graph', 'kora'],
           ] as const
         ).map(([value, label]) => {
           const active = lane === value
@@ -87,11 +97,9 @@ export function SupersedeDemo() {
               role="tab"
               aria-selected={active}
               onClick={() => setLane(value)}
-              className={`min-h-11 border-b px-3 py-2.5 text-center text-[13px] font-medium transition-colors ${
+              className={`min-h-11 border-b px-3 py-2.5 text-center text-[13px] transition-colors ${
                 active
-                  ? value === 'graph'
-                    ? 'border-brand bg-brand/[0.07] text-brand-ink'
-                    : 'border-danger bg-danger/[0.05] text-danger'
+                  ? 'border-emphasis bg-emphasis font-semibold text-on-emphasis'
                   : 'border-line-bright text-muted hover:bg-surface-2 hover:text-heading'
               }`}
             >
@@ -107,7 +115,7 @@ export function SupersedeDemo() {
             <p className="t-label text-dim">Follows the relationship</p>
 
             <div className="mt-4 space-y-0">
-              {/* Stale fact */}
+              {/* Stale fact: outlined, recessed, struck through, and labelled. */}
               <div
                 className={`rounded-xl border border-line bg-surface-2/70 px-4 py-3 transition-all duration-500 ${
                   step >= 1 ? 'opacity-100 blur-0' : 'opacity-0 blur-[3px]'
@@ -115,9 +123,10 @@ export function SupersedeDemo() {
               >
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                   <span className="t-label rounded bg-line px-1.5 py-0.5 text-dim">Fact</span>
-                  <span className="font-mono text-[13px] text-muted line-through decoration-danger/60">
+                  <span className="font-mono text-[13px] text-dim line-through decoration-dim/70">
                     uses MySQL
                   </span>
+                  <span className="t-label ml-auto text-dim">superseded</span>
                 </div>
               </div>
 
@@ -129,32 +138,36 @@ export function SupersedeDemo() {
                   step >= 2 ? 'opacity-100' : 'opacity-0'
                 }`}
               >
-                <span className="h-8 w-px shrink-0 bg-brand/45" aria-hidden="true" />
-                <span className="t-label rounded-full border border-brand/35 bg-brand/[0.08] px-2.5 py-1 text-brand-ink">
+                <span className="h-8 w-px shrink-0 bg-emphasis/40" aria-hidden="true" />
+                <span className="t-label rounded-full border border-emphasis px-2.5 py-1 text-heading">
                   supersedes
                 </span>
               </div>
 
-              {/* Current fact */}
+              {/* Current fact: a filled black panel. Inverting it is the
+                  monochrome equivalent of the accent treatment it replaced, and
+                  it makes the current fact unmistakably the loudest thing in
+                  the lane. */}
               <div
-                className={`rounded-xl border border-brand/35 bg-brand/[0.05] px-4 py-3 transition-all duration-500 ${
+                className={`rounded-xl bg-emphasis px-4 py-3 transition-all duration-500 ${
                   step >= 3 ? 'opacity-100 blur-0' : 'opacity-0 blur-[3px]'
                 }`}
               >
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                  <span className="t-label rounded bg-brand/15 px-1.5 py-0.5 text-brand-ink">
+                  <span className="t-label rounded bg-white/20 px-1.5 py-0.5 text-on-emphasis">
                     Fact
                   </span>
-                  <span className="font-mono text-[13px] font-medium text-heading">
+                  <span className="font-mono text-[13px] font-medium text-on-emphasis">
                     uses PostgreSQL
                   </span>
+                  <span className="t-label ml-auto text-on-emphasis/70">current</span>
                 </div>
                 <p
-                  className={`mt-2.5 border-t border-brand/20 pt-2.5 font-mono text-[11.5px] leading-relaxed text-muted transition-opacity duration-500 ${
+                  className={`mt-2.5 border-t border-white/20 pt-2.5 font-mono text-[11.5px] leading-relaxed text-on-emphasis/80 transition-opacity duration-500 ${
                     step >= 3 ? 'opacity-100' : 'opacity-0'
                   }`}
                 >
-                  <span className="text-brand-ink">because</span> the project needed graph
+                  <span className="text-on-emphasis">because</span> the project needed graph
                   support
                 </p>
               </div>
@@ -166,7 +179,7 @@ export function SupersedeDemo() {
               }`}
             >
               <p className="t-label text-dim">Answer</p>
-              <p className="mt-2 text-[15px] leading-relaxed text-heading">
+              <p className="mt-2 text-[15px] font-medium leading-relaxed text-heading">
                 PostgreSQL, and it knows the MySQL fact is no longer current.
               </p>
             </div>
@@ -184,11 +197,17 @@ export function SupersedeDemo() {
                   <span className="font-mono text-[11px] tabular-nums text-dim">
                     {chunk.score.toFixed(2)}
                   </span>
-                  <span className="min-w-0 flex-1 font-mono text-[12.5px] leading-snug text-muted">
+                  <span
+                    className={`min-w-0 flex-1 font-mono text-[12.5px] leading-snug ${
+                      chunk.stale ? 'text-dim line-through decoration-dim/70' : 'text-muted'
+                    }`}
+                  >
                     {chunk.text}
                   </span>
                   {chunk.stale ? (
-                    <span className="t-label shrink-0 text-danger">stale</span>
+                    <span className="t-label shrink-0 rounded border border-line-bright px-1.5 py-0.5 text-dim">
+                      stale
+                    </span>
                   ) : null}
                 </div>
               ))}
@@ -196,8 +215,11 @@ export function SupersedeDemo() {
 
             <div className="mt-5 border-t border-line pt-4">
               <p className="t-label text-dim">Answer</p>
-              <p className="mt-2 text-[15px] leading-relaxed text-heading">
-                MySQL, because it scored highest. Nothing records that it changed.
+              <p className="mt-2 text-[15px] leading-relaxed text-muted">
+                <span className="font-medium text-heading line-through decoration-heading/50">
+                  MySQL
+                </span>
+                , because it scored highest. Nothing records that it changed.
               </p>
             </div>
           </div>

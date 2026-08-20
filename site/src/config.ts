@@ -7,15 +7,16 @@
  */
 
 export const site = {
-  name: 'Context0',
-  domain: 'context0.sabarinarayana.com',
-  url: 'https://context0.sabarinarayana.com',
+  name: 'kora',
+  domain: 'kora.sabarinarayana.com',
+  url: 'https://kora.sabarinarayana.com',
   tagline: 'Memory for AI agents',
   description:
-    'Context0 is an open-source memory engine for AI agents. Graph-first, self-hosted, Apache 2.0. Join the waitlist.',
-  // The canonical location. github.com/context0/Context0 also resolves via a
-  // rename redirect, but linking through a redirect breaks the moment someone
-  // claims that name, so point at the real owner.
+    'kora is an open-source memory engine for AI agents. Graph-first, self-hosted, Apache 2.0. Join the waitlist.',
+  // Still the Context0 repository: the product is now called kora, but the
+  // GitHub repo has not been renamed. Pointing at the real current location
+  // rather than at a name that does not resolve yet. Update this the moment the
+  // repository is renamed, and GitHub's own redirect will cover the gap.
   github: 'https://github.com/NarayanaSabari/Context0',
 } as const
 
