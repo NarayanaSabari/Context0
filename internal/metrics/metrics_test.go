@@ -189,8 +189,24 @@ func TestSetPoolStatsSourcePopulatesGauges(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer pool.Close()
-	if err := pool.Ping(ctx); err != nil {
-		t.Fatalf("ping: %v", err)
+
+	// Retry the initial connection. This test asserts that the sampler
+	// populates gauges from a live pool, not that the database is reachable at
+	// this instant: a rolling deployment or a restarted port-forward makes the
+	// first ping fail transiently, and failing here would report that as a
+	// metrics defect.
+	var pingErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Second)
+		}
+		if pingErr = pool.Ping(ctx); pingErr == nil {
+			break
+		}
+	}
+	if pingErr != nil {
+		t.Skipf("database unreachable after retries, so the sampler cannot be "+
+			"observed: %v", pingErr)
 	}
 
 	SetPoolStatsSource(ctx, pool)

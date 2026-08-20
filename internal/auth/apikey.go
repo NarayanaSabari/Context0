@@ -5,6 +5,9 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"math"
 	"net/http"
 	"strconv"
@@ -157,8 +160,10 @@ func (a *APIKeyAuth) UnaryInterceptor() grpc.UnaryServerInterceptor {
 		// returned the version, node count and edge count to anyone who could
 		// reach the port.
 		if info.FullMethod == "/context0.v1.HealthService/Health" {
-			if keyID, ok := a.verify(apiKeyFromMetadata(ctx)); ok && a.allowRequest(keyID) {
-				return handler(WithAuthenticated(ctx), req)
+			if keyID, ok := a.verify(apiKeyFromMetadata(ctx)); ok {
+				if alreadyRateLimited(ctx) || a.allowRequest(keyID) {
+					return handler(WithAuthenticated(ctx), req)
+				}
 			}
 			return handler(ctx, req)
 		}
@@ -181,12 +186,72 @@ func (a *APIKeyAuth) UnaryInterceptor() grpc.UnaryServerInterceptor {
 
 		// Enforce per-key rate limiting via token bucket, keyed on identity so
 		// the map never holds credentials.
-		if !a.allowRequest(keyID) {
+		//
+		// Skipped when the HTTP layer already spent this request's token; see
+		// RateLimitedHeader.
+		if !alreadyRateLimited(ctx) && !a.allowRequest(keyID) {
 			return nil, status.Error(codes.ResourceExhausted, "rate limit exceeded")
 		}
 
 		return handler(ctx, req)
 	}
+}
+
+// RateLimitedHeader marks a request whose rate-limit token was already spent.
+//
+// A REST call traverses both layers: HTTPMiddleware authenticates it, then
+// grpc-gateway dials the local gRPC server where UnaryInterceptor
+// authenticates it again. Both called allowRequest, so every REST request
+// consumed two tokens and the effective limit was half the configured one --
+// measured as the first 429 arriving after 30 successes against a 60/minute
+// budget.
+//
+// Halving the limit is the smaller problem. The two layers can also disagree:
+// the HTTP layer admits a request, the gRPC layer rejects it, and the caller
+// sees a 429 for a request that was already accepted and partly processed.
+//
+// The gateway connection is loopback and not reachable from outside the
+// process, so a client cannot set this itself: any external gRPC caller
+// arrives on the listener without it and is limited normally.
+// RateLimitedHeader is exported so the gateway can be told to forward it;
+// grpc-gateway's default matcher drops non-permanent headers.
+const RateLimitedHeader = "x-context0-rate-limited"
+
+// rateLimitToken is the value the marker must carry to be believed.
+//
+// A header name alone is not enough. The gRPC listener is a service port, so
+// anything in the cluster can dial it directly, and a client that simply set
+// the marker would skip the bucket entirely -- turning the rate limit into a
+// suggestion for exactly the callers most worth limiting.
+//
+// The value is random per process and never leaves it except over the
+// gateway's loopback connection, so an external caller cannot produce it. A
+// forged marker fails the comparison and the request is limited normally.
+var rateLimitToken = newRateLimitToken()
+
+func newRateLimitToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// Without a usable token the safe failure is to charge every request,
+		// which halves the effective limit but never lets one bypass it.
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
+
+// alreadyRateLimited reports whether this request already spent a token in the
+// HTTP layer.
+func alreadyRateLimited(ctx context.Context) bool {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return false
+	}
+	got := md.Get(RateLimitedHeader)
+	if len(got) == 0 || rateLimitToken == "" {
+		return false
+	}
+	// Constant time: the comparison is against a process secret.
+	return subtle.ConstantTimeCompare([]byte(got[0]), []byte(rateLimitToken)) == 1
 }
 
 // apiKeyFromMetadata pulls the presented key out of gRPC metadata, returning
@@ -245,6 +310,7 @@ func (a *APIKeyAuth) HTTPMiddleware(next http.Handler) http.Handler {
 			// disclose rather than treating every caller here as anonymous.
 			if keyID, ok := a.verify(r.Header.Get("X-API-Key")); ok && a.allowRequest(keyID) {
 				r = r.WithContext(WithAuthenticated(r.Context()))
+				r.Header.Set(RateLimitedHeader, rateLimitToken)
 			}
 			next.ServeHTTP(w, r)
 			return
@@ -275,6 +341,15 @@ func (a *APIKeyAuth) HTTPMiddleware(next http.Handler) http.Handler {
 			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
 			return
 		}
+
+		// This request's token is spent. grpc-gateway forwards the header to
+		// the local gRPC server, where the interceptor would otherwise charge
+		// the same request a second time.
+		//
+		// Set on the request the gateway will forward, never trusted from the
+		// client: any value the caller supplied is overwritten here, and a
+		// request that never passed through this middleware never carries it.
+		r.Header.Set(RateLimitedHeader, rateLimitToken)
 
 		next.ServeHTTP(w, r)
 	})

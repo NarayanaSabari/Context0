@@ -567,3 +567,172 @@ func TestRateLimitBucketEviction(t *testing.T) {
 		}
 	})
 }
+
+// TestRestRequestSpendsOneToken covers a rate limit that charged twice.
+//
+// A REST call traverses both auth layers: HTTPMiddleware authenticates it,
+// then grpc-gateway dials the local gRPC server where UnaryInterceptor
+// authenticates it again. Both called allowRequest, so every REST request
+// consumed two tokens and the effective limit was half the configured one.
+// Measured against the deployed API with the limit set to 60/minute: the first
+// 429 arrived after 30 successes.
+//
+// Halving the limit is the smaller problem. The layers can also disagree --
+// the HTTP layer admits a request and the gRPC layer rejects it -- so a caller
+// gets a 429 for a request that was already accepted and partly processed.
+func TestRestRequestSpendsOneToken(t *testing.T) {
+	const limit = 20
+	a := NewAPIKeyAuth([]string{"test-key"}, limit)
+
+	// Stand in for the gateway: after the HTTP middleware runs, the same
+	// request reaches the gRPC interceptor carrying whatever headers the
+	// gateway forwards.
+	var reachedGRPC int
+	handler := a.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		md := metadata.New(map[string]string{})
+		if v := r.Header.Get(RateLimitedHeader); v != "" {
+			md.Set(RateLimitedHeader, v)
+		}
+		md.Set("x-api-key", "test-key")
+		ctx := metadata.NewIncomingContext(r.Context(), md)
+
+		_, err := a.UnaryInterceptor()(ctx, nil,
+			&grpc.UnaryServerInfo{FullMethod: "/context0.v1.Context0/Query"},
+			func(context.Context, any) (any, error) { return nil, nil })
+		if err != nil {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		reachedGRPC++
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	accepted := 0
+	for i := 0; i < limit*2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/v1/memories/query?query=x", nil)
+		req.Header.Set("X-API-Key", "test-key")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code == http.StatusOK {
+			accepted++
+		}
+	}
+
+	// A full bucket of `limit` tokens must admit `limit` requests, not half.
+	if accepted != limit {
+		t.Errorf("a %d-request budget admitted %d REST requests; each request "+
+			"is being charged more than one token, so the effective limit is "+
+			"not the configured one", limit, accepted)
+	}
+	if reachedGRPC != accepted {
+		t.Errorf("%d requests passed the HTTP layer but %d reached the handler: "+
+			"the two layers disagree, so a caller can be rejected after its "+
+			"request was already accepted", accepted, reachedGRPC)
+	}
+}
+
+// TestForgedRateLimitHeaderCannotBypassTheLimit is the security half of the
+// fix above.
+//
+// The marker is only safe because the HTTP middleware sets it on every request
+// it admits, overwriting anything the client sent. If a caller could supply it,
+// the rate limit would be advisory: send the header, skip the bucket.
+func TestForgedRateLimitHeaderCannotBypassTheLimit(t *testing.T) {
+	const limit = 10
+	a := NewAPIKeyAuth([]string{"test-key"}, limit)
+
+	handler := a.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	accepted := 0
+	for i := 0; i < limit*5; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/v1/memories/query?query=x", nil)
+		req.Header.Set("X-API-Key", "test-key")
+		// The client claims its token was already spent.
+		req.Header.Set(RateLimitedHeader, "1")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code == http.StatusOK {
+			accepted++
+		}
+	}
+
+	if accepted > limit {
+		t.Errorf("a client that set %s bypassed the rate limit: %d requests "+
+			"admitted against a budget of %d", RateLimitedHeader, accepted, limit)
+	}
+}
+
+// TestDirectGRPCCallerIsStillLimited: an external gRPC client never passes
+// through the HTTP middleware, so it must be limited normally.
+func TestDirectGRPCCallerIsStillLimited(t *testing.T) {
+	const limit = 15
+	a := NewAPIKeyAuth([]string{"test-key"}, limit)
+	interceptor := a.UnaryInterceptor()
+
+	accepted := 0
+	for i := 0; i < limit*3; i++ {
+		md := metadata.New(map[string]string{"x-api-key": "test-key"})
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+		if _, err := interceptor(ctx, nil,
+			&grpc.UnaryServerInfo{FullMethod: "/context0.v1.Context0/Query"},
+			func(context.Context, any) (any, error) { return nil, nil }); err == nil {
+			accepted++
+		}
+	}
+
+	if accepted != limit {
+		t.Errorf("a direct gRPC caller was admitted %d times against a budget "+
+			"of %d", accepted, limit)
+	}
+
+	// A direct gRPC caller must not be able to forge its way past the bucket.
+	//
+	// The gRPC listener is a service port, reachable by anything in the
+	// cluster, so a marker that was merely present would let exactly the
+	// callers most worth limiting skip the bucket. The marker carries a
+	// per-process random value instead, which an external caller cannot
+	// produce.
+	b := NewAPIKeyAuth([]string{"test-key"}, limit)
+	bInterceptor := b.UnaryInterceptor()
+	forged := 0
+	for i := 0; i < limit*3; i++ {
+		md := metadata.New(map[string]string{
+			"x-api-key":       "test-key",
+			RateLimitedHeader: "1", // a guess
+		})
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+		if _, err := bInterceptor(ctx, nil,
+			&grpc.UnaryServerInfo{FullMethod: "/context0.v1.Context0/Query"},
+			func(context.Context, any) (any, error) { return nil, nil }); err == nil {
+			forged++
+		}
+	}
+	if forged != limit {
+		t.Errorf("a direct gRPC caller presenting a forged %s was admitted %d "+
+			"times against a budget of %d; the rate limit can be bypassed by "+
+			"setting a header", RateLimitedHeader, forged, limit)
+	}
+}
+
+// TestRateLimitTokenIsUnguessable: the marker's value is what makes it
+// trustworthy, so it must be long, random, and not a constant.
+func TestRateLimitTokenIsUnguessable(t *testing.T) {
+	if rateLimitToken == "" {
+		t.Fatal("the rate-limit token is empty; the marker would never be believed")
+	}
+	if len(rateLimitToken) < 32 {
+		t.Errorf("the rate-limit token is only %d characters; it must not be "+
+			"feasible to guess", len(rateLimitToken))
+	}
+	for _, obvious := range []string{"1", "true", "yes", "context0"} {
+		if rateLimitToken == obvious {
+			t.Errorf("the rate-limit token is the guessable constant %q", obvious)
+		}
+	}
+	// Two generations must differ, or it is not random.
+	if a, b := newRateLimitToken(), newRateLimitToken(); a == b {
+		t.Error("newRateLimitToken returned the same value twice")
+	}
+}

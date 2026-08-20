@@ -152,6 +152,19 @@ func main() {
 			if strings.EqualFold(key, "X-API-Key") {
 				return "x-api-key", true
 			}
+			// Forwarded so the gRPC interceptor knows this request already
+			// spent its rate-limit token in the HTTP middleware. Without it
+			// every REST call is charged twice and the effective limit is half
+			// what the operator configured.
+			//
+			// grpc-gateway's default matcher only forwards permanent HTTP
+			// headers, so this has to be named explicitly. It is safe to
+			// forward because the HTTP middleware overwrites it on every
+			// request before the gateway ever sees it: a value supplied by a
+			// client is discarded, not honoured.
+			if strings.EqualFold(key, auth.RateLimitedHeader) {
+				return auth.RateLimitedHeader, true
+			}
 			return runtime.DefaultHeaderMatcher(key)
 		}),
 	)
