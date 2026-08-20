@@ -145,6 +145,12 @@ spec:
               port: http
             periodSeconds: 5
             failureThreshold: 2
+            # Above the handler's own 1s database bound, so the handler always
+            # gets to answer. At the Kubernetes default of 1s the two race, and
+            # a kubelet that wins cancels the request mid-ping -- which the
+            # handler used to report as "database unreachable" while the
+            # database was healthy.
+            timeoutSeconds: 3
           lifecycle:
             preStop:
               exec:

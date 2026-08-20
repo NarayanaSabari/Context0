@@ -269,6 +269,22 @@ done
 check "the exact public path is served" "200" "$(raw_status /metrics)"
 check "the exact probe path is served" "200" "$(raw_status /readyz)"
 
+# Readiness must describe the database, not the client that asked. This closes
+# the socket immediately, which is what a kubelet whose probe timeout elapses
+# looks like: the handler used to answer "database unreachable" while the
+# database was healthy, removing the pod from Service endpoints for a reason
+# that never happened.
+check "readiness does not blame the database for a departed caller" "200" \
+  "$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c \
+    "printf 'GET /readyz HTTP/1.1\r\nHost: localhost\r\n\r\n' | nc localhost 8080 2>/dev/null | head -1" \
+    2>/dev/null | tr -d '\r' | awk '{print $2}')"
+
+# The kubelet's own timeout must sit above the handler's 1s database bound, or
+# the two race and whichever fires first decides the answer.
+check "the readiness probe timeout exceeds the handler's database bound" "yes" \
+  "$(t=$(kubectl get deploy -n "$NS" context0-api -o jsonpath='{.spec.template.spec.containers[0].readinessProbe.timeoutSeconds}' 2>/dev/null); \
+    [[ -n "$t" && "$t" -gt 1 ]] && echo yes || echo no)"
+
 # Keys are stored hashed, so the running process cannot hand back a credential
 # even if it is compromised or dumped.
 # /v1/health answers without a credential because probes cannot present one,

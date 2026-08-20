@@ -23,6 +23,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -101,12 +102,33 @@ func (p *Probes) Ready(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), readinessTimeout)
+	// The ping is bounded by this handler, not by the caller.
+	//
+	// Deriving it from r.Context() meant a kubelet that hung up mid-request --
+	// its own probe timeout elapsing, which defaults to 1s against a
+	// readinessTimeout of 1s, so the two race -- produced "database
+	// unreachable" while the database was healthy. That removes the pod from
+	// Service endpoints for a reason that never happened, and points whoever
+	// investigates at the wrong component.
+	//
+	// context.WithoutCancel keeps the caller's values while dropping its
+	// cancellation, so the answer describes the database rather than the
+	// client that asked.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), readinessTimeout)
 	defer cancel()
 
 	if err := p.pool.Ping(ctx); err != nil {
 		// Unreadiness removes the pod from Service endpoints without
 		// restarting it, so the pod recovers on its own once the database does.
+		//
+		// The two failures are reported separately because they call for
+		// different action: a timeout on our own deadline means the database
+		// is slow or gone, while any other error is the connection itself.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			writePlain(w, http.StatusServiceUnavailable,
+				"database did not respond within "+readinessTimeout.String())
+			return
+		}
 		writePlain(w, http.StatusServiceUnavailable, "database unreachable")
 		return
 	}

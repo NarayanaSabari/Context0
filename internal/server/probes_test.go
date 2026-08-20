@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -161,4 +162,100 @@ func TestRegisterWiresAllThree(t *testing.T) {
 			t.Errorf("%s is not registered", path)
 		}
 	}
+}
+
+// blockingPinger blocks for a fixed delay, honouring context cancellation the
+// way a real pool does.
+type blockingPinger struct{ delay time.Duration }
+
+func (b blockingPinger) Ping(ctx context.Context) error {
+	select {
+	case <-time.After(b.delay):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// TestReadyIgnoresCallerCancellation covers a readiness answer that described
+// the caller rather than the database.
+//
+// The database check was bounded by r.Context(), so a kubelet that hung up
+// mid-request -- its probe timeoutSeconds elapsing, which defaults to 1s
+// against a readinessTimeout of 1s, so the two race on a loaded node --
+// produced "database unreachable" while the database was perfectly healthy.
+// The pod is then removed from Service endpoints for a reason that never
+// happened, and the message sends whoever investigates to the wrong component.
+func TestReadyIgnoresCallerCancellation(t *testing.T) {
+	p := NewProbes(blockingPinger{delay: 10 * time.Millisecond})
+	p.MarkStarted()
+
+	// A caller that has already gone away.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	rec := httptest.NewRecorder()
+	p.Ready(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil).WithContext(ctx))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("a healthy pod answered %d %q because the caller disconnected; "+
+			"readiness must describe the database, not the client that asked",
+			rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// TestReadyStillFailsOnASlowDatabase keeps the fix above from being bought by
+// ignoring the database entirely: the handler's own bound must still apply.
+func TestReadyStillFailsOnASlowDatabase(t *testing.T) {
+	// Well past readinessTimeout.
+	p := NewProbes(blockingPinger{delay: readinessTimeout * 5})
+	p.MarkStarted()
+
+	start := time.Now()
+	rec := httptest.NewRecorder()
+	p.Ready(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	elapsed := time.Since(start)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("a database that never answers produced %d; the pod would keep "+
+			"taking traffic it cannot serve", rec.Code)
+	}
+	// The handler must give up on its own deadline rather than waiting for the
+	// database, or a hung database holds the probe open until the kubelet
+	// times out and the reason is lost.
+	if elapsed > readinessTimeout*2 {
+		t.Errorf("the handler took %s to answer against a %s bound; it is "+
+			"waiting on the database instead of its own deadline",
+			elapsed, readinessTimeout)
+	}
+	// The two failures call for different action, so they must read
+	// differently: a timeout means slow or gone, anything else is the
+	// connection itself.
+	if body := rec.Body.String(); !strings.Contains(body, "did not respond") {
+		t.Errorf("a timeout was reported as %q; it should be distinguishable "+
+			"from a connection failure", strings.TrimSpace(body))
+	}
+}
+
+// TestReadyReportsConnectionFailureDistinctly: the other half of the pair.
+func TestReadyReportsConnectionFailureDistinctly(t *testing.T) {
+	p := NewProbes(failingPinger{})
+	p.MarkStarted()
+
+	rec := httptest.NewRecorder()
+	p.Ready(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("an unreachable database produced %d", rec.Code)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != "database unreachable" {
+		t.Errorf("connection failure reported as %q, want \"database unreachable\"", body)
+	}
+}
+
+// failingPinger fails immediately, as a refused connection does.
+type failingPinger struct{}
+
+func (failingPinger) Ping(context.Context) error {
+	return errors.New("connection refused")
 }
