@@ -38,20 +38,32 @@ unauthenticated.
 
 The Postgres role and database were also renamed from `context0` to `kora`.
 Those live in your data, not in this repo, so a new image points at names that
-do not exist yet and fails with `role "kora" does not exist`. Run the migration
-against a stopped API:
+do not exist yet and fails with `role "kora" does not exist`. The Postgres
+StatefulSet's volume survives a `helm upgrade`, so a Kubernetes deployment hits
+this too, not just Docker Compose.
+
+Pick whichever fits. Either point the chart back at the names your database
+already uses, which changes nothing on disk:
+
+```bash
+helm upgrade kora ./charts/kora \
+  --set postgres.user=context0 --set postgres.database=context0
+```
+
+Or rename the role and database to match the new defaults, with the API
+stopped:
 
 ```bash
 scripts/migrate_rename.sh
 ```
 
-It renames the role and the database (catalog-only, so the cost does not scale
-with database size), reaps any privileged helper role left by an interrupted
-run, and verifies the graph is still readable afterwards. It is idempotent.
+The script renames both (catalog-only, so the cost does not scale with database
+size), reaps any privileged helper role left by an interrupted run, and
+verifies the graph is still readable afterwards. It is idempotent.
 
-The AGE graph and its schema keep the name `context0` deliberately - renaming
-those is a data migration with no functional benefit. See `GraphName` in
-`internal/graph/age.go`.
+The AGE graph and its schema keep the name `context0` under either option -
+renaming those is a data migration with no functional benefit. See `GraphName`
+in `internal/graph/age.go`.
 
 ### Prerequisites
 

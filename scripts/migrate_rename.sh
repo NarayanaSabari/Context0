@@ -109,11 +109,23 @@ fi
 # cleanup_tmp_role removes the temporary superuser created below. It is
 # defined unconditionally, and does nothing when TMP_ROLE is unset, so the
 # already-migrated path can call it without special-casing.
+#
+# It deliberately does NOT connect as CONN_USER. By the time cleanup runs,
+# CONN_USER is the temporary role itself, and Postgres refuses to let a role
+# drop itself ("current user cannot be dropped"), so the trap fired, appeared
+# to succeed because of the `|| true`, and left a LOGIN SUPERUSER behind. It
+# connects as the renamed application role with the real password instead.
 TMP_ROLE=""
 cleanup_tmp_role() {
     [ -n "$TMP_ROLE" ] || return 0
-    psql_as "$CONN_USER" postgres \
-        "DROP ROLE IF EXISTS $TMP_ROLE" >/dev/null 2>&1 || true
+    local saved="${POSTGRES_PASSWORD:-}"
+    POSTGRES_PASSWORD="${RESTORE_PASS:-$saved}"
+    # After a successful rename the application role is $NEW_NAME; if the
+    # rename failed partway it is still $OLD_NAME. Try both.
+    psql_as "$NEW_NAME" postgres "DROP ROLE IF EXISTS $TMP_ROLE" >/dev/null 2>&1 ||
+        psql_as "$OLD_NAME" postgres "DROP ROLE IF EXISTS $TMP_ROLE" >/dev/null 2>&1 ||
+        echo "    WARNING: could not drop temporary superuser $TMP_ROLE" >&2
+    POSTGRES_PASSWORD="$saved"
 }
 
 # reap_stray_roles drops any kora_rename_* superuser left behind by an earlier
@@ -157,6 +169,10 @@ if [ "$ALREADY_ROLE" = "0" ]; then
     TMP_ROLE="kora_rename_$$"
     TMP_PASS=$(openssl rand -hex 16)
 
+    # Recorded before the trap is armed: cleanup needs the real password to
+    # connect as the application role, and the trap can fire on the very next
+    # statement.
+    RESTORE_PASS="${POSTGRES_PASSWORD:-}"
     trap cleanup_tmp_role EXIT
 
     psql_as "$OLD_NAME" postgres \
