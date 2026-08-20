@@ -68,10 +68,10 @@ const browser = await chromium.launch()
   await context.close()
 }
 
-// 2. Text contrast against the dark background.
+// 2. Text contrast against the page background.
 //
-// WCAG AA wants 4.5:1 for body text and 3:1 for large text. On a near-black
-// site the muted greys are exactly where this slips.
+// WCAG AA wants 4.5:1 for body text and 3:1 for large text. The muted greys
+// are exactly where this slips.
 {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
   const tab = await context.newPage()
@@ -105,7 +105,11 @@ const browser = await chromium.launch()
           const c = parse(getComputedStyle(n).backgroundColor)
           if (c && c[3] > 0.9) return c
         }
-        return [10, 10, 15, 1]
+        // Nothing opaque found up the tree, so the page background is what
+        // shows through. Read it rather than assuming a colour, so this stays
+        // correct across a palette change.
+        const root = parse(getComputedStyle(document.body).backgroundColor)
+        return root && root[3] > 0.9 ? root : [255, 255, 255, 1]
       }
 
       const out = []

@@ -21,39 +21,42 @@ const html = `<!doctype html>
   *{margin:0;padding:0;box-sizing:border-box}
   body{
     width:1200px;height:630px;overflow:hidden;position:relative;
-    background:#0a0a0f;color:#e1e2e8;
+    background:#f7f7fb;color:#2e2c3d;
     font-family:Inter,sans-serif;display:flex;flex-direction:column;
     justify-content:space-between;padding:72px;
   }
   .grid{
     position:absolute;inset:0;
     background-image:
-      linear-gradient(to right,rgba(225,226,232,.05) 1px,transparent 1px),
-      linear-gradient(to bottom,rgba(225,226,232,.05) 1px,transparent 1px);
+      linear-gradient(to right,rgba(23,22,38,.06) 1px,transparent 1px),
+      linear-gradient(to bottom,rgba(23,22,38,.06) 1px,transparent 1px);
     background-size:60px 60px;
     mask-image:radial-gradient(ellipse 70% 60% at 30% 0%,#000 30%,transparent 100%);
   }
+  /* A wash rather than a glow. Light bleeding out of a dark corner does not
+   * translate to paper; this is a soft violet tint in the same position. */
   .glow{
     position:absolute;top:-180px;right:-120px;width:620px;height:620px;
-    border-radius:50%;background:rgba(134,59,255,.20);filter:blur(130px);
+    border-radius:50%;background:rgba(109,40,217,.12);filter:blur(130px);
   }
   .top{position:relative;display:flex;align-items:center;gap:14px}
-  .top svg{width:34px;height:34px;filter:drop-shadow(0 0 12px rgba(134,59,255,.65))}
-  .name{font-size:26px;font-weight:600;letter-spacing:-.02em}
+  .top svg{width:34px;height:34px;filter:drop-shadow(0 1px 2px rgba(23,22,38,.20))}
+  .name{font-size:26px;font-weight:600;letter-spacing:-.02em;color:#16151f}
   .mid{position:relative}
   h1{
     font-family:"Instrument Serif",Georgia,serif;font-weight:400;
     font-size:92px;line-height:.98;letter-spacing:-.03em;max-width:14ch;
+    color:#16151f;
   }
-  h1 .dim{color:#9797a8}
-  p{margin-top:26px;font-size:26px;line-height:1.5;color:#9797a8;max-width:30ch}
+  h1 .dim{color:#54536b}
+  p{margin-top:26px;font-size:26px;line-height:1.5;color:#54536b;max-width:30ch}
   .bot{
     position:relative;display:flex;align-items:center;gap:16px;
     font-family:ui-monospace,Menlo,monospace;font-size:17px;
-    letter-spacing:.1em;text-transform:uppercase;color:#65657a;
+    letter-spacing:.1em;text-transform:uppercase;color:#65647c;
   }
-  .dot{width:7px;height:7px;border-radius:50%;background:#863bff;box-shadow:0 0 14px #863bff}
-  .sep{color:#2e2e3d}
+  .dot{width:7px;height:7px;border-radius:50%;background:#6d28d9}
+  .sep{color:rgba(23,22,38,.25)}
 </style></head>
 <body>
   <div class="grid"></div><div class="glow"></div>

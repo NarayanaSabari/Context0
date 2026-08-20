@@ -59,7 +59,7 @@ export function Waitlist({ id = 'waitlist' }: { id?: string }) {
   if (status === 'done') {
     return (
       <div
-        className="max-w-lg rounded-xl border border-accent/40 bg-accent/[0.06] p-5"
+        className="max-w-lg rounded-xl border border-accent/30 bg-accent/[0.06] p-5"
         role="status"
         aria-live="polite"
       >
@@ -89,7 +89,7 @@ export function Waitlist({ id = 'waitlist' }: { id?: string }) {
           placeholder="you@company.com"
           aria-describedby={noteId}
           disabled={status === 'submitting'}
-          className="min-h-12 min-w-0 flex-1 rounded-lg border border-line-bright bg-surface px-4 text-sm text-body transition-colors placeholder:text-dim hover:border-line-bright focus:border-brand focus:outline-none disabled:opacity-60"
+          className="min-h-12 min-w-0 flex-1 rounded-lg border border-line-bright bg-surface px-4 text-sm text-body transition-colors placeholder:text-dim hover:border-brand/40 focus:border-brand focus:outline-none disabled:opacity-60"
         />
         <button
           type="submit"
@@ -102,7 +102,7 @@ export function Waitlist({ id = 'waitlist' }: { id?: string }) {
 
       <p
         id={noteId}
-        className={`mt-3 text-[13px] ${status === 'error' ? 'text-red-300/90' : 'text-dim'}`}
+        className={`mt-3 text-[13px] ${status === 'error' ? 'text-danger' : 'text-dim'}`}
         role={status === 'error' ? 'alert' : undefined}
       >
         {status === 'error' ? (
@@ -112,7 +112,7 @@ export function Waitlist({ id = 'waitlist' }: { id?: string }) {
               href={site.github}
               target="_blank"
               rel="noopener noreferrer"
-              className="underline decoration-red-300/40 underline-offset-4 hover:decoration-red-300"
+              className="underline decoration-danger/40 underline-offset-4 hover:decoration-danger"
             >
               Open GitHub
             </a>

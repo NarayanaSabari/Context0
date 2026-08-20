@@ -31,7 +31,7 @@ function GitHubIcon({ className = 'h-4 w-4' }: { className?: string }) {
  *  the URL rather than passed in and forgotten. */
 export function Nav({ current }: { current?: string }) {
   return (
-    <header className="sticky top-0 z-50 border-b border-line bg-ink/80 backdrop-blur-md">
+    <header className="sticky top-0 z-50 border-b border-line bg-ink/85 backdrop-blur-md">
       <nav
         className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-6"
         aria-label="Main"
@@ -53,7 +53,7 @@ export function Nav({ current }: { current?: string }) {
                 href={item.href}
                 aria-current={active ? 'page' : undefined}
                 className={`flex min-h-11 items-center rounded-md px-2.5 text-[13px] transition-colors sm:px-3 ${
-                  active ? 'text-body' : 'text-muted hover:text-body'
+                  active ? 'text-heading font-medium' : 'text-muted hover:text-heading'
                 }`}
               >
                 {item.label}
@@ -64,7 +64,7 @@ export function Nav({ current }: { current?: string }) {
             href={site.github}
             target="_blank"
             rel="noopener noreferrer"
-            className="ml-1 hidden min-h-11 items-center gap-2 rounded-md border border-line-bright px-3 text-[13px] text-body transition-colors hover:border-brand hover:bg-brand/10 sm:inline-flex"
+            className="ml-1 hidden min-h-11 items-center gap-2 rounded-md border border-line-bright px-3 text-[13px] text-body transition-colors hover:border-brand hover:bg-brand/[0.07] hover:text-brand-ink sm:inline-flex"
           >
             <GitHubIcon />
             GitHub
@@ -86,15 +86,15 @@ export function Footer() {
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-[13px] text-muted">
-          <a href="/docs/" className="inline-flex min-h-11 items-center transition-colors hover:text-body">
+          <a href="/docs/" className="inline-flex min-h-11 items-center transition-colors hover:text-heading">
             Docs
           </a>
-          <a href="/blog/" className="inline-flex min-h-11 items-center transition-colors hover:text-body">
+          <a href="/blog/" className="inline-flex min-h-11 items-center transition-colors hover:text-heading">
             Blog
           </a>
           <a
             href="/releases/"
-            className="inline-flex min-h-11 items-center transition-colors hover:text-body"
+            className="inline-flex min-h-11 items-center transition-colors hover:text-heading"
           >
             Releases
           </a>
@@ -102,7 +102,7 @@ export function Footer() {
             href={site.github}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex min-h-11 items-center transition-colors hover:text-body"
+            className="inline-flex min-h-11 items-center transition-colors hover:text-heading"
           >
             GitHub
           </a>
@@ -120,7 +120,7 @@ export function Page({ current, children }: { current?: string; children: ReactN
     <>
       <a
         href="#main"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] focus:rounded-md focus:bg-body focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-ink"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] focus:rounded-md focus:bg-heading focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-ink"
       >
         Skip to content
       </a>

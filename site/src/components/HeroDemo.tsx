@@ -24,7 +24,9 @@ export function HeroDemo() {
   const [faded, setFaded] = useState(false)
 
   // The fade is the whole point of the "without" state: earlier turns visibly
-  // decay, so the empty answer below feels earned rather than asserted.
+  // decay, so the empty answer below feels earned rather than asserted. On the
+  // dark theme 15% opacity was still legible; on paper that lands almost at the
+  // page colour, so the faded state leans on the blur more than the opacity.
   useEffect(() => {
     if (mode !== 'without') {
       setFaded(false)
@@ -58,7 +60,7 @@ export function HeroDemo() {
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-line-bright bg-surface shadow-2xl shadow-black/40">
+      <div className="overflow-hidden rounded-xl border border-line-bright bg-surface shadow-xl shadow-[rgba(23,22,38,0.08)]">
         {/* Yesterday's conversation */}
         <div className="border-b border-line px-5 py-4">
           <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.1em] text-dim">
@@ -69,11 +71,11 @@ export function HeroDemo() {
               <div
                 key={turn.text}
                 className={`grid grid-cols-[3.25rem_minmax(0,1fr)] gap-3 font-mono text-[11px] leading-relaxed transition-all duration-700 ${
-                  !remembering && faded ? 'opacity-15 blur-[2px]' : 'opacity-100 blur-0'
+                  !remembering && faded ? 'opacity-25 blur-[2px]' : 'opacity-100 blur-0'
                 }`}
               >
                 <span className={turn.who === 'you' ? 'text-accent' : 'text-dim'}>{turn.who}</span>
-                <span className="min-w-0 text-body/90">{turn.text}</span>
+                <span className="min-w-0 text-body">{turn.text}</span>
               </div>
             ))}
           </div>
@@ -96,10 +98,10 @@ export function HeroDemo() {
               </div>
             </div>
           ) : (
-            <div className="rounded-lg border border-red-400/25 bg-red-400/[0.05] p-3.5">
+            <div className="rounded-lg border border-danger/30 bg-danger/[0.05] p-3.5">
               <div className="grid grid-cols-[3.25rem_minmax(0,1fr)] gap-3 font-mono text-[11px] leading-relaxed">
-                <span className="text-red-300/80">agent</span>
-                <span className="min-w-0 text-body/80">
+                <span className="text-danger">agent</span>
+                <span className="min-w-0 text-body">
                   I do not have enough context to answer that.
                 </span>
               </div>
@@ -114,8 +116,8 @@ export function HeroDemo() {
           aria-pressed={remembering}
           className={`w-full border-t border-line px-5 py-3.5 text-left font-mono text-[11px] font-medium transition-colors ${
             remembering
-              ? 'bg-white/[0.03] text-muted hover:bg-white/[0.06]'
-              : 'bg-brand/12 text-brand-pale hover:bg-brand/20'
+              ? 'bg-surface-2 text-muted hover:bg-line'
+              : 'bg-brand/10 text-brand-ink hover:bg-brand/[0.16]'
           }`}
         >
           {remembering ? 'Replay without memory' : 'Replay with Context0 -->'}

@@ -47,7 +47,7 @@ export function EmptyState({
   action: ReactNode
 }) {
   return (
-    <div className="rounded-xl border border-dashed border-line-bright bg-surface/40 px-6 py-14 text-center">
+    <div className="rounded-xl border border-dashed border-line-bright bg-surface-2/60 px-6 py-14 text-center">
       <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full border border-line-bright bg-surface">
         <span className="font-mono text-lg text-dim" aria-hidden="true">
           ~
@@ -76,7 +76,7 @@ export function ButtonLink({
   const styles =
     variant === 'primary'
       ? 'bg-brand text-white hover:bg-brand-deep'
-      : 'border border-line-bright text-body hover:border-brand hover:bg-brand/10'
+      : 'border border-line-bright text-body hover:border-brand hover:bg-brand/[0.07] hover:text-brand-ink'
   return (
     <a
       href={href}

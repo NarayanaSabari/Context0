@@ -76,7 +76,7 @@ export function Docs() {
                 key={concept.term}
                 className="grid gap-2 py-6 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)] sm:gap-8"
               >
-                <dt className="font-mono text-[13px] text-brand-pale">{concept.term}</dt>
+                <dt className="font-mono text-[13px] text-brand-ink">{concept.term}</dt>
                 <dd className="text-[15px] leading-relaxed text-muted">{concept.body}</dd>
               </div>
             ))}
@@ -100,7 +100,7 @@ export function Docs() {
                 rel={link.external ? 'noopener noreferrer' : undefined}
                 className="group bg-surface p-6 transition-colors hover:bg-surface-2"
               >
-                <h3 className="flex items-center gap-2 text-[15px] font-semibold tracking-tight transition-colors group-hover:text-brand-pale">
+                <h3 className="flex items-center gap-2 text-[15px] font-semibold tracking-tight transition-colors group-hover:text-brand-ink">
                   {link.title}
                   <span aria-hidden="true" className="text-dim">
                     -&gt;

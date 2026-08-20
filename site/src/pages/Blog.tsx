@@ -70,7 +70,7 @@ export function Blog() {
                     <time className="font-mono text-[11px] uppercase tracking-[0.1em] text-dim">
                       {post.date}
                     </time>
-                    <h2 className="mt-2 text-xl font-semibold tracking-tight transition-colors group-hover:text-brand-pale">
+                    <h2 className="mt-2 text-xl font-semibold tracking-tight transition-colors group-hover:text-brand-ink">
                       {post.title}
                     </h2>
                     <p className="mt-2 text-[15px] leading-relaxed text-muted">{post.summary}</p>

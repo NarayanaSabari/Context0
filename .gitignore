@@ -73,3 +73,4 @@ site/.vite/
 
 # Design swarm working files (concepts, screenshots, harness)
 .design/
+.lavish/

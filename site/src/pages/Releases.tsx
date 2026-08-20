@@ -25,7 +25,7 @@ export function Releases() {
               href={`${site.github}/releases`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex min-h-6 items-center text-brand-pale underline decoration-brand/40 underline-offset-4 transition-colors hover:decoration-brand"
+              className="inline-flex min-h-6 items-center text-brand-ink underline decoration-brand/40 underline-offset-4 transition-colors hover:decoration-brand"
             >
               GitHub Releases
             </a>{' '}
@@ -66,7 +66,7 @@ export function Releases() {
                 ['Major', 'Reserved for 1.0 and the stability promise that comes with it.'],
               ].map(([label, body]) => (
                 <div key={label} className="bg-surface p-6">
-                  <dt className="font-mono text-[11px] uppercase tracking-[0.1em] text-brand-pale">
+                  <dt className="font-mono text-[11px] uppercase tracking-[0.1em] text-brand-ink">
                     {label}
                   </dt>
                   <dd className="mt-2.5 text-[14px] leading-relaxed text-muted">{body}</dd>

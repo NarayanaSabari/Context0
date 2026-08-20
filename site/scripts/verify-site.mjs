@@ -341,9 +341,16 @@ for (const page of PAGES) {
 
   // Styling actually applied: an unstyled 404 is the classic broken-asset
   // symptom, and it looks like the site is down rather than the URL wrong.
+  // Asserted as "the stylesheet applied", not as a specific colour: pinning the
+  // exact page background here meant a palette change failed this check for the
+  // wrong reason. An unstyled page is transparent or plain white with the
+  // default serif stack, so that is what this looks for.
   const styled = await tab.evaluate(() => {
-    const bg = getComputedStyle(document.body).backgroundColor
-    return bg === 'rgb(10, 10, 15)'
+    const style = getComputedStyle(document.body)
+    const painted =
+      style.backgroundColor !== 'rgba(0, 0, 0, 0)' &&
+      style.backgroundColor !== 'transparent'
+    return painted && style.fontFamily.includes('Inter')
   })
   note(styled, '404 page did not load the stylesheet')
 

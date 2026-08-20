@@ -56,9 +56,9 @@ export function Home() {
 
         <div className="relative mx-auto grid max-w-6xl gap-14 px-6 py-20 sm:py-28 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-center lg:gap-20">
           <div className="min-w-0">
-            <p className="mb-6 inline-flex items-center gap-2.5 font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-brand-pale">
+            <p className="mb-6 inline-flex items-center gap-2.5 font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-brand-ink">
               <span
-                className="h-1.5 w-1.5 rounded-full bg-brand shadow-[0_0_12px_#863bff]"
+                className="h-1.5 w-1.5 rounded-full bg-brand"
                 aria-hidden="true"
               />
               In development - Apache 2.0
@@ -103,9 +103,10 @@ export function Home() {
           <div className="mt-14 grid gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-3">
             {CAPABILITIES.map((item, index) => (
               <div key={item.title} className="bg-surface p-7">
-                {/* brand-pale rather than brand: #863bff on the panel measures
-                    3.7:1, which fails AA at this size. */}
-                <span className="font-mono text-[11px] text-brand-pale">
+                {/* brand-ink rather than brand: the solid brand tone is tuned
+                    for filled buttons, and at this 11px size the darker text
+                    tone is the one that clears AA on the white card. */}
+                <span className="font-mono text-[11px] text-brand-ink">
                   {String(index + 1).padStart(2, '0')}
                 </span>
                 <h3 className="mt-3 text-lg font-semibold tracking-tight">{item.title}</h3>
@@ -127,7 +128,7 @@ export function Home() {
             <dl className="grid gap-8 sm:grid-cols-3">
               {PRINCIPLES.map((item) => (
                 <div key={item.label}>
-                  <dt className="font-mono text-[11px] uppercase tracking-[0.1em] text-brand-pale">
+                  <dt className="font-mono text-[11px] uppercase tracking-[0.1em] text-brand-ink">
                     {item.label}
                   </dt>
                   <dd className="mt-3 text-[15px] leading-relaxed text-muted">{item.body}</dd>
@@ -157,7 +158,7 @@ export function Home() {
                   href={site.github}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex min-h-6 items-center text-brand-pale underline decoration-brand/40 underline-offset-4 transition-colors hover:decoration-brand"
+                  className="inline-flex min-h-6 items-center text-brand-ink underline decoration-brand/40 underline-offset-4 transition-colors hover:decoration-brand"
                 >
                   GitHub
                 </a>
