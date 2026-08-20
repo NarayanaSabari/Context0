@@ -39,6 +39,70 @@ func main() {
 
 	ctx := context.Background()
 
+	// Start with default consolidation settings, then apply any
+	// environment variable overrides.
+	consolCfg := service.DefaultConsolidationConfig()
+
+	// An unparseable or out-of-range override is fatal, not ignored.
+	//
+	// These values gate DeleteMemory: StaleThreshold and PruneAgeDays decide
+	// which memories are pruned. Silently falling back to the default meant an
+	// operator who raised PruneAgeDays to protect data, and mistyped it, got
+	// the default instead and lost exactly the memories they were protecting
+	// -- while the job logged "consolidation complete" and exited 0.
+	//
+	// Refusing to start is the safe failure: the CronJob is marked Failed, the
+	// maintenance is visibly skipped, and nothing is deleted on a
+	// configuration nobody verified.
+	if v := os.Getenv("CONSOLIDATION_DECAY_HALF_LIFE_DAYS"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			fatal("CONSOLIDATION_DECAY_HALF_LIFE_DAYS is not a number: "+v, err)
+		}
+		if f <= 0 {
+			fatalMsg("CONSOLIDATION_DECAY_HALF_LIFE_DAYS must be positive, got " + v)
+		}
+		consolCfg.DecayHalfLifeDays = f
+	}
+	if v := os.Getenv("CONSOLIDATION_STALE_THRESHOLD"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			fatal("CONSOLIDATION_STALE_THRESHOLD is not a number: "+v, err)
+		}
+		// Decay scores live in [0, 1]. A threshold above 1 prunes every
+		// unaccessed memory past the age gate; a negative one prunes none,
+		// which silently disables maintenance.
+		if f < 0 || f > 1 {
+			fatalMsg("CONSOLIDATION_STALE_THRESHOLD must be within [0, 1], got " + v)
+		}
+		consolCfg.StaleThreshold = f
+	}
+	if v := os.Getenv("CONSOLIDATION_PRUNE_AGE_DAYS"); v != "" {
+		i, err := strconv.Atoi(v)
+		if err != nil {
+			fatal("CONSOLIDATION_PRUNE_AGE_DAYS is not an integer: "+v, err)
+		}
+		// Negative means every memory is old enough to prune, which turns a
+		// maintenance job into a deletion job.
+		if i < 0 {
+			fatalMsg("CONSOLIDATION_PRUNE_AGE_DAYS must not be negative, got " + v)
+		}
+		consolCfg.PruneAgeDays = i
+	}
+
+	slog.Info("consolidation configuration",
+		slog.Float64("decay_half_life_days", consolCfg.DecayHalfLifeDays),
+		slog.Float64("stale_threshold", consolCfg.StaleThreshold),
+		slog.Int("prune_age_days", consolCfg.PruneAgeDays))
+
+	// Configuration is resolved before the database is touched.
+	//
+	// Validation used to run after connecting and after InitSchema, so a bad
+	// value was only reported if the database happened to be reachable -- and
+	// the operator saw a connection error instead of the typo that actually
+	// stopped the job. Settings that decide what gets deleted should be
+	// checked before anything else can fail.
+
 	// Connect to the database. The consolidation job only reads and writes
 	// graph data; it does not need embedding support.
 	pool, err := graph.NewPool(ctx, cfg.DatabaseURL)
@@ -55,26 +119,6 @@ func main() {
 
 	if err := repo.InitSchema(ctx); err != nil {
 		fatal("failed to init graph schema", err)
-	}
-
-	// Start with default consolidation settings, then apply any
-	// environment variable overrides.
-	consolCfg := service.DefaultConsolidationConfig()
-
-	if v := os.Getenv("CONSOLIDATION_DECAY_HALF_LIFE_DAYS"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			consolCfg.DecayHalfLifeDays = f
-		}
-	}
-	if v := os.Getenv("CONSOLIDATION_STALE_THRESHOLD"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			consolCfg.StaleThreshold = f
-		}
-	}
-	if v := os.Getenv("CONSOLIDATION_PRUNE_AGE_DAYS"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			consolCfg.PruneAgeDays = i
-		}
 	}
 
 	// Execute the consolidation pipeline: merge, decay, prune.
@@ -106,5 +150,11 @@ func main() {
 // cmd/server for why slog has no Fatal of its own.
 func fatal(msg string, err error) {
 	slog.Error(msg, slog.Any("error", err))
+	os.Exit(1)
+}
+
+// fatalMsg reports a configuration value that parsed but is out of range.
+func fatalMsg(msg string) {
+	slog.Error(msg)
 	os.Exit(1)
 }
