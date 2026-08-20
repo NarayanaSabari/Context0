@@ -84,8 +84,13 @@ Three layers, because they catch different things:
   ratio, a hero animation that never reaches its end state under
   `prefers-reduced-motion`, interactive elements unreachable by keyboard, and a
   missing custom 404.
+- `scripts/cross-browser.mjs` runs the pages in WebKit, because Safari is the
+  engine most likely to disagree about `mask-image` and flex sizing, and
+  measures layout shift with the webfont requests stalled. That check caught the
+  hero jumping 79px when Instrument Serif replaced Georgia; metric-adjusted
+  fallback faces in `index.css` brought it to 0.
 
-All three run in CI on every pull request that touches `site/`.
+All four run in CI on every pull request that touches `site/`.
 
 ## The social card
 

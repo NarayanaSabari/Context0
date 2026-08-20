@@ -58,9 +58,9 @@ jobs:
         working-directory: site
         run: node scripts/check-build.mjs
 
-      - name: Install browser
+      - name: Install browsers
         working-directory: site
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium webkit
 
       - name: Verify in a browser
         working-directory: site
@@ -71,6 +71,12 @@ jobs:
       - name: Accessibility and no-JS audit
         working-directory: site
         run: node scripts/audit.mjs
+
+      # Safari renders differently, and webfonts arrive late on a real network.
+      # Neither shows up in a local Chromium screenshot.
+      - name: WebKit and layout stability
+        working-directory: site
+        run: node scripts/cross-browser.mjs
 
       - name: Upload artifact
         # Only the main-branch run needs to hand anything to the deploy job;
