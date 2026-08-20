@@ -234,6 +234,41 @@ for path in /debug/pprof/ /admin /v2/memories /; do
       "wget -q -S -O /dev/null 'http://localhost:8080$path' 2>&1" | awk '/HTTP\//{print $2; exit}')"
 done
 
+# The allowlist matches r.URL.Path exactly, so the question is whether a caller
+# can reach a public path -- or slip past a protected one -- by spelling it
+# differently. These have to go over a raw socket: wget, curl and every HTTP
+# library clean the path before sending it, so a client-side test cannot
+# actually deliver "/v1/../metrics" to the server and proves nothing.
+#
+# The pairing matters. A request that normalises ONTO a public path must not
+# become public (an unclean spelling is not in the allowlist, so it is denied),
+# and a request that normalises onto a protected path must stay denied.
+# The socket is held open for a moment after the request rather than closed
+# immediately. nc closes its write side as soon as printf ends, Go's net/http
+# reads that half-close as the client going away, and it cancels the request
+# context: /readyz then answers 503 from its own cancelled pool ping and a
+# gateway route answers 499 "context canceled". Both are correct responses to a
+# client that left, but they say nothing about the path being tested, and a
+# check written without the delay reports a healthy endpoint as broken.
+raw_status() {
+  kubectl exec -n "$NS" "$(api_pod)" -- sh -c \
+    "(printf 'GET $1 HTTP/1.1\r\nHost: localhost\r\n\r\n'; sleep 1) | nc localhost 8080 2>/dev/null | head -1" \
+    2>/dev/null | tr -d '\r' | awk '{print $2}'
+}
+
+for path in /./metrics /v1/../metrics //metrics /metrics/ /v1/./health //v1/health; do
+  check "unclean path $path does not reach a public endpoint" "401" "$(raw_status "$path")"
+done
+
+for path in /v1/../v1/memories /./v1/memories /v1/./memories /metrics/../v1/memories; do
+  check "unclean path $path stays denied" "401" "$(raw_status "$path")"
+done
+
+# The control: the exact spellings must still work over the same raw socket, or
+# the checks above would pass simply because everything is broken.
+check "the exact public path is served" "200" "$(raw_status /metrics)"
+check "the exact probe path is served" "200" "$(raw_status /readyz)"
+
 # Keys are stored hashed, so the running process cannot hand back a credential
 # even if it is compromised or dumped.
 # /v1/health answers without a credential because probes cannot present one,
