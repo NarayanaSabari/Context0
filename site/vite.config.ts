@@ -27,6 +27,8 @@ export default defineConfig({
         releases: resolve(here, 'releases/index.html'),
         blog: resolve(here, 'blog/index.html'),
         docs: resolve(here, 'docs/index.html'),
+        // GitHub Pages serves dist/404.html for any unmatched path.
+        404: resolve(here, '404.html'),
       },
     },
   },

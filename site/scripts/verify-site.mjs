@@ -47,8 +47,11 @@ const server = createServer(async (req, res) => {
       /* fall through to 404 */
     }
   }
+  // Pages serves 404.html for anything it cannot match, with a 404 status.
+  // Mirror that here so the custom error page is exercised the same way.
+  const notFound = join(dist, '404.html')
   res.writeHead(404, { 'Content-Type': 'text/html' })
-  res.end('<h1>404</h1>')
+  res.end(existsSync(notFound) ? await readFile(notFound) : '<h1>404</h1>')
 })
 
 await new Promise((resolve) => server.listen(0, resolve))
@@ -94,6 +97,13 @@ for (const page of PAGES) {
 
     const where = `${page.name} @${vp.width}`
     note(errors.length === 0, `${where}: console/network errors: ${errors.slice(0, 3).join(' | ')}`)
+
+    // Hydration mismatches are only warnings, so the page still works, but they
+    // mean React threw away the prerendered markup and rebuilt it - which
+    // defeats the point of prerendering and usually signals non-deterministic
+    // render output.
+    const hydrationIssue = errors.find((e) => /hydrat|did not match|server HTML/i.test(e))
+    note(!hydrationIssue, `${where}: hydration mismatch: ${hydrationIssue}`)
 
     // Did React actually mount? An exception during render leaves an empty
     // #root and a page that looks like a blank dark screen.
@@ -270,6 +280,42 @@ for (const page of PAGES) {
   } else {
     failures.push('hero demo toggle not found')
   }
+  await context.close()
+}
+
+// The 404 page, served the way Pages serves it: for a path that does not
+// exist. This is the one page nobody tests by hand, because reaching it
+// requires deliberately mistyping a URL.
+{
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  const tab = await context.newPage()
+  const errors = []
+  tab.on('pageerror', (e) => errors.push(e.message))
+  tab.on('response', (r) => {
+    // The document itself is expected to 404; its assets are not.
+    if (r.status() >= 400 && !r.url().endsWith('/no-such-page/')) {
+      errors.push(`${r.status()} for ${r.url().replace(base, '')}`)
+    }
+  })
+
+  const response = await tab.goto(`${base}/no-such-page/`, { waitUntil: 'networkidle' })
+  note(response.status() === 404, `unknown path returned ${response.status()}, expected 404`)
+  note(errors.length === 0, `404 page errors: ${errors.slice(0, 3).join(' | ')}`)
+
+  const text = await tab.evaluate(() => document.body.innerText || '')
+  note(text.length > 200, `404 page has almost no text (${text.length} chars)`)
+  note(/does not exist/i.test(text), '404 page does not say the page is missing')
+
+  // Styling actually applied: an unstyled 404 is the classic broken-asset
+  // symptom, and it looks like the site is down rather than the URL wrong.
+  const styled = await tab.evaluate(() => {
+    const bg = getComputedStyle(document.body).backgroundColor
+    return bg === 'rgb(10, 10, 15)'
+  })
+  note(styled, '404 page did not load the stylesheet')
+
+  // A way back is the entire point of a custom 404.
+  note((await tab.locator('a[href="/"]').count()) > 0, '404 page has no link home')
   await context.close()
 }
 

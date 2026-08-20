@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node scripts/prerender.mjs",
     "preview": "vite preview",
-    "check": "tsc --noEmit && vite build && node scripts/check-build.mjs && node scripts/verify-site.mjs",
-    "shots": "vite build && node scripts/verify-site.mjs --shots",
+    "check": "tsc --noEmit && pnpm build && node scripts/check-build.mjs && node scripts/verify-site.mjs && node scripts/audit.mjs",
+    "shots": "pnpm build && node scripts/verify-site.mjs --shots",
     "og": "node scripts/make-og.mjs"
   },
   "devDependencies": {

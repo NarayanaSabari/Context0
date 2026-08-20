@@ -103,7 +103,9 @@ export function Home() {
           <div className="mt-14 grid gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-3">
             {CAPABILITIES.map((item, index) => (
               <div key={item.title} className="bg-surface p-7">
-                <span className="font-mono text-[11px] text-brand">
+                {/* brand-pale rather than brand: #863bff on the panel measures
+                    3.7:1, which fails AA at this size. */}
+                <span className="font-mono text-[11px] text-brand-pale">
                   {String(index + 1).padStart(2, '0')}
                 </span>
                 <h3 className="mt-3 text-lg font-semibold tracking-tight">{item.title}</h3>

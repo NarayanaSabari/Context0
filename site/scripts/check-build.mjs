@@ -25,6 +25,18 @@ if (!existsSync(dist)) {
   process.exit(1)
 }
 
+// Everything React rendered into #root.
+//
+// A regex stopping at the first </div> would match the first nested close, not
+// the matching one, and report an empty shell for a fully prerendered page.
+// Slice from the opening marker to the module script that follows the root.
+const prerenderedMarkup = (html) => {
+  const start = html.indexOf('<div id="root">')
+  if (start === -1) return ''
+  const end = html.indexOf('<script type="module"', start)
+  return html.slice(start + '<div id="root">'.length, end === -1 ? html.length : end)
+}
+
 const DOMAIN = 'context0.sabarinarayanakg.in'
 const ORIGIN = `https://${DOMAIN}`
 
@@ -37,6 +49,10 @@ const PAGES = [
   { path: 'blog/index.html', url: '/blog/', title: /Blog/ },
   { path: 'docs/index.html', url: '/docs/', title: /Docs/ },
 ]
+
+// The 404 is checked separately: Pages serves it for unmatched paths, so it
+// has no canonical URL of its own and must not be indexed.
+const NOT_FOUND = '404.html'
 
 // The custom domain lives in a CNAME file Pages reads from the published
 // artifact. If it stops being copied, the next deploy quietly drops the domain
@@ -79,6 +95,16 @@ for (const page of PAGES) {
   }
 
   check(page.title.test(html), `${where} has an unexpected <title>`)
+
+  // Prerendered markup. Without it the page is an empty shell until JavaScript
+  // runs, so a crawler that does not execute scripts indexes nothing and a
+  // visitor with JS blocked sees a blank screen.
+  const rootContent = prerenderedMarkup(html)
+  check(
+    rootContent.length > 2000,
+    `${where} has little or no prerendered markup (${rootContent.length} chars) - did prerender run?`,
+  )
+  check(/<h1[^>]*>/.test(rootContent), `${where} prerendered markup contains no <h1>`)
 
   // Canonical and og:url must point at this page, not at whichever page was
   // copy-pasted to create it. This is the classic multi-page mistake.
@@ -138,6 +164,62 @@ for (const page of PAGES) {
   }
 }
 
+// The 404 page: served by Pages for any unmatched path.
+{
+  const file = join(dist, NOT_FOUND)
+  if (!existsSync(file)) {
+    failures.push('404.html was not built - a mistyped URL gets GitHub\'s generic error page')
+  } else {
+    const html = readFileSync(file, 'utf8')
+    check(/<title>[^<]{10,}<\/title>/.test(html), '404.html has no title')
+    // An error page indexed in place of real content is worse than no error page.
+    check(
+      /<meta[^>]+name="robots"[^>]+content="[^"]*noindex/.test(html),
+      '404.html is missing noindex - search engines would index the error page',
+    )
+    const rootContent = prerenderedMarkup(html)
+    check(rootContent.length > 500, '404.html has no prerendered markup')
+    check(/href="\/"/.test(html), '404.html has no link back to the home page')
+  }
+}
+
+// robots.txt and the sitemap.
+//
+// A sitemap that lists a page which no longer exists, or omits one that does,
+// is worse than no sitemap: it teaches crawlers the wrong shape of the site.
+// Keep it honest by comparing it against what was actually built.
+{
+  const robotsPath = join(dist, 'robots.txt')
+  check(existsSync(robotsPath), 'dist/robots.txt is missing')
+  if (existsSync(robotsPath)) {
+    const robots = readFileSync(robotsPath, 'utf8')
+    check(
+      robots.includes(`Sitemap: ${ORIGIN}/sitemap.xml`),
+      'robots.txt does not point at the sitemap',
+    )
+  }
+
+  const sitemapPath = join(dist, 'sitemap.xml')
+  check(existsSync(sitemapPath), 'dist/sitemap.xml is missing')
+  if (existsSync(sitemapPath)) {
+    const sitemap = readFileSync(sitemapPath, 'utf8')
+    const listed = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1])
+    const expected = PAGES.map((p) => `${ORIGIN}${p.url}`)
+
+    for (const url of listed) {
+      check(expected.includes(url), `sitemap lists ${url}, which is not a page of this site`)
+    }
+    for (const url of expected) {
+      check(listed.includes(url), `sitemap is missing ${url}`)
+    }
+    // The 404 must never be advertised for indexing.
+    check(
+      !listed.some((u) => u.includes('404')),
+      'sitemap lists the 404 page',
+    )
+  }
+}
+
 // The fabricated-claim guard. The project is pre-release: it has no users, no
 // benchmarks, and no customers, so none of these words can be honest yet.
 // Checked across the built JS too, since page copy lives in the bundle.
@@ -169,4 +251,4 @@ if (failures.length > 0) {
   process.exit(1)
 }
 
-console.log(`OK - ${PAGES.length} pages built and checked`)
+console.log(`OK - ${PAGES.length} pages plus 404 built and checked`)

@@ -15,10 +15,18 @@ product.
 | `/docs/` | The concepts that will not change, plus links into the repository. Real documentation arrives with the first release. |
 | `/blog/` | Empty until the first post. Add entries to `POSTS` in `src/pages/Blog.tsx` and the empty state disappears. |
 | `/releases/` | Empty until the first release, with the versioning policy written down. |
+| `404.html` | Served by Pages for any unmatched path, so a mistyped URL keeps the site's design and offers a way back. |
 
-These are four real HTML entry points, not client-side routes. `/blog/` works on
-first byte, survives a hard refresh, and needs no 404 redirect hack on GitHub
-Pages.
+These are real HTML entry points, not client-side routes. `/blog/` works on
+first byte, survives a hard refresh, and needs no 404 redirect hack.
+
+Every page is **prerendered** at build time by `scripts/prerender.mjs`: the same
+React components are rendered to static HTML and baked into each file, and the
+client hydrates that markup rather than replacing it. Without this the pages
+were an empty `<div id="root">` until JavaScript ran, which meant a visitor with
+scripts blocked saw a blank screen and a crawler that does not execute
+JavaScript indexed nothing but the `<head>`. The home page went from 0 to about
+1,900 characters of readable text with JavaScript disabled.
 
 ## Local development
 
@@ -52,24 +60,32 @@ secret key is the wrong provider for a static site.
 ## Before pushing
 
 ```bash
-pnpm check        # typecheck, build, inspect output, then drive it in a browser
-pnpm shots        # same, and write screenshots to .shots/
+pnpm check        # typecheck, build, inspect output, drive it in a browser, audit
+pnpm shots        # build and write screenshots to .shots/
 ```
 
-Two layers, because they catch different things:
+Three layers, because they catch different things:
 
 - `scripts/check-build.mjs` reads the emitted `dist/`. It catches a nav link to
   a page that was never built, a missing `CNAME` (which would silently drop the
   custom domain on the next deploy), a canonical or `og:url` copy-pasted from
   another page, a relative `og:image`, `target="_blank"` without
-  `rel="noreferrer"`, and marketing claims the pre-release project cannot back.
+  `rel="noreferrer"`, a sitemap that disagrees with the built pages, a page
+  missing its prerendered markup, and marketing claims the pre-release project
+  cannot back.
 - `scripts/verify-site.mjs` serves `dist/` over HTTP and drives it in Chromium
   at 1440px and 390px. It catches what only shows up in a browser: a page that
-  renders blank because a component threw, horizontal scroll on a phone, tap
-  targets under 24px, duplicate element ids, unlabelled inputs, a nav link that
-  404s, and a waitlist form that does not respond to a submit.
+  renders blank because a component threw, a hydration mismatch, horizontal
+  scroll on a phone, tap targets under 24px, duplicate element ids, unlabelled
+  inputs, a nav link that 404s, a waitlist that ignores a submit, and a 404 page
+  that lost its stylesheet.
+- `scripts/audit.mjs` covers what only affects a subset of visitors: pages that
+  render nothing with JavaScript disabled, text below the WCAG AA contrast
+  ratio, a hero animation that never reaches its end state under
+  `prefers-reduced-motion`, interactive elements unreachable by keyboard, and a
+  missing custom 404.
 
-Both run in CI on every pull request that touches `site/`.
+All three run in CI on every pull request that touches `site/`.
 
 ## The social card
 

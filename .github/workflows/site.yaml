@@ -66,6 +66,12 @@ jobs:
         working-directory: site
         run: node scripts/verify-site.mjs
 
+      # The checks that only fail for a subset of visitors: scripts blocked,
+      # a keyboard instead of a mouse, reduced motion, low contrast.
+      - name: Accessibility and no-JS audit
+        working-directory: site
+        run: node scripts/audit.mjs
+
       - name: Upload artifact
         # Only the main-branch run needs to hand anything to the deploy job;
         # on a PR the build and checks above are the whole point.

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Four pages, listed by hand.
+
+  Generating this from the Rollup inputs would be clever and would also drift
+  the moment a page is added without touching the generator. Four entries are
+  cheap to keep correct, and scripts/check-build.mjs fails the build if this
+  file and the built pages disagree.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://context0.sabarinarayanakg.in/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://context0.sabarinarayanakg.in/docs/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://context0.sabarinarayanakg.in/blog/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://context0.sabarinarayanakg.in/releases/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.6</priority>
+  </url>
+</urlset>
