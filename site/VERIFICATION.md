@@ -114,6 +114,9 @@ Mutation-tested: with the bug reintroduced it reports
 *"concept-a.html throws: Failed to execute 'addColorStop' on 'CanvasGradient'"*,
 and passes cleanly once restored.
 
+It runs on demand via `pnpm archive`, not in CI. It guards documentation, not
+the site, and a stale concept file should never be able to block a deploy.
+
 ## Bugs found in the checkers themselves
 
 Worth recording, because a checker that reports a false pass is worse than no

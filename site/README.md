@@ -98,18 +98,18 @@ and the mutation tests proving each one fails when its fix is reverted.
   down, or rejecting. The rule it enforces: never show success for an address
   that did not arrive.
 
-- `scripts/check-archive.mjs` opens each archived design concept the way
-  `design-archive/README.md` says to, and fails if one no longer renders.
-
-All six run in CI on every pull request that touches `site/`.
+All five run in CI on every pull request that touches `site/`.
 
 ```bash
 pnpm links        # do the outbound GitHub links still resolve?
+pnpm archive      # do the archived design concepts still open?
 ```
 
-`scripts/check-links.mjs` is deliberately outside `pnpm check` and CI: it
-depends on github.com being reachable, and the build should not go red because
-a third party had a bad minute. Run it when the outbound links change.
+Both sit outside `pnpm check` and CI on purpose. `check-links.mjs` depends on
+github.com being reachable, and the build should not go red because a third
+party had a bad minute. `check-archive.mjs` guards documentation rather than
+the site, so a stale concept file has no business blocking a deploy. Run each
+when the thing it covers changes.
 
 ## The social card
 
