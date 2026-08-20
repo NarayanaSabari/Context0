@@ -85,6 +85,13 @@ jobs:
         working-directory: site
         run: node scripts/waitlist.mjs
 
+      # The design archive promises each concept still opens standalone.
+      # Nobody would notice that breaking until they went looking for the
+      # design history, by which point the context is gone.
+      - name: Design archive still opens
+        working-directory: site
+        run: node scripts/check-archive.mjs
+
       - name: Upload artifact
         # Only the main-branch run needs to hand anything to the deploy job;
         # on a PR the build and checks above are the whole point.

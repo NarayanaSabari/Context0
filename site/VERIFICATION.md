@@ -90,6 +90,30 @@ provider still showed a success message"*.
 This is also the first exercise of the configured success path, which until now
 was listed as uncovered.
 
+## The design archive
+
+`design-archive/README.md` tells the reader to open any concept directly in a
+browser. `check-archive.mjs` holds that promise: it opens each of the four from
+its archived location over `file://`, scrolls the full page, and fails on a
+thrown exception, missing `<h1>`, absent SVG, or a truncated page. It also
+cross-checks that the README's table and the files on disk agree in both
+directions.
+
+Getting this check to be *real* took three attempts, which is the useful part:
+
+1. The first version loaded each page and waited. It passed on a copy of
+   concept A with its original canvas bug deliberately reintroduced, because
+   the graph only draws once its section scrolls into view.
+2. Adding a scroll pass caught it - then stopped catching it after I scrolled
+   back to the top, because the animation loop stops running the affected
+   branch once the section leaves the viewport.
+3. The version that works scrolls in half-viewport steps, waits on
+   `requestAnimationFrame` rather than a bare timeout, and stays at the bottom.
+
+Mutation-tested: with the bug reintroduced it reports
+*"concept-a.html throws: Failed to execute 'addColorStop' on 'CanvasGradient'"*,
+and passes cleanly once restored.
+
 ## Bugs found in the checkers themselves
 
 Worth recording, because a checker that reports a false pass is worse than no

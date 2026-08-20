@@ -98,7 +98,10 @@ and the mutation tests proving each one fails when its fix is reverted.
   down, or rejecting. The rule it enforces: never show success for an address
   that did not arrive.
 
-All five run in CI on every pull request that touches `site/`.
+- `scripts/check-archive.mjs` opens each archived design concept the way
+  `design-archive/README.md` says to, and fails if one no longer renders.
+
+All six run in CI on every pull request that touches `site/`.
 
 ```bash
 pnpm links        # do the outbound GitHub links still resolve?
