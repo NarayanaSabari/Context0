@@ -620,6 +620,36 @@ check "the HNSW vector index can be rebuilt at the current data size" "ok" \
        USING hnsw (embedding vector_cosine_ops);
      DROP INDEX IF EXISTS shm_probe_idx;" >/dev/null 2>&1 && echo ok || echo "index build failed")"
 
+# The verification a backup is actually judged by. Asserting only that a restore
+# produces more than zero rows is not enough: a dump holding 50 of 290,703
+# memories restored cleanly, rebuilt its index, read back correctly, and was
+# reported usable. These two checks are what caught it.
+#
+# Counts come from the live database, so this measures the guard rather than
+# re-running a full restore, which takes minutes and is exercised by
+# scripts/backup.sh verify.
+live_mem=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d "$DB_NAME" -tAc \
+  "LOAD 'age'; SET search_path=ag_catalog,public;
+   SELECT count(*) FROM cypher('context0', \$\$ MATCH (m:Memory) RETURN m \$\$) AS (m agtype);" \
+  2>/dev/null | tail -1)
+live_emb=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d "$DB_NAME" -tAc \
+  "SELECT count(*) FROM public.memory_embeddings;" 2>/dev/null | tail -1)
+
+# An embedding belongs to a memory, so more embeddings than memories means rows
+# are missing. True of the live database as much as of a restore.
+check "embeddings do not outnumber memories" "ok" \
+  "$([[ "${live_emb:-0}" -le "${live_mem:-0}" ]] && echo ok \
+     || echo "${live_emb} embeddings vs ${live_mem} memories")"
+
+# backup.sh compares a restore against the source. Assert the guard is present,
+# so it cannot be dropped back to a bare "greater than zero" check.
+check "backup verification compares the restore against the source" "ok" \
+  "$(grep -q 'The dump does not hold what the' scripts/backup.sh && echo ok || echo missing)"
+# Matches the comparison itself, not the comment above it: an earlier version
+# of this check matched prose and stayed green when the guard was removed.
+check "backup verification checks embedding-to-memory consistency" "ok" \
+  "$(grep -q 'embeddings:-0.*-gt.*memories:-0' scripts/backup.sh && echo ok || echo missing)"
+
 printf '\n\033[1m%s\033[0m\n' "=== $PASS passed, $FAIL failed ==="
 for f in "${FAILURES[@]:-}"; do [[ -n "$f" ]] && printf '  failed: %s\n' "$f"; done
 exit $((FAIL > 0 ? 1 : 0))

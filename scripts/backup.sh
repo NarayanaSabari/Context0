@@ -115,6 +115,49 @@ cmd_verify() {
     echo "  vector index: present"
   fi
 
+  # Internal consistency: an embedding belongs to a memory, so there cannot be
+  # more embeddings than memories.
+  #
+  # A backup holding 50 of 290,703 memories passed every check above -- the
+  # counts were printed and nothing objected to 289,851 embeddings against 50
+  # memories. "More than zero" is not the assurance a backup is meant to give,
+  # and this ratio proves the dump is incoherent without needing the source,
+  # which is the situation a restore exists for.
+  if [[ "${embeddings:-0}" -gt "${memories:-0}" ]]; then
+    echo "  FAIL: $embeddings embeddings against $memories memories."
+    echo "        An embedding belongs to a memory, so this dump is missing"
+    echo "        memories that its embeddings still reference. A dump taken"
+    echo "        while writes were in flight, or a partial one, looks like this."
+    fail=1
+  fi
+
+  # Compare against the source when it is reachable. A dump that captured half
+  # the graph restores cleanly and reads correctly; only the comparison shows
+  # it is not a backup of what exists.
+  #
+  # Skipped rather than failed when the live database is gone, because that is
+  # precisely when a restore matters most and the check cannot be run.
+  local live_memories
+  live_memories=$(psql_q "$DB" \
+    "LOAD 'age'; SET search_path=ag_catalog,public;
+     SELECT count(*) FROM cypher('context0', \$\$ MATCH (m:Memory) RETURN m \$\$) AS (m agtype);" \
+    2>/dev/null | tail -1 || true)
+  if [[ -n "${live_memories:-}" && "${live_memories:-0}" -gt 0 ]]; then
+    # A tolerance, not equality: the live database keeps accepting writes while
+    # the dump is taken, so the restore is legitimately a little behind.
+    local floor=$(( live_memories * 90 / 100 ))
+    if [[ "${memories:-0}" -lt "$floor" ]]; then
+      echo "  FAIL: restored $memories memories against $live_memories live"
+      echo "        (below the $floor floor). The dump does not hold what the"
+      echo "        database holds, so restoring it would lose data."
+      fail=1
+    else
+      echo "  vs live:      $memories restored / $live_memories live"
+    fi
+  else
+    echo "  vs live:      skipped (source database unreachable)"
+  fi
+
   # A count is not proof the rows are readable. Read one back.
   local sample
   sample=$(psql_q "$target" \
