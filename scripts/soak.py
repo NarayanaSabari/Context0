@@ -23,6 +23,7 @@ import json
 import random
 import signal
 import statistics
+import subprocess
 import string
 import sys
 import threading
@@ -204,12 +205,42 @@ def _cycle(client, stats, projects):
         client.health()
 
 
-def report(stats, elapsed, budget_ms, quiet=False):
+def cpu_throttling(namespace="context0", deploy="deploy/context0-api"):
+    """Cumulative CPU throttling for the API container, or None if unreadable.
+
+    A latency budget measured against a throttled pod says nothing about the
+    service. Observed here: store p50 of 56ms with one worker and 197ms with
+    eight, on a pod with a 500m CPU limit that burned 1,007ms of throttled CPU
+    in a 45-second run -- while the connection pool sat idle at 0 of 10
+    acquired and no statement was waiting on a lock. Reporting "OVER BUDGET"
+    without that context turns a deliberate resource limit into what looks
+    like a regression in the code.
+    """
+    try:
+        out = subprocess.run(
+            ["kubectl", "exec", "-n", namespace, deploy, "--",
+             "sh", "-c", "cat /sys/fs/cgroup/cpu.stat"],
+            capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL,
+        ).stdout
+        vals = {}
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                vals[parts[0]] = int(parts[1])
+        if "throttled_usec" in vals:
+            return vals
+    except Exception:
+        pass
+    return None
+
+
+def report(stats, elapsed, budget_ms, quiet=False, throttle_start=None):
     with stats.lock:
         lines = []
         total = sum(stats.ops.values())
         lines.append(f"\n=== soak report after {elapsed:.0f}s: {total} ops "
                      f"({total / max(elapsed, 1):.0f}/s) ===")
+        over_budget = False
         for op in sorted(stats.latencies):
             s = sorted(stats.latencies[op])
             if not s:
@@ -218,6 +249,7 @@ def report(stats, elapsed, budget_ms, quiet=False):
             p95 = s[min(int(len(s) * 0.95), len(s) - 1)]
             p99 = s[min(int(len(s) * 0.99), len(s) - 1)]
             flag = "  <-- OVER BUDGET" if p95 > budget_ms else ""
+            over_budget = over_budget or bool(flag)
             lines.append(f"  {op:<9} n={len(s):<7} p50={p50:7.1f}ms  "
                          f"p95={p95:7.1f}ms  p99={p99:7.1f}ms{flag}")
         if stats.errors:
@@ -230,6 +262,22 @@ def report(stats, elapsed, budget_ms, quiet=False):
                 lines.append(f"    {v}")
         else:
             lines.append("  correctness: no violations")
+
+        # Only when something looks slow: an infrastructure limit must not be
+        # read as a service regression, but the check costs a kubectl exec and
+        # is not worth paying on a healthy run.
+        if over_budget:
+            now = cpu_throttling()
+            if now is not None and throttle_start is not None:
+                delta_ms = (now["throttled_usec"] - throttle_start["throttled_usec"]) / 1000
+                periods = now.get("nr_throttled", 0) - throttle_start.get("nr_throttled", 0)
+                if delta_ms > 0:
+                    lines.append(
+                        f"  NOTE: the API pod was CPU-throttled for {delta_ms:.0f}ms "
+                        f"across {periods} periods during this run. Latency above "
+                        f"budget here reflects the pod's CPU limit, not the service.")
+                else:
+                    lines.append("  NOTE: the API pod was not CPU-throttled during this run.")
         print("\n".join(lines), flush=True)
 
 
@@ -253,6 +301,11 @@ def main():
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
 
+    # Baseline the CPU throttling counters, so a latency report can say whether
+    # the pod was throttled during this run rather than leaving a resource
+    # limit to look like a service regression.
+    throttle_start = cpu_throttling()
+
     threads = [threading.Thread(target=worker, args=(client, stats, projects, args.budget_ms),
                                 daemon=True) for _ in range(args.workers)]
     start = time.time()
@@ -266,7 +319,7 @@ def main():
             time.sleep(0.5)
             now = time.time()
             if now >= next_report:
-                report(stats, now - start, args.budget_ms)
+                report(stats, now - start, args.budget_ms, throttle_start=throttle_start)
                 next_report = now + args.report_every
             if deadline and now >= deadline:
                 break
@@ -276,7 +329,7 @@ def main():
             t.join(timeout=5)
 
     elapsed = time.time() - start
-    report(stats, elapsed, args.budget_ms)
+    report(stats, elapsed, args.budget_ms, throttle_start=throttle_start)
 
     with stats.lock:
         failed = bool(stats.violations)
