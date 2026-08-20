@@ -1575,27 +1575,6 @@ func float32SliceToVectorString(v []float32) string {
 
 // --- Stats ---
 
-// count runs a Cypher count(...) query and unmarshals the resulting agtype
-// number. label is used only to name the entity in error messages (e.g.
-// "node", "edge"). Absence of a row is not an error -- an empty graph counts
-// as zero.
-func (r *AGERepository) count(ctx context.Context, query, label string) (int64, error) {
-	rows, err := r.cypher(ctx, query, nil)
-	if err != nil {
-		return 0, err
-	}
-
-	// agtype returns numbers as strings like "42".
-	count, found, err := scanOne[int64](rows)
-	if err != nil {
-		return 0, fmt.Errorf("parse %s count: %w", label, err)
-	}
-	if !found {
-		return 0, nil
-	}
-	return count, nil
-}
-
 // Ping verifies the backing database is reachable.
 //
 // This is the reachability half of a health check, kept separate from the count
