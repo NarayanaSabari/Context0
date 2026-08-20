@@ -1,0 +1,111 @@
+name: Deploy Site
+
+# The marketing site at context0.sabarinarayana.com. Builds the static Vite
+# bundle in site/ and publishes it to GitHub Pages.
+#
+# Scoped to site/ so a Go-only change does not redeploy the site, and a copy
+# tweak does not wait on the Go test matrix.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install
+        working-directory: site
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: site
+        run: pnpm tsc --noEmit
+
+      - name: Build
+        working-directory: site
+        run: pnpm build
+
+      # A broken link or a page that renders blank is invisible until someone
+      # visits it, and the build is happy either way. Check the emitted HTML,
+      # then drive the real pages in a browser.
+      - name: Check built output
+        working-directory: site
+        run: node scripts/check-build.mjs
+
+      - name: Install browsers
+        working-directory: site
+        run: pnpm exec playwright install --with-deps chromium webkit firefox
+
+      - name: Verify in a browser
+        working-directory: site
+        run: node scripts/verify-site.mjs
+
+      # The checks that only fail for a subset of visitors: scripts blocked,
+      # a keyboard instead of a mouse, reduced motion, low contrast.
+      - name: Accessibility and no-JS audit
+        working-directory: site
+        run: node scripts/audit.mjs
+
+      # Safari and Firefox render differently, and webfonts arrive late on a
+      # real network. Neither shows up in a local Chromium screenshot.
+      - name: WebKit, Firefox, and layout stability
+        working-directory: site
+        run: node scripts/cross-browser.mjs
+
+      # The waitlist is the only thing on this site that does anything. These
+      # drive it against a stubbed provider that is slow, down, or rejecting,
+      # and assert it never claims success for an address that went nowhere.
+      - name: Waitlist failure modes
+        working-directory: site
+        run: node scripts/waitlist.mjs
+
+
+      - name: Upload artifact
+        # Only the main-branch run needs to hand anything to the deploy job;
+        # on a PR the build and checks above are the whole point.
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    name: Deploy
+    # A PR must not publish to the live domain.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,1596 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Context0 - The Proof</title>
+  <meta name="description" content="Context0 is a graph-first memory engine for AI agents. Store conversations, extract typed memories, and query by meaning and relationship." />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a0a0f;
+      --line: rgba(225, 226, 232, 0.11);
+      --line-strong: rgba(225, 226, 232, 0.2);
+      --text: #e1e2e8;
+      --muted: #9ea3b4;
+      --faint: #6f7588;
+      --purple: #863bff;
+      --purple-deep: #7e14ff;
+      --purple-pale: #ede6ff;
+      --cyan: #47bfff;
+      --green: #60d394;
+      --amber: #f7c56b;
+      --red: #ff7a90;
+      --shadow: 0 30px 90px rgba(0, 0, 0, 0.45);
+      --max: 1180px;
+      --mono: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--bg);
+    }
+
+    body {
+      margin: 0;
+      min-width: 0;
+      background:
+        radial-gradient(circle at 72% 0%, rgba(134, 59, 255, 0.18), transparent 30rem),
+        radial-gradient(circle at 14% 20%, rgba(71, 191, 255, 0.08), transparent 24rem),
+        linear-gradient(180deg, #0a0a0f 0%, #0a0a0f 52%, #0d0d14 100%);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.6;
+      letter-spacing: -0.01em;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(225, 226, 232, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(225, 226, 232, 0.025) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: linear-gradient(to bottom, black, transparent 75%);
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    a:focus-visible,
+    button:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 4px;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .page-shell {
+      position: relative;
+      z-index: 1;
+    }
+
+    .wrap {
+      width: min(100% - 40px, var(--max));
+      margin-inline: auto;
+    }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      border-bottom: 1px solid rgba(225, 226, 232, 0.08);
+      background: rgba(10, 10, 15, 0.78);
+      backdrop-filter: blur(18px);
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      min-height: 72px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      font-weight: 720;
+      letter-spacing: -0.03em;
+    }
+
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      filter: drop-shadow(0 0 18px rgba(134, 59, 255, 0.65));
+      flex: 0 0 auto;
+    }
+
+    .brand-word {
+      font-size: 1.02rem;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      color: var(--muted);
+      font-size: 0.91rem;
+    }
+
+    .nav-links a {
+      transition: color 160ms ease;
+    }
+
+    .nav-links a:hover {
+      color: var(--text);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 0 16px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
+      font-weight: 650;
+      letter-spacing: -0.015em;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      border-color: rgba(225, 226, 232, 0.34);
+      background: rgba(255, 255, 255, 0.055);
+    }
+
+    .btn.primary {
+      border-color: rgba(134, 59, 255, 0.7);
+      background: linear-gradient(180deg, #924dff, #7e14ff);
+      color: #fff;
+      box-shadow: 0 16px 38px rgba(126, 20, 255, 0.28);
+    }
+
+    .btn.compact {
+      min-height: 36px;
+      padding: 0 13px;
+      font-size: 0.88rem;
+    }
+
+    .hero {
+      padding: 82px 0 56px;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.28fr);
+      gap: 42px;
+      align-items: start;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 20px;
+      color: var(--purple-pale);
+      font-family: var(--mono);
+      font-size: 0.76rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 99px;
+      background: var(--cyan);
+      box-shadow: 0 0 20px rgba(71, 191, 255, 0.8);
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      margin-bottom: 22px;
+      max-width: 760px;
+      font-size: clamp(3.15rem, 7vw, 6.8rem);
+      line-height: 0.9;
+      letter-spacing: -0.08em;
+      font-weight: 820;
+    }
+
+    .hero-copy {
+      max-width: 610px;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 1.7vw, 1.22rem);
+      line-height: 1.65;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 32px;
+    }
+
+    .hero-note {
+      margin-top: 32px;
+      border-left: 1px solid rgba(71, 191, 255, 0.42);
+      padding-left: 16px;
+      color: var(--faint);
+      font-size: 0.94rem;
+      max-width: 520px;
+    }
+
+    .question-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 13px 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px 16px 0 0;
+      background: rgba(255, 255, 255, 0.035);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      min-width: 0;
+    }
+
+    .question-strip strong {
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 0.82rem;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    .proof-hero {
+      min-width: 0;
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .answer-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      border: 1px solid var(--line);
+      border-top: 0;
+      border-radius: 0 0 24px 24px;
+      overflow: hidden;
+      background: rgba(16, 16, 24, 0.72);
+    }
+
+    .answer-card {
+      min-width: 0;
+      padding: 22px;
+    }
+
+    .answer-card + .answer-card {
+      border-left: 1px solid var(--line);
+      background:
+        linear-gradient(180deg, rgba(134, 59, 255, 0.08), transparent 54%),
+        rgba(13, 13, 20, 0.7);
+    }
+
+    .panel-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .method-pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 8px;
+      color: var(--faint);
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
+    .rank-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .rank-item {
+      min-width: 0;
+      border: 1px solid rgba(225, 226, 232, 0.1);
+      border-radius: 14px;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.026);
+    }
+
+    .rank-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.74rem;
+    }
+
+    .rank-item p {
+      margin: 0;
+      color: #c6c9d5;
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }
+
+    .stale-text {
+      color: var(--amber);
+    }
+
+    .honesty-note {
+      margin: 14px 0 0;
+      color: var(--faint);
+      font-size: 0.78rem;
+      line-height: 1.5;
+    }
+
+    .fact-answer {
+      display: grid;
+      gap: 12px;
+    }
+
+    .fact-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      border: 1px solid rgba(134, 59, 255, 0.38);
+      border-radius: 16px;
+      padding: 14px;
+      background: rgba(134, 59, 255, 0.09);
+    }
+
+    .fact-line span {
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .fact-line strong {
+      font-size: 1.2rem;
+      letter-spacing: -0.03em;
+    }
+
+    .edge-stack {
+      display: grid;
+      gap: 9px;
+    }
+
+    .edge {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      align-items: start;
+      border: 1px solid rgba(225, 226, 232, 0.1);
+      border-radius: 14px;
+      padding: 11px 12px;
+      background: rgba(0, 0, 0, 0.15);
+      min-width: 0;
+    }
+
+    .edge-type {
+      border-radius: 999px;
+      padding: 3px 7px;
+      background: rgba(71, 191, 255, 0.1);
+      color: var(--cyan);
+      font-family: var(--mono);
+      font-size: 0.69rem;
+      white-space: nowrap;
+    }
+
+    .edge p {
+      margin: 0;
+      color: #cfd2dc;
+      font-size: 0.84rem;
+      line-height: 1.45;
+      min-width: 0;
+    }
+
+    section {
+      padding: 72px 0;
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
+      gap: 38px;
+      align-items: end;
+      margin-bottom: 30px;
+    }
+
+    .section-kicker {
+      margin-bottom: 12px;
+      color: var(--cyan);
+      font-family: var(--mono);
+      font-size: 0.76rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      margin-bottom: 0;
+      font-size: clamp(2.2rem, 4vw, 4.3rem);
+      line-height: 0.98;
+      letter-spacing: -0.065em;
+      font-weight: 790;
+    }
+
+    .section-copy {
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.02rem;
+      line-height: 1.7;
+    }
+
+    .problem-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .problem-card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 24px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018));
+    }
+
+    .problem-card .num {
+      display: inline-flex;
+      margin-bottom: 22px;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+    }
+
+    .problem-card p {
+      margin: 0;
+      color: #d7d9e1;
+      font-size: 1.02rem;
+      line-height: 1.55;
+    }
+
+    .proof-lab {
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      overflow: hidden;
+      background: rgba(16, 16, 24, 0.72);
+      box-shadow: var(--shadow);
+    }
+
+    .lab-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.024);
+    }
+
+    .lab-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.82rem;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 99px;
+      background: var(--green);
+      box-shadow: 0 0 20px rgba(96, 211, 148, 0.7);
+    }
+
+    .step-tabs {
+      display: flex;
+      gap: 8px;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .step-tabs::-webkit-scrollbar {
+      display: none;
+    }
+
+    .step-tab {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 11px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      white-space: nowrap;
+      transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+    }
+
+    .step-tab[aria-selected="true"] {
+      border-color: rgba(134, 59, 255, 0.78);
+      background: rgba(134, 59, 255, 0.16);
+      color: var(--purple-pale);
+    }
+
+    .lab-body {
+      display: grid;
+      grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+      min-width: 0;
+    }
+
+    .stage-rail {
+      display: grid;
+      border-right: 1px solid var(--line);
+      background: rgba(0, 0, 0, 0.12);
+    }
+
+    .stage-row {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 14px;
+      padding: 22px;
+      border-bottom: 1px solid rgba(225, 226, 232, 0.07);
+      min-width: 0;
+      opacity: 0.58;
+      transition: opacity 180ms ease, background 180ms ease;
+    }
+
+    .stage-row:last-child {
+      border-bottom: 0;
+    }
+
+    .stage-row.active {
+      opacity: 1;
+      background: linear-gradient(90deg, rgba(134, 59, 255, 0.11), transparent);
+    }
+
+    .stage-index {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+    }
+
+    .stage-row.active .stage-index {
+      border-color: rgba(71, 191, 255, 0.8);
+      color: var(--cyan);
+      box-shadow: 0 0 22px rgba(71, 191, 255, 0.16);
+    }
+
+    .stage-row h3 {
+      margin: 0 0 6px;
+      font-size: 1rem;
+      letter-spacing: -0.02em;
+    }
+
+    .stage-row p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.55;
+    }
+
+    .artifact-stage {
+      display: none;
+      padding: 22px;
+      min-width: 0;
+    }
+
+    .artifact-stage.active {
+      display: block;
+      animation: stageIn 220ms ease both;
+    }
+
+    .code-card {
+      min-width: 0;
+      border: 1px solid rgba(225, 226, 232, 0.13);
+      border-radius: 18px;
+      overflow: hidden;
+      background: #0d0d14;
+    }
+
+    .code-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(225, 226, 232, 0.09);
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.75rem;
+    }
+
+    pre {
+      margin: 0;
+      min-width: 0;
+      overflow-x: auto;
+      padding: 17px;
+      color: #d9dce5;
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      line-height: 1.62;
+      tab-size: 2;
+    }
+
+    code {
+      font-family: var(--mono);
+    }
+
+    .token-key {
+      color: #b99cff;
+    }
+
+    .token-string {
+      color: #89dceb;
+    }
+
+    .token-number {
+      color: #f7c56b;
+    }
+
+    .token-comment {
+      color: #747b8f;
+    }
+
+    .token-good {
+      color: #60d394;
+    }
+
+    .memory-nodes {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .memory-node {
+      border: 1px solid rgba(225, 226, 232, 0.12);
+      border-radius: 16px;
+      padding: 14px;
+      background: rgba(255, 255, 255, 0.025);
+      min-width: 0;
+    }
+
+    .memory-node span {
+      display: inline-flex;
+      margin-bottom: 10px;
+      border-radius: 999px;
+      padding: 3px 7px;
+      background: rgba(134, 59, 255, 0.14);
+      color: var(--purple-pale);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+    }
+
+    .memory-node p {
+      margin: 0;
+      color: #d8dae3;
+      font-size: 0.88rem;
+      line-height: 1.48;
+    }
+
+    .diff-box {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .diff-line {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 10px;
+      align-items: start;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-family: var(--mono);
+      font-size: 0.79rem;
+      line-height: 1.45;
+    }
+
+    .diff-line.old {
+      background: rgba(255, 122, 144, 0.09);
+      color: #ffc0ca;
+    }
+
+    .diff-line.new {
+      background: rgba(96, 211, 148, 0.09);
+      color: #bff3d5;
+    }
+
+    .diff-line.edge-line {
+      background: rgba(71, 191, 255, 0.09);
+      color: #b9e8ff;
+    }
+
+    .query-result {
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .result-top {
+      border: 1px solid rgba(96, 211, 148, 0.38);
+      border-radius: 18px;
+      padding: 16px;
+      background: rgba(96, 211, 148, 0.08);
+    }
+
+    .result-top .small {
+      margin: 0 0 4px;
+      color: var(--green);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .result-top p:last-child {
+      margin: 0;
+      color: #e7f6ee;
+      font-size: 1rem;
+    }
+
+    .two-up {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .comparison-table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 22px;
+      border-style: hidden;
+      box-shadow: 0 0 0 1px var(--line);
+      background: rgba(16, 16, 24, 0.7);
+    }
+
+    .comparison-table th,
+    .comparison-table td {
+      padding: 18px 18px;
+      border: 1px solid rgba(225, 226, 232, 0.09);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .comparison-table th {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.035);
+      font-size: 0.82rem;
+      font-family: var(--mono);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .comparison-table td:first-child {
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }
+
+    .comparison-table td {
+      color: #cfd2dc;
+      font-size: 0.95rem;
+    }
+
+    .comparison-table td.context0 {
+      color: #f0eefc;
+      background: rgba(134, 59, 255, 0.055);
+    }
+
+    .stack-card {
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 24px;
+      background: rgba(16, 16, 24, 0.68);
+      min-width: 0;
+    }
+
+    .stack-diagram {
+      display: grid;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .stack-layer {
+      border: 1px solid rgba(225, 226, 232, 0.1);
+      border-radius: 16px;
+      padding: 15px;
+      background: rgba(255, 255, 255, 0.025);
+    }
+
+    .stack-layer h3 {
+      margin: 0 0 4px;
+      font-size: 1rem;
+    }
+
+    .stack-layer p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .db-layer {
+      border-color: rgba(134, 59, 255, 0.42);
+      background:
+        linear-gradient(90deg, rgba(134, 59, 255, 0.12), rgba(71, 191, 255, 0.07)),
+        rgba(255, 255, 255, 0.02);
+    }
+
+    .split-line {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 12px;
+      align-items: center;
+      margin: 12px 0;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.74rem;
+    }
+
+    .split-line::before,
+    .split-line::after {
+      content: "";
+      height: 1px;
+      background: var(--line);
+    }
+
+    .fact-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .fact-stat {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.024);
+      min-width: 0;
+    }
+
+    .fact-stat strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 1.3rem;
+      letter-spacing: -0.035em;
+    }
+
+    .fact-stat span {
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .api-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .endpoint-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .endpoint-list li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      padding: 10px 12px;
+      color: #d6d8e2;
+      font-family: var(--mono);
+      font-size: 0.79rem;
+      min-width: 0;
+    }
+
+    .endpoint-list span {
+      color: var(--faint);
+      font-family: var(--sans);
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
+
+    .install-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 18px;
+      margin-top: 20px;
+    }
+
+    .footer {
+      padding: 42px 0 56px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+    }
+
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      font-size: 0.9rem;
+    }
+
+    .footer-links a:hover {
+      color: var(--text);
+    }
+
+    @keyframes stageIn {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 1ms !important;
+      }
+    }
+
+    @media (max-width: 980px) {
+      .hero-grid,
+      .section-head,
+      .lab-body,
+      .api-grid,
+      .two-up {
+        grid-template-columns: 1fr;
+      }
+
+      .stage-rail {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .answer-grid,
+      .problem-grid,
+      .memory-nodes,
+      .fact-row,
+      .install-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .answer-card + .answer-card {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .nav-links {
+        display: none;
+      }
+    }
+
+    @media (max-width: 620px) {
+      .wrap {
+        width: min(100% - 28px, var(--max));
+      }
+
+      .nav {
+        min-height: 64px;
+      }
+
+      .nav-actions .btn:not(.primary) {
+        display: none;
+      }
+
+      .hero {
+        padding: 54px 0 36px;
+      }
+
+      h1 {
+        font-size: clamp(3rem, 16vw, 4.6rem);
+      }
+
+      section {
+        padding: 52px 0;
+      }
+
+      .question-strip {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .lab-top,
+      .footer-inner {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .comparison-scroll {
+        overflow-x: auto;
+        border-radius: 22px;
+      }
+
+      .comparison-table {
+        min-width: 680px;
+      }
+
+      .stage-row {
+        grid-template-columns: 34px 1fr;
+        gap: 12px;
+        padding: 18px;
+      }
+
+      pre {
+        font-size: 0.75rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-shell">
+    <header class="site-header">
+      <div class="wrap nav" aria-label="Primary navigation">
+        <a class="brand" href="#top" aria-label="Context0 home">
+          <svg class="brand-mark" viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z" />
+          </svg>
+          <span class="brand-word">Context0</span>
+        </a>
+        <nav class="nav-links" aria-label="Page sections">
+          <a href="#proof">Proof</a>
+          <a href="#pipeline">Pipeline</a>
+          <a href="#api">API</a>
+          <a href="#install">Install</a>
+        </nav>
+        <div class="nav-actions">
+          <a class="btn compact" href="https://github.com/context0/Context0">GitHub</a>
+          <a class="btn compact primary" href="#install">Get started</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero" id="proof" aria-labelledby="hero-title">
+        <div class="wrap hero-grid">
+          <div>
+            <p class="eyebrow">Open source · Apache 2.0 · Self-hosted</p>
+            <h1 id="hero-title">Memory that can prove which fact is current.</h1>
+            <p class="hero-copy">Context0 is a graph-first memory engine. Store conversations, auto-extract facts, query by meaning and relationship - in your own cluster, on your own data.</p>
+            <div class="hero-actions">
+              <a class="btn primary" href="#install">Get started</a>
+              <a class="btn" href="https://github.com/context0/Context0">View on GitHub</a>
+            </div>
+            <p class="hero-note">The strongest memory answer is not another plausible chunk. It is an answer with the relationship trail that explains why it should be trusted.</p>
+          </div>
+
+          <div class="proof-hero" aria-label="Side by side retrieval result comparison">
+            <div class="question-strip">
+              <strong>Same question</strong>
+              <span>what database does this project use?</span>
+            </div>
+            <div class="answer-grid">
+              <article class="answer-card">
+                <div class="panel-label">
+                  <span>Flat vector store</span>
+                  <span class="method-pill">top_k=3</span>
+                </div>
+                <div class="rank-list" aria-label="Illustrative vector search result list">
+                  <div class="rank-item">
+                    <div class="rank-head"><span>rank 1</span><span>cosine 0.83</span></div>
+                    <p>"We switched from MySQL to PostgreSQL last week because we needed graph support."</p>
+                  </div>
+                  <div class="rank-item">
+                    <div class="rank-head"><span>rank 2</span><span>cosine 0.78</span></div>
+                    <p class="stale-text">"The project uses MySQL for the main application database."</p>
+                  </div>
+                  <div class="rank-item">
+                    <div class="rank-head"><span>rank 3</span><span>cosine 0.72</span></div>
+                    <p>"We evaluated database options while adding graph support."</p>
+                  </div>
+                </div>
+                <p class="honesty-note">Scores are illustrative inside this worked example, not benchmark claims about any product.</p>
+              </article>
+
+              <article class="answer-card">
+                <div class="panel-label">
+                  <span>Context0</span>
+                  <span class="method-pill">graph + vector</span>
+                </div>
+                <div class="fact-answer">
+                  <div class="fact-line">
+                    <span>current fact</span>
+                    <strong>PostgreSQL</strong>
+                  </div>
+                  <div class="edge-stack">
+                    <div class="edge">
+                      <span class="edge-type">supersedes</span>
+                      <p><code>database:PostgreSQL</code> replaces <code>database:MySQL</code></p>
+                    </div>
+                    <div class="edge">
+                      <span class="edge-type">because</span>
+                      <p>the switch happened after the project needed graph support</p>
+                    </div>
+                  </div>
+                  <div class="code-card" aria-label="Context0 JSON result snippet">
+                    <div class="code-head"><span>GET /v1/memories/query</span><span>200</span></div>
+                    <pre><code>{
+  <span class="token-key">"answer"</span>: <span class="token-string">"PostgreSQL"</span>,
+  <span class="token-key">"relationships"</span>: [
+    { <span class="token-key">"type"</span>: <span class="token-string">"supersedes"</span>, <span class="token-key">"from"</span>: <span class="token-string">"PostgreSQL"</span>, <span class="token-key">"to"</span>: <span class="token-string">"MySQL"</span> },
+    { <span class="token-key">"type"</span>: <span class="token-string">"reason"</span>, <span class="token-key">"value"</span>: <span class="token-string">"needed graph support"</span> }
+  ]
+}</code></pre>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="problem-title">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">The product problem</p>
+              <h2 id="problem-title">Agents keep losing the evidence.</h2>
+            </div>
+            <p class="section-copy">Every AI agent framework today has the same problem: sessions start from scratch, context is lost, and agents never learn from past interactions.</p>
+          </div>
+          <div class="problem-grid">
+            <article class="problem-card">
+              <span class="num">01</span>
+              <p>You explain your architecture to your coding assistant on Monday. On Tuesday it has no idea what you said.</p>
+            </article>
+            <article class="problem-card">
+              <span class="num">02</span>
+              <p>A support bot asks the same onboarding questions every time a returning customer reaches out.</p>
+            </article>
+            <article class="problem-card">
+              <span class="num">03</span>
+              <p>Your team runs five AI tools on one project. None of them share what they learned.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="pipeline" aria-labelledby="pipeline-title">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Running example</p>
+              <h2 id="pipeline-title">The MySQL to PostgreSQL switch, end to end.</h2>
+            </div>
+            <p class="section-copy">One conversation becomes typed memories. A contradiction becomes an explicit edge. The query returns the current fact with the relationships attached.</p>
+          </div>
+
+          <div class="proof-lab">
+            <div class="lab-top">
+              <div class="lab-title"><span class="status-dot" aria-hidden="true"></span><span>worked-example.trace</span></div>
+              <div class="step-tabs" role="tablist" aria-label="Proof stages">
+                <button class="step-tab" role="tab" type="button" aria-selected="true" data-step="0">01 Raw text</button>
+                <button class="step-tab" role="tab" type="button" aria-selected="false" data-step="1">02 Extraction</button>
+                <button class="step-tab" role="tab" type="button" aria-selected="false" data-step="2">03 Supersedes</button>
+                <button class="step-tab" role="tab" type="button" aria-selected="false" data-step="3">04 Query</button>
+              </div>
+            </div>
+            <div class="lab-body">
+              <aside class="stage-rail" aria-label="Pipeline stages">
+                <div class="stage-row active" data-stage-row="0">
+                  <span class="stage-index">01</span>
+                  <div>
+                    <h3>Raw conversation text goes in.</h3>
+                    <p>Context0 accepts conversation text through the extraction endpoint.</p>
+                  </div>
+                </div>
+                <div class="stage-row" data-stage-row="1">
+                  <span class="stage-index">02</span>
+                  <div>
+                    <h3>Typed memories come out.</h3>
+                    <p>The engine extracts a fact, an event, and a reason as structured nodes.</p>
+                  </div>
+                </div>
+                <div class="stage-row" data-stage-row="2">
+                  <span class="stage-index">03</span>
+                  <div>
+                    <h3>Contradictions become edges.</h3>
+                    <p>The new database fact conflicts with the old one, so the old fact is superseded.</p>
+                  </div>
+                </div>
+                <div class="stage-row" data-stage-row="3">
+                  <span class="stage-index">04</span>
+                  <div>
+                    <h3>The answer carries support.</h3>
+                    <p>Retrieval follows relationships, not just similarity, and returns the proof trail.</p>
+                  </div>
+                </div>
+              </aside>
+
+              <div class="artifact-stage active" data-stage="0" role="tabpanel">
+                <div class="code-card">
+                  <div class="code-head"><span>curl</span><span>POST /v1/memories/extract</span></div>
+                  <pre><code>curl -X POST http://localhost:8080/v1/memories/extract \
+  -H <span class="token-string">"X-API-Key: $API_KEY"</span> \
+  -d <span class="token-string">'{"conversation": "user: We switched from MySQL to PostgreSQL last week because we needed graph support", "project_id": "my-project"}'</span></code></pre>
+                </div>
+              </div>
+
+              <div class="artifact-stage" data-stage="1" role="tabpanel" hidden>
+                <div class="code-card">
+                  <div class="code-head"><span>extract response</span><span>typed nodes</span></div>
+                  <pre><code>{
+  <span class="token-key">"project_id"</span>: <span class="token-string">"my-project"</span>,
+  <span class="token-key">"memories"</span>: [
+    { <span class="token-key">"id"</span>: <span class="token-string">"fact:database:postgresql"</span>, <span class="token-key">"type"</span>: <span class="token-string">"fact"</span>, <span class="token-key">"value"</span>: <span class="token-string">"Project uses PostgreSQL"</span> },
+    { <span class="token-key">"id"</span>: <span class="token-string">"event:database-switch"</span>, <span class="token-key">"type"</span>: <span class="token-string">"event"</span>, <span class="token-key">"value"</span>: <span class="token-string">"Switched from MySQL last week"</span> },
+    { <span class="token-key">"id"</span>: <span class="token-string">"reason:graph-support"</span>, <span class="token-key">"type"</span>: <span class="token-string">"reason"</span>, <span class="token-key">"value"</span>: <span class="token-string">"Needed graph support"</span> }
+  ]
+}</code></pre>
+                </div>
+                <div class="memory-nodes" aria-label="Extracted typed memories">
+                  <div class="memory-node"><span>fact</span><p>Project uses PostgreSQL.</p></div>
+                  <div class="memory-node"><span>event</span><p>Database switched from MySQL last week.</p></div>
+                  <div class="memory-node"><span>reason</span><p>The team needed graph support.</p></div>
+                </div>
+              </div>
+
+              <div class="artifact-stage" data-stage="2" role="tabpanel" hidden>
+                <div class="code-card">
+                  <div class="code-head"><span>graph mutation</span><span>Cypher flavored</span></div>
+                  <pre><code>MATCH (old:Memory {id: <span class="token-string">"fact:database:mysql"</span>})
+MATCH (new:Memory {id: <span class="token-string">"fact:database:postgresql"</span>})
+MATCH (why:Memory {id: <span class="token-string">"reason:graph-support"</span>})
+CREATE (new)-[:<span class="token-good">SUPERSEDES</span> {detected_by: <span class="token-string">"contradiction"</span>}]-&gt;(old)
+CREATE (new)-[:<span class="token-good">BECAUSE</span>]-&gt;(why)</code></pre>
+                </div>
+                <div class="diff-box" aria-label="Contradiction diff">
+                  <div class="diff-line old"><span>-</span><span>current database = MySQL</span></div>
+                  <div class="diff-line new"><span>+</span><span>current database = PostgreSQL</span></div>
+                  <div class="diff-line edge-line"><span>↳</span><span>(PostgreSQL)-[:SUPERSEDES]-&gt;(MySQL)</span></div>
+                </div>
+              </div>
+
+              <div class="artifact-stage" data-stage="3" role="tabpanel" hidden>
+                <div class="code-card">
+                  <div class="code-head"><span>query</span><span>GET /v1/memories/query</span></div>
+                  <pre><code>curl <span class="token-string">"http://localhost:8080/v1/memories/query?query=what+database&amp;project_id=my-project&amp;top_k=3"</span> \
+  -H <span class="token-string">"X-API-Key: $API_KEY"</span></code></pre>
+                </div>
+                <div class="query-result">
+                  <div class="result-top">
+                    <p class="small">answer</p>
+                    <p>The project uses PostgreSQL.</p>
+                  </div>
+                  <div class="code-card">
+                    <div class="code-head"><span>supporting relationships</span><span>attached</span></div>
+                    <pre><code>[
+  { <span class="token-key">"type"</span>: <span class="token-string">"supersedes"</span>, <span class="token-key">"from"</span>: <span class="token-string">"fact:database:postgresql"</span>, <span class="token-key">"to"</span>: <span class="token-string">"fact:database:mysql"</span> },
+  { <span class="token-key">"type"</span>: <span class="token-string">"because"</span>, <span class="token-key">"from"</span>: <span class="token-string">"fact:database:postgresql"</span>, <span class="token-key">"to"</span>: <span class="token-string">"reason:graph-support"</span> }
+]</code></pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="capabilities-title">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">What it does</p>
+              <h2 id="capabilities-title">A memory engine, not a pile of chunks.</h2>
+            </div>
+            <p class="section-copy">Feed it any conversation. It extracts what matters, stores typed nodes, and returns the few memories that answer the question with the relationships that explain them.</p>
+          </div>
+          <div class="two-up">
+            <div class="stack-card">
+              <h3>Remember everything</h3>
+              <p class="section-copy">Feed it any conversation. It extracts the facts, preferences, and events automatically and stores them as typed nodes.</p>
+              <div class="split-line">extract</div>
+              <div class="code-card">
+                <div class="code-head"><span>python</span><span>SDK</span></div>
+                <pre><code>from context0 import Context0Client
+
+client = Context0Client(endpoint=<span class="token-string">"localhost:50051"</span>, api_key=..., project=<span class="token-string">"my-project"</span>)
+
+client.extract(<span class="token-string">"user: We switched to PostgreSQL\nuser: I prefer vim"</span>)
+results = client.query(<span class="token-string">"what database does this project use?"</span>, top_k=<span class="token-number">3</span>)</code></pre>
+              </div>
+            </div>
+            <div class="stack-card">
+              <h3>Recall what matters</h3>
+              <p class="section-copy">Not 50 vaguely related chunks. The 3 to 5 memories that actually answer the question, with the relationships that explain them.</p>
+              <div class="split-line">profile</div>
+              <div class="memory-nodes">
+                <div class="memory-node"><span>static</span><p>Role, expertise, preferences, stable project facts.</p></div>
+                <div class="memory-node"><span>dynamic</span><p>Recent events from the last 7 days.</p></div>
+                <div class="memory-node"><span>shared</span><p>Any agent can plug in, framework-agnostic.</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="comparison-title">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Comparison</p>
+              <h2 id="comparison-title">Where flat memory loses the thread.</h2>
+            </div>
+            <p class="section-copy">Vector similarity is still useful. Context0 keeps it in the same query path as graph traversal, so the result can be similar and related.</p>
+          </div>
+          <div class="comparison-scroll" role="region" aria-label="Traditional memory versus Context0 comparison" tabindex="0">
+            <table class="comparison-table">
+              <thead>
+                <tr>
+                  <th scope="col">Dimension</th>
+                  <th scope="col">Traditional</th>
+                  <th scope="col">Context0</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Memory structure</td>
+                  <td>Flat text chunks</td>
+                  <td class="context0">Connected knowledge graph</td>
+                </tr>
+                <tr>
+                  <td>Retrieval</td>
+                  <td>Find similar text</td>
+                  <td class="context0">Follow relationships, not just similarity</td>
+                </tr>
+                <tr>
+                  <td>Updates</td>
+                  <td>Old info mixed with new</td>
+                  <td class="context0">Contradictions detected, stale facts superseded</td>
+                </tr>
+                <tr>
+                  <td>Learning</td>
+                  <td>Starts fresh each session</td>
+                  <td class="context0">Consolidates over time, forgets noise</td>
+                </tr>
+                <tr>
+                  <td>Sharing</td>
+                  <td>Locked to one tool</td>
+                  <td class="context0">Any agent can plug in, framework-agnostic</td>
+                </tr>
+                <tr>
+                  <td>Privacy</td>
+                  <td>Your data on their servers</td>
+                  <td class="context0">Self-hosted, data never leaves your infra</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="stack-title">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Architecture</p>
+              <h2 id="stack-title">Graph and vector live in one database.</h2>
+            </div>
+            <p class="section-copy">Apache AGE and pgvector run inside the same PostgreSQL instance. Graph traversal and vector search share one database, one query path, and no sync between two stores.</p>
+          </div>
+          <div class="two-up">
+            <div class="stack-card">
+              <h3>Query path</h3>
+              <div class="stack-diagram" aria-label="Context0 architecture diagram">
+                <div class="stack-layer"><h3>Any agent</h3><p>gRPC or REST, any framework</p></div>
+                <div class="stack-layer"><h3>Context0 Engine</h3><p>Ingest, extract, hybrid query, consolidation</p></div>
+                <div class="stack-layer db-layer"><h3>PostgreSQL 18</h3><p>Apache AGE graph nodes and pgvector embeddings in one instance</p></div>
+                <div class="stack-layer"><h3>React Web UI + Prometheus</h3><p>Live graph visualization and metrics</p></div>
+              </div>
+            </div>
+            <div class="stack-card">
+              <h3>Stack</h3>
+              <p class="section-copy">Every dependency is OSI-approved, with no SSPL, BSL, or proprietary dependency.</p>
+              <div class="fact-row">
+                <div class="fact-stat"><strong>Go</strong><span>engine</span></div>
+                <div class="fact-stat"><strong>AGE</strong><span>graph</span></div>
+                <div class="fact-stat"><strong>pgvector</strong><span>vectors</span></div>
+                <div class="fact-stat"><strong>Helm</strong><span>Kubernetes</span></div>
+              </div>
+              <div class="split-line">rigor</div>
+              <p class="section-copy">The repo verifies against a live cluster: 80 checks in <code>verify_k8s.sh</code> covering probes, security contexts, NetworkPolicy, PDB evictions and recoverability.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="api" aria-labelledby="api-title">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">API surface</p>
+              <h2 id="api-title">Runnable through REST, gRPC, SDK, or CLI.</h2>
+            </div>
+            <p class="section-copy">The proof is not a diagram alone. The same memory flow is exposed as concrete endpoints you can call locally.</p>
+          </div>
+          <div class="api-grid">
+            <div class="code-card">
+              <div class="code-head"><span>real endpoint</span><span>extract</span></div>
+              <pre><code>curl -X POST http://localhost:8080/v1/memories/extract \
+  -H <span class="token-string">"X-API-Key: $API_KEY"</span> \
+  -d <span class="token-string">'{"conversation": "user: We switched from MySQL to PostgreSQL last week because we needed graph support", "project_id": "my-project"}'</span></code></pre>
+            </div>
+            <div class="stack-card">
+              <h3>REST surface</h3>
+              <ul class="endpoint-list">
+                <li><code>POST /v1/memories</code><span>store</span></li>
+                <li><code>POST /v1/memories/extract</code><span>extract</span></li>
+                <li><code>GET /v1/memories/query</code><span>query</span></li>
+                <li><code>POST /v1/memories/connect</code><span>connect</span></li>
+                <li><code>GET /v1/memories/{id}/graph</code><span>graph</span></li>
+                <li><code>GET /v1/profiles/{project_id}</code><span>profile</span></li>
+                <li><code>GET /v1/health</code><span>health</span></li>
+                <li><code>GET /metrics</code><span>metrics</span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="install" aria-labelledby="install-title">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Get started</p>
+              <h2 id="install-title">Self-host the memory graph.</h2>
+            </div>
+            <p class="section-copy">Run locally with Docker Compose or install into Kubernetes with Helm. Python SDK and Go CLI are also available.</p>
+          </div>
+          <div class="install-grid">
+            <div class="code-card">
+              <div class="code-head"><span>Docker Compose</span><span>copy</span></div>
+              <pre><code><span class="token-comment"># Docker Compose</span>
+cat &gt; .env &lt;&lt;EOF
+POSTGRES_PASSWORD=$(openssl rand -hex 16)
+CONTEXT0_API_KEYS=$(go run ./cmd/cli keys generate)
+EOF
+docker compose up</code></pre>
+            </div>
+            <div class="code-card">
+              <div class="code-head"><span>Helm</span><span>Kubernetes</span></div>
+              <pre><code><span class="token-comment"># Helm</span>
+helm install context0 ./charts/context0 -n context0 --create-namespace \
+  --set postgres.existingSecret=my-postgres-secret \
+  --set auth.existingSecret=my-api-keys</code></pre>
+            </div>
+          </div>
+          <div class="fact-row">
+            <div class="fact-stat"><strong>Apache 2.0</strong><span>open-source license</span></div>
+            <div class="fact-stat"><strong>10</strong><span>REST endpoints in the surface</span></div>
+            <div class="fact-stat"><strong>1</strong><span>PostgreSQL query path</span></div>
+            <div class="fact-stat"><strong>80</strong><span>live-cluster checks</span></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <a class="brand" href="#top" aria-label="Context0 home">
+          <svg class="brand-mark" viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z" />
+          </svg>
+          <span class="brand-word">Context0</span>
+        </a>
+        <div class="footer-links">
+          <a href="https://github.com/context0/Context0">github.com/context0/Context0</a>
+          <a href="#install">Docs</a>
+          <a href="#install">Contributing</a>
+          <a href="#install">Security</a>
+          <span>Apache 2.0</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    const tabs = Array.from(document.querySelectorAll('[data-step]'));
+    const rows = Array.from(document.querySelectorAll('[data-stage-row]'));
+    const stages = Array.from(document.querySelectorAll('[data-stage]'));
+
+    function setStage(index) {
+      tabs.forEach((tab) => {
+        const active = Number(tab.dataset.step) === index;
+        tab.setAttribute('aria-selected', String(active));
+      });
+
+      rows.forEach((row) => {
+        row.classList.toggle('active', Number(row.dataset.stageRow) === index);
+      });
+
+      stages.forEach((stage) => {
+        const active = Number(stage.dataset.stage) === index;
+        stage.classList.toggle('active', active);
+        stage.hidden = !active;
+      });
+    }
+
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => setStage(Number(tab.dataset.step)));
+    });
+  </script>
+</body>
+</html>

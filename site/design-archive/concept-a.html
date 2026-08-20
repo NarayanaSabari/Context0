@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Context0 — Memory for AI agents that remembers how things relate</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0a0f;
+    --bg-raised:#0e0e15;
+    --text:#e1e2e8;
+    --text-dim:#9295a3;
+    --text-faint:#5c5f6c;
+    --purple:#863bff;
+    --purple-deep:#7e14ff;
+    --purple-pale:#ede6ff;
+    --cyan:#47bfff;
+    --gray-node:#6b6b78;
+    --border:rgba(225,226,232,0.10);
+    --border-strong:rgba(225,226,232,0.16);
+    --card:rgba(13,13,19,0.86);
+    --card-solid:#0d0d13;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --radius: 14px;
+  }
+  *,*::before,*::after{ box-sizing:border-box; }
+  html{ scroll-behavior:smooth; }
+  @media (prefers-reduced-motion: reduce){ html{ scroll-behavior:auto; } }
+  body{
+    margin:0; background:var(--bg); color:var(--text); font-family:var(--sans);
+    -webkit-font-smoothing:antialiased; line-height:1.5; min-width:0;
+    overflow-x:hidden;
+  }
+  img,svg{ display:block; max-width:100%; }
+  a{ color:inherit; }
+  h1,h2,h3,h4{ margin:0; font-family:var(--sans); letter-spacing:-0.02em; }
+  p{ margin:0; }
+  ul{ margin:0; padding:0; list-style:none; }
+  button{ font-family:inherit; cursor:pointer; }
+  .mono{ font-family:var(--mono); }
+
+  /* ---------- layout scaffolding ---------- */
+  #graph-canvas{
+    position:fixed; inset:0; width:100%; height:100%; z-index:0;
+    pointer-events:auto; transition:opacity .7s ease;
+  }
+  .page{ position:relative; z-index:1; }
+  .wrap{ max-width:1180px; margin:0 auto; padding-inline:clamp(20px,5vw,48px); min-width:0; }
+  section{ position:relative; padding-block:clamp(64px,11vw,140px); min-width:0; }
+
+  .eyebrow{
+    font-family:var(--mono); font-size:12.5px; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--cyan); display:flex; align-items:center; gap:.6em; margin-bottom:18px;
+  }
+  .eyebrow::before{ content:''; width:7px; height:7px; border-radius:2px; background:var(--cyan);
+    box-shadow:0 0 10px rgba(71,191,255,.8); transform:rotate(45deg); flex:none; }
+
+  .panel{
+    background:var(--card); border:1px solid var(--border-strong); border-radius:var(--radius);
+    min-width:0;
+  }
+
+  /* focus vignette used on graph-forward sections instead of solid panels */
+  .vignette{
+    background:
+      linear-gradient(180deg, rgba(10,10,15,.94) 0%, rgba(10,10,15,.72) 38%, rgba(10,10,15,.35) 72%, rgba(10,10,15,.1) 100%);
+  }
+
+  /* ---------- nav ---------- */
+  #nav{
+    position:fixed; top:0; left:0; right:0; z-index:50;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:16px clamp(20px,5vw,48px);
+    background:rgba(10,10,15,0); border-bottom:1px solid transparent;
+    transition:background .3s ease, border-color .3s ease, backdrop-filter .3s ease;
+  }
+  #nav.scrolled{ background:rgba(10,10,15,.82); border-bottom-color:var(--border); backdrop-filter:blur(10px); }
+  .brand{ display:flex; align-items:center; gap:10px; font-weight:700; font-size:16px; text-decoration:none; }
+  .brand svg{ width:22px; height:22px; filter:drop-shadow(0 0 10px rgba(134,59,255,.55)); }
+  .navlinks{ display:flex; gap:28px; }
+  .navlinks a{ font-size:14px; color:var(--text-dim); text-decoration:none; transition:color .15s; }
+  .navlinks a:hover, .navlinks a:focus-visible{ color:var(--text); }
+  .navcta{ display:flex; align-items:center; gap:12px; }
+  #mobile-toggle{ display:none; background:none; border:1px solid var(--border-strong); border-radius:8px; padding:8px; color:var(--text); }
+
+  .btn{
+    display:inline-flex; align-items:center; gap:8px; font-size:14px; font-weight:600;
+    padding:10px 18px; border-radius:9px; border:1px solid transparent; text-decoration:none;
+    transition:transform .15s ease, background .15s ease, border-color .15s ease;
+  }
+  .btn:active{ transform:translateY(1px); }
+  .btn-primary{ background:linear-gradient(155deg,var(--purple),var(--purple-deep)); color:#fff; box-shadow:0 8px 24px -8px rgba(134,59,255,.6); }
+  .btn-primary:hover{ filter:brightness(1.08); }
+  .btn-ghost{ background:transparent; border-color:var(--border-strong); color:var(--text); }
+  .btn-ghost:hover{ border-color:var(--text-dim); }
+  .btn-sm{ padding:7px 13px; font-size:13px; }
+  :focus-visible{ outline:2px solid var(--cyan); outline-offset:2px; }
+
+  /* ---------- hero ---------- */
+  #hero{ padding-top:clamp(150px,20vw,210px); padding-bottom:clamp(40px,8vw,80px); }
+  .hero-grid{ display:grid; grid-template-columns:minmax(0,1fr); gap:40px; }
+  .hero-copy{ max-width:660px; }
+  .hero-copy h1{ font-size:clamp(34px,5.4vw,58px); font-weight:800; line-height:1.07; }
+  .hero-copy h1 .grad{ background:linear-gradient(105deg,var(--purple-pale),var(--cyan) 60%,var(--purple));
+    -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .hero-sub{ margin-top:22px; font-size:17px; color:var(--text-dim); max-width:540px; }
+  .hero-ctas{ margin-top:32px; display:flex; gap:14px; flex-wrap:wrap; }
+  .hero-legend{
+    margin-top:52px; display:flex; flex-wrap:wrap; gap:22px; align-items:center;
+    padding:14px 18px; border:1px solid var(--border); border-radius:10px; background:rgba(13,13,19,.55);
+    font-family:var(--mono); font-size:12px; color:var(--text-dim); max-width:660px;
+  }
+  .legend-group{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .legend-item{ display:flex; align-items:center; gap:6px; white-space:nowrap; }
+  .legend-shape{ width:11px; height:11px; flex:none; }
+  .legend-divider{ width:1px; height:16px; background:var(--border-strong); }
+
+  /* mini comparison, static SVG proof placed inside first screen */
+  .compare-proof{ margin-top:56px; }
+  .compare-proof-head{ font-size:13px; color:var(--text-faint); margin-bottom:14px; font-family:var(--mono); }
+  .compare-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+  @media (max-width:640px){ .compare-grid{ grid-template-columns:minmax(0,1fr); } }
+  .compare-card{ padding:18px; min-width:0; }
+  .compare-card h4{ font-size:13px; font-weight:600; color:var(--text-dim); display:flex; align-items:center; gap:8px; }
+  .compare-card .tag{ font-family:var(--mono); font-size:10.5px; padding:2px 7px; border-radius:99px; }
+  .tag-bad{ background:rgba(225,226,232,.08); color:var(--text-faint); border:1px solid var(--border-strong); }
+  .tag-good{ background:rgba(71,191,255,.12); color:var(--cyan); border:1px solid rgba(71,191,255,.3); }
+  .compare-card svg{ width:100%; height:auto; margin-top:14px; }
+  .compare-card p{ margin-top:12px; font-size:12.5px; color:var(--text-faint); line-height:1.5; }
+
+  .scroll-cue{ margin-top:64px; display:flex; align-items:center; gap:10px; font-family:var(--mono); font-size:11.5px;
+    color:var(--text-faint); }
+  .scroll-cue .line{ width:1px; height:34px; background:linear-gradient(var(--purple),transparent); }
+  @media (prefers-reduced-motion: no-preference){ .scroll-cue .line{ animation:pulse-line 2.2s ease-in-out infinite; } }
+  @keyframes pulse-line{ 0%,100%{ opacity:.4; } 50%{ opacity:1; } }
+
+  /* ---------- section headers ---------- */
+  .section-head{ max-width:640px; margin-bottom:44px; }
+  .section-head h2{ font-size:clamp(26px,3.6vw,38px); font-weight:700; }
+  .section-head p{ margin-top:14px; font-size:15.5px; color:var(--text-dim); }
+
+  /* ---------- problem ---------- */
+  .beats{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
+  @media (max-width:860px){ .beats{ grid-template-columns:minmax(0,1fr); } }
+  .beat{ padding:24px; min-width:0; }
+  .beat .num{ font-family:var(--mono); font-size:12px; color:var(--purple); }
+  .beat p{ margin-top:14px; font-size:15px; color:var(--text); line-height:1.55; }
+  .beat .node-dot{ width:10px; height:10px; border-radius:2px; transform:rotate(45deg); background:var(--gray-node);
+    margin-bottom:16px; opacity:.7; }
+
+  /* ---------- approaches ---------- */
+  .approach-list{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
+  @media (max-width:860px){ .approach-list{ grid-template-columns:minmax(0,1fr); } }
+  .approach{ padding:22px; min-width:0; border-top:2px solid var(--border-strong); border-radius:0 0 var(--radius) var(--radius);
+    background:var(--card); }
+  .approach h4{ font-size:15px; font-weight:600; }
+  .approach p{ margin-top:10px; font-size:13.5px; color:var(--text-dim); line-height:1.5; }
+
+  /* ---------- capabilities ---------- */
+  .cap-grid{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
+  @media (max-width:860px){ .cap-grid{ grid-template-columns:minmax(0,1fr); } }
+  .cap{ padding:26px; min-width:0; }
+  .cap .cap-icon{ width:34px; height:34px; border-radius:9px; display:flex; align-items:center; justify-content:center;
+    background:rgba(134,59,255,.12); border:1px solid rgba(134,59,255,.25); margin-bottom:18px; }
+  .cap .cap-icon svg{ width:17px; height:17px; }
+  .cap h3{ font-size:16.5px; font-weight:600; }
+  .cap p{ margin-top:10px; font-size:14px; color:var(--text-dim); line-height:1.55; }
+
+  /* ---------- centerpiece ---------- */
+  #centerpiece{ min-height:100vh; display:flex; align-items:center; padding-block:clamp(80px,14vw,160px); }
+  .center-copy{ max-width:520px; }
+  .center-copy .eyebrow{ color:var(--purple-pale); }
+  .center-copy .eyebrow::before{ background:var(--purple); box-shadow:0 0 10px rgba(134,59,255,.8); }
+  .center-copy h2{ font-size:clamp(26px,4vw,40px); font-weight:700; line-height:1.15; }
+  .center-copy .caption{
+    margin-top:24px; padding:16px 18px; border-left:2px solid var(--purple); font-size:14.5px; color:var(--text-dim);
+    opacity:0; transform:translateY(6px); transition:opacity .6s ease, transform .6s ease;
+  }
+  .center-copy .caption.in{ opacity:1; transform:translateY(0); }
+  .center-copy .caption b{ color:var(--text); font-weight:600; }
+  .center-legend{ margin-top:26px; display:flex; gap:18px; font-family:var(--mono); font-size:12px; color:var(--text-faint); }
+  .center-legend span{ display:flex; align-items:center; gap:7px; }
+  .swatch{ width:20px; height:2px; }
+
+  /* ---------- query ---------- */
+  #query{ min-height:92vh; display:flex; align-items:center; }
+  .query-box{ max-width:600px; }
+  .presets{ margin-top:26px; display:flex; flex-direction:column; gap:10px; }
+  .preset-btn{
+    text-align:left; padding:13px 16px; border-radius:10px; border:1px solid var(--border-strong);
+    background:rgba(13,13,19,.7); color:var(--text); font-size:14px; display:flex; align-items:center;
+    justify-content:space-between; gap:12px; transition:border-color .15s, background .15s;
+  }
+  .preset-btn:hover, .preset-btn:focus-visible{ border-color:var(--purple); background:rgba(134,59,255,.08); }
+  .preset-btn[aria-pressed="true"]{ border-color:var(--cyan); background:rgba(71,191,255,.08); }
+  .preset-btn .arrow{ color:var(--text-faint); font-family:var(--mono); font-size:13px; flex:none; }
+  .query-answer{
+    margin-top:22px; padding:18px; border-radius:10px; border:1px dashed var(--border-strong);
+    font-size:14px; color:var(--text-dim); min-height:26px; line-height:1.6;
+  }
+  .query-answer .a-label{ font-family:var(--mono); font-size:11px; color:var(--cyan); display:block; margin-bottom:8px; text-transform:uppercase; letter-spacing:.08em; }
+  .query-answer strong{ color:var(--text); }
+  .query-hint{ margin-top:12px; font-size:12px; color:var(--text-faint); font-family:var(--mono); }
+
+  /* ---------- table ---------- */
+  .table-wrap{ overflow-x:auto; border:1px solid var(--border-strong); border-radius:var(--radius); background:var(--card-solid); }
+  table{ border-collapse:collapse; width:100%; min-width:640px; font-size:14px; }
+  th,td{ text-align:left; padding:14px 18px; border-bottom:1px solid var(--border); vertical-align:top; }
+  thead th{ font-family:var(--mono); font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-faint); background:rgba(255,255,255,.02); }
+  tbody tr:last-child td{ border-bottom:none; }
+  tbody th{ color:var(--text-dim); font-weight:500; font-size:13px; white-space:nowrap; }
+  td.trad{ color:var(--text-faint); }
+  td.c0{ color:var(--text); position:relative; }
+  td.c0::before{ content:''; position:absolute; left:0; top:0; bottom:0; width:2px; background:var(--purple); }
+
+  /* ---------- code / api ---------- */
+  .api-grid{ display:grid; grid-template-columns:1.1fr .9fr; gap:28px; align-items:start; }
+  @media (max-width:900px){ .api-grid{ grid-template-columns:minmax(0,1fr); } }
+  .code-block{
+    background:var(--card-solid); border:1px solid var(--border-strong); border-radius:12px; overflow:hidden; min-width:0;
+  }
+  .code-head{ display:flex; align-items:center; justify-content:space-between; padding:10px 16px; border-bottom:1px solid var(--border);
+    font-family:var(--mono); font-size:11.5px; color:var(--text-faint); }
+  .code-block pre{ margin:0; padding:16px; overflow-x:auto; font-family:var(--mono); font-size:12.6px; line-height:1.65; color:var(--text-dim); }
+  .code-block code .k{ color:var(--cyan); }
+  .code-block code .s{ color:var(--purple-pale); }
+  .code-block code .c{ color:var(--text-faint); }
+  .copy-btn{ font-family:var(--mono); font-size:11px; color:var(--text-faint); background:none; border:1px solid var(--border-strong);
+    border-radius:6px; padding:4px 8px; }
+  .copy-btn:hover{ color:var(--text); border-color:var(--text-dim); }
+  .endpoint-list{ margin-top:18px; display:flex; flex-direction:column; gap:8px; }
+  .endpoint{ display:flex; gap:10px; align-items:baseline; font-family:var(--mono); font-size:12.5px; padding:9px 12px;
+    border:1px solid var(--border); border-radius:8px; background:rgba(255,255,255,.02); }
+  .endpoint .m{ color:var(--cyan); font-weight:600; width:44px; flex:none; }
+  .endpoint .p{ color:var(--text-dim); }
+  .arch-note{ margin-top:20px; padding:16px; border-radius:10px; border:1px solid rgba(71,191,255,.25); background:rgba(71,191,255,.05);
+    font-size:13px; color:var(--text-dim); line-height:1.55; }
+  .arch-note b{ color:var(--cyan); }
+
+  /* ---------- install ---------- */
+  .install-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }
+  @media (max-width:860px){ .install-grid{ grid-template-columns:minmax(0,1fr); } }
+  .install-extra{ margin-top:22px; display:flex; gap:12px; flex-wrap:wrap; font-size:13px; color:var(--text-dim); }
+  .chip{ padding:6px 12px; border-radius:99px; border:1px solid var(--border-strong); font-family:var(--mono); font-size:12px; }
+
+  /* ---------- stack ---------- */
+  .stack-grid{ display:grid; grid-template-columns:1fr 1fr; gap:36px; align-items:center; }
+  @media (max-width:860px){ .stack-grid{ grid-template-columns:minmax(0,1fr); } }
+  .stack-chips{ display:flex; flex-wrap:wrap; gap:10px; }
+  .stack-chip{ padding:9px 14px; border-radius:9px; border:1px solid var(--border-strong); background:var(--card); font-size:13px; }
+  .db-diagram{ padding:22px; }
+  .db-diagram svg{ width:100%; height:auto; }
+  .db-diagram .cap-txt{ margin-top:14px; font-size:12.5px; color:var(--text-faint); line-height:1.5; }
+
+  /* ---------- rigor ---------- */
+  .rigor-list{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+  @media (max-width:860px){ .rigor-list{ grid-template-columns:minmax(0,1fr); } }
+  .rigor-item{ padding:18px; min-width:0; }
+  .rigor-item .script{ font-family:var(--mono); font-size:12px; color:var(--cyan); }
+  .rigor-item p{ margin-top:8px; font-size:13px; color:var(--text-dim); line-height:1.5; }
+  .rigor-stats{ margin-top:36px; display:flex; flex-wrap:wrap; gap:14px; }
+  .stat{ padding:14px 18px; border:1px solid var(--border-strong); border-radius:10px; min-width:150px; flex:1; }
+  .stat b{ display:block; font-size:22px; font-weight:700; color:var(--text); }
+  .stat span{ font-size:12px; color:var(--text-faint); font-family:var(--mono); }
+
+  /* ---------- roadmap ---------- */
+  .roadmap-grid{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
+  @media (max-width:860px){ .roadmap-grid{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  .road-item{ padding:16px; border:1px dashed var(--border-strong); border-radius:10px; background:rgba(13,13,19,.5); min-width:0; }
+  .road-item .dot{ width:9px; height:9px; border:1px dashed var(--text-faint); border-radius:2px; transform:rotate(45deg); margin-bottom:10px; }
+  .road-item p{ font-size:12.5px; color:var(--text-dim); }
+  .road-item .soon{ display:inline-block; margin-top:8px; font-family:var(--mono); font-size:10px; color:var(--text-faint); }
+
+  /* ---------- footer ---------- */
+  footer{ padding-block:56px; border-top:1px solid var(--border); }
+  .foot-grid{ display:flex; justify-content:space-between; align-items:flex-start; gap:24px; flex-wrap:wrap; }
+  .foot-links{ display:flex; gap:26px; flex-wrap:wrap; }
+  .foot-links a{ font-size:13.5px; color:var(--text-dim); text-decoration:none; }
+  .foot-links a:hover{ color:var(--text); }
+  .foot-brand{ display:flex; align-items:center; gap:10px; }
+  .foot-brand svg{ width:20px; height:20px; opacity:.85; }
+  .foot-meta{ margin-top:18px; font-size:12.5px; color:var(--text-faint); }
+
+  /* ---------- tooltip ---------- */
+  #node-tooltip{
+    position:fixed; z-index:60; pointer-events:none; max-width:230px; padding:10px 12px;
+    background:#0d0d14; border:1px solid var(--border-strong); border-radius:9px; font-size:12.5px;
+    box-shadow:0 12px 30px -10px rgba(0,0,0,.6); opacity:0; transition:opacity .12s ease; transform:translate(-50%,-115%);
+  }
+  #node-tooltip.show{ opacity:1; }
+  #node-tooltip .t-type{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.07em; }
+  #node-tooltip .t-label{ font-weight:600; color:var(--text); margin-top:3px; }
+  #node-tooltip .t-edges{ margin-top:6px; color:var(--text-faint); font-family:var(--mono); font-size:10.5px; line-height:1.6; }
+
+  .sr-only{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
+
+  @media (max-width:720px){
+    .navlinks{ display:none; }
+    #mobile-toggle{ display:inline-flex; }
+    .hero-legend{ font-size:11px; gap:14px; }
+    .center-legend{ flex-direction:column; gap:8px; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="graph-canvas" aria-hidden="true"></canvas>
+<div id="node-tooltip" role="status" aria-live="polite"></div>
+
+<nav id="nav">
+  <a href="#hero" class="brand">
+    <svg viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"/></svg>
+    Context0
+  </a>
+  <ul class="navlinks">
+    <li><a href="#problem">Problem</a></li>
+    <li><a href="#capabilities">How it works</a></li>
+    <li><a href="#compare">Compare</a></li>
+    <li><a href="#api">API</a></li>
+    <li><a href="#install">Install</a></li>
+  </ul>
+  <div class="navcta">
+    <a class="btn btn-ghost btn-sm" href="https://github.com/context0/Context0" target="_blank" rel="noopener">GitHub</a>
+    <a class="btn btn-primary btn-sm" href="#install">Get started</a>
+  </div>
+</nav>
+
+<div class="page">
+
+  <!-- ============ HERO ============ -->
+  <section id="hero" data-stage="hero" data-intensity="1">
+    <div class="wrap">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Open source · Apache 2.0 · Self-hosted</p>
+          <h1>Your agent forgets everything. <span class="grad">Give it a memory that connects.</span></h1>
+          <p class="hero-sub">Context0 is a graph-first memory engine. Store conversations, auto-extract facts,
+            query by meaning and relationship — in your own cluster, on your own data.</p>
+          <div class="hero-ctas">
+            <a class="btn btn-primary" href="#install">Get started</a>
+            <a class="btn btn-ghost" href="https://github.com/context0/Context0" target="_blank" rel="noopener">View on GitHub</a>
+          </div>
+
+          <div class="hero-legend" aria-hidden="true">
+            <div class="legend-group">
+              <span class="mono" style="color:var(--text-faint)">nodes</span>
+              <span class="legend-item"><span class="legend-shape" style="background:var(--purple);transform:rotate(45deg)"></span>fact</span>
+              <span class="legend-item"><span class="legend-shape" style="background:var(--cyan);border-radius:50%"></span>preference</span>
+              <span class="legend-item"><span class="legend-shape" style="border:1.5px solid var(--purple-pale);background:transparent;clip-path:polygon(50% 0,0 100%,100% 100%)"></span>event</span>
+            </div>
+            <div class="legend-divider"></div>
+            <div class="legend-group">
+              <span class="mono" style="color:var(--text-faint)">edges</span>
+              <span class="legend-item">relates_to</span>
+              <span class="legend-item" style="color:var(--purple-pale)">supersedes</span>
+              <span class="legend-item" style="color:var(--cyan)">caused_by</span>
+            </div>
+          </div>
+
+          <div class="compare-proof">
+            <p class="compare-proof-head">// same question, two memory architectures — scroll to watch it happen live</p>
+            <div class="compare-grid">
+              <div class="compare-card panel">
+                <h4>Vector similarity <span class="tag tag-bad">flat chunks</span></h4>
+                <svg viewBox="0 0 240 120" fill="none">
+                  <circle cx="120" cy="60" r="34" stroke="#5c5f6c" stroke-dasharray="3 4" fill="none"/>
+                  <g fill="#6b6b78">
+                    <circle cx="86" cy="42" r="7"/><circle cx="112" cy="30" r="7"/><circle cx="140" cy="36" r="7"/>
+                    <circle cx="160" cy="58" r="7"/><circle cx="150" cy="82" r="7"/><circle cx="118" cy="90" r="7"/>
+                    <circle cx="90" cy="76" r="7"/>
+                  </g>
+                  <text x="120" y="106" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="#5c5f6c">ranked by cosine similarity — no sense of which is current</text>
+                </svg>
+                <p>Returns every chunk mentioning “database,” MySQL and PostgreSQL ranked as equally relevant.</p>
+              </div>
+              <div class="compare-card panel">
+                <h4>Context0 graph <span class="tag tag-good">connected</span></h4>
+                <svg viewBox="0 0 240 120" fill="none">
+                  <line x1="140" y1="40" x2="92" y2="64" stroke="#863bff" stroke-width="2"/>
+                  <polygon points="96,60 92,64 98,68" fill="#863bff"/>
+                  <text x="116" y="46" text-anchor="middle" font-family="JetBrains Mono" font-size="7.5" fill="#ede6ff">supersedes</text>
+                  <g transform="translate(140,40)"><rect x="-8" y="-8" width="16" height="16" fill="#863bff" transform="rotate(45)"/></g>
+                  <text x="140" y="20" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="#e1e2e8">PostgreSQL</text>
+                  <g transform="translate(92,64)" opacity="0.55"><rect x="-7" y="-7" width="14" height="14" fill="#6b6b78" transform="rotate(45)"/></g>
+                  <text x="92" y="90" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="#6b6b78">MySQL (superseded)</text>
+                </svg>
+                <p>Returns PostgreSQL, plus the edge showing it supersedes the old MySQL fact — and why.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="scroll-cue"><div class="line"></div>scroll — the graph grows with you</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PROBLEM ============ -->
+  <section id="problem" data-stage="problem" data-intensity="0.85">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">The problem</p>
+        <h2>Every memory node here exists. None of them are connected.</h2>
+        <p>That's the failure mode, illustrated: isolated facts nobody can follow back to the conversation
+          that produced them.</p>
+      </div>
+      <div class="beats">
+        <div class="beat panel"><div class="node-dot"></div><span class="num mono">01</span>
+          <p>You explain your architecture to your coding assistant on Monday. On Tuesday it has no idea what you said.</p>
+        </div>
+        <div class="beat panel"><div class="node-dot" style="border-radius:50%;transform:none;background:var(--gray-node)"></div><span class="num mono">02</span>
+          <p>A support bot asks the same onboarding questions every time a returning customer reaches out.</p>
+        </div>
+        <div class="beat panel"><div class="node-dot" style="clip-path:polygon(50% 0,0 100%,100% 100%);background:transparent;border:1.5px solid var(--gray-node)"></div><span class="num mono">03</span>
+          <p>Your team runs five AI tools on one project. None of them share what they learned.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ WHY SOLUTIONS FALL SHORT ============ -->
+  <section id="compare" data-stage="approaches" data-intensity="0.55">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Why existing approaches fall short</p>
+        <h2>Three ways teams patch this today. None of them fix it.</h2>
+      </div>
+      <div class="approach-list">
+        <div class="approach"><h4>Platform memory</h4><p>ChatGPT, Claude — locked to one vendor, cannot be shared across tools.</p></div>
+        <div class="approach"><h4>Vector databases</h4><p>Find similar text, but do not understand relationships between memories.</p></div>
+        <div class="approach"><h4>Custom solutions</h4><p>Every team rebuilds the same thing, poorly, again.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CAPABILITIES ============ -->
+  <section id="capabilities" data-stage="capabilities" data-intensity="1">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">What it does</p>
+        <h2>Watch the graph knit itself together</h2>
+        <p>Every capability below is one more edge drawing itself into the graph behind this page.</p>
+      </div>
+      <div class="cap-grid">
+        <div class="cap panel">
+          <div class="cap-icon"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3l8 4v5c0 5-3.4 8.4-8 9-4.6-.6-8-4-8-9V7l8-4z" stroke="#863bff" stroke-width="1.6"/></svg></div>
+          <h3>Remember everything</h3>
+          <p>Feed it any conversation. It extracts the facts, preferences, and events automatically and stores them as typed nodes.</p>
+        </div>
+        <div class="cap panel">
+          <div class="cap-icon"><svg viewBox="0 0 24 24" fill="none"><circle cx="7" cy="7" r="2.4" stroke="#863bff" stroke-width="1.6"/><circle cx="17" cy="8" r="2.4" stroke="#863bff" stroke-width="1.6"/><circle cx="12" cy="17" r="2.4" stroke="#863bff" stroke-width="1.6"/><path d="M9 8.5L15 8M8 9l3 6M16 10l-3 5" stroke="#863bff" stroke-width="1.3"/></svg></div>
+          <h3>Recall what matters</h3>
+          <p>Not 50 vaguely related chunks. The 3–5 memories that actually answer the question, with the relationships that explain them.</p>
+        </div>
+        <div class="cap panel">
+          <div class="cap-icon"><svg viewBox="0 0 24 24" fill="none"><rect x="4" y="5" width="16" height="14" rx="2" stroke="#863bff" stroke-width="1.6"/><path d="M4 10h16M9 10v9" stroke="#863bff" stroke-width="1.4"/></svg></div>
+          <h3>Build user profiles</h3>
+          <p>A static profile (role, expertise, preferences) plus a dynamic one (last 7 days of events), maintained automatically per project.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CENTERPIECE ============ -->
+  <section id="centerpiece" data-stage="centerpiece" data-intensity="1">
+    <div class="wrap">
+      <div class="center-copy">
+        <p class="eyebrow">The centerpiece</p>
+        <h2>The old fact isn't deleted. It's superseded.</h2>
+        <p class="hero-sub" style="margin-top:16px;">We switched from MySQL to PostgreSQL last week because we needed
+          graph support. Watch the graph record that sentence.</p>
+        <div class="caption mono" id="beat-caption">
+          Contradiction detected. <b>PostgreSQL</b> now supersedes <b>MySQL</b> — the old node dims but stays queryable,
+          because history matters.
+        </div>
+        <div class="center-legend">
+          <span><span class="swatch" style="background:var(--purple)"></span>current fact</span>
+          <span><span class="swatch" style="background:var(--gray-node)"></span>superseded, still queryable</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ QUERY ============ -->
+  <section id="query" data-stage="query" data-intensity="1">
+    <div class="wrap">
+      <div class="query-box">
+        <p class="eyebrow">Ask the graph</p>
+        <h2 style="font-size:clamp(24px,3.4vw,32px);font-weight:700;">Pick a question. Watch it traverse.</h2>
+        <p class="hero-sub" style="margin-top:12px;">Each preset lights the exact path Context0 follows through the
+          graph behind this page — no vector soup, a route.</p>
+        <div class="presets" role="group" aria-label="Preset questions">
+          <button class="preset-btn" data-query="db" aria-pressed="false">What database does this project use? <span class="arrow">traverse →</span></button>
+          <button class="preset-btn" data-query="why" aria-pressed="false">Why did we switch databases? <span class="arrow">traverse →</span></button>
+          <button class="preset-btn" data-query="pref" aria-pressed="false">What does the user prefer? <span class="arrow">traverse →</span></button>
+          <button class="preset-btn" data-query="ctx" aria-pressed="false">What's the architecture context? <span class="arrow">traverse →</span></button>
+        </div>
+        <div class="query-answer" id="query-answer" aria-live="polite">
+          <span class="a-label">Answer</span>Select a question above to trace the path through the live graph.
+        </div>
+        <p class="query-hint">Tip: hover any node in the graph to inspect its content and edges directly.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TABLE ============ -->
+  <section id="compare-table" data-stage="table" data-intensity="0.2">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Side by side</p>
+        <h2>Traditional vs. Context0</h2>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col"></th><th scope="col">Traditional</th><th scope="col">Context0</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Memory structure</th><td class="trad">Flat text chunks</td><td class="c0">Connected knowledge graph</td></tr>
+            <tr><th scope="row">Retrieval</th><td class="trad">Find similar text</td><td class="c0">Follow relationships, not just similarity</td></tr>
+            <tr><th scope="row">Updates</th><td class="trad">Old info mixed with new</td><td class="c0">Contradictions detected, stale facts superseded</td></tr>
+            <tr><th scope="row">Learning</th><td class="trad">Starts fresh each session</td><td class="c0">Consolidates over time, forgets noise</td></tr>
+            <tr><th scope="row">Sharing</th><td class="trad">Locked to one tool</td><td class="c0">Any agent can plug in, framework-agnostic</td></tr>
+            <tr><th scope="row">Privacy</th><td class="trad">Your data on their servers</td><td class="c0">Self-hosted, data never leaves your infra</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ API ============ -->
+  <section id="api" data-stage="api" data-intensity="0.25">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Real API, real code</p>
+        <h2>Not a mockup. This runs.</h2>
+      </div>
+      <div class="api-grid">
+        <div>
+          <div class="code-block">
+            <div class="code-head"><span>extract.sh</span><button class="copy-btn" data-copy="curl">copy</button></div>
+            <pre><code>curl -X POST http://localhost:8080/v1/memories/extract \
+  -H <span class="s">"X-API-Key: $API_KEY"</span> \
+  -d <span class="s">'{"conversation": "user: We switched from MySQL to
+       PostgreSQL last week because we needed graph
+       support", "project_id": "my-project"}'</span></code></pre>
+          </div>
+          <div class="code-block" style="margin-top:16px;">
+            <div class="code-head"><span>client.py</span><button class="copy-btn" data-copy="py">copy</button></div>
+            <pre><code><span class="k">from</span> context0 <span class="k">import</span> Context0Client
+
+client = Context0Client(endpoint=<span class="s">"localhost:50051"</span>, api_key=..., project=<span class="s">"my-project"</span>)
+
+client.extract(<span class="s">"user: We switched to PostgreSQL\nuser: I prefer vim"</span>)
+results = client.query(<span class="s">"what database does this project use?"</span>, top_k=3)</code></pre>
+          </div>
+          <div class="arch-note"><b>One database, one query path.</b> Apache AGE and pgvector live in the same
+            PostgreSQL instance, so graph traversal and vector search happen together — no sync between two stores.</div>
+        </div>
+        <div>
+          <p class="mono" style="font-size:12px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;">REST surface</p>
+          <div class="endpoint-list">
+            <div class="endpoint"><span class="m">POST</span><span class="p">/v1/memories</span></div>
+            <div class="endpoint"><span class="m">POST</span><span class="p">/v1/memories/extract</span></div>
+            <div class="endpoint"><span class="m">GET</span><span class="p">/v1/memories/query</span></div>
+            <div class="endpoint"><span class="m">POST</span><span class="p">/v1/memories/connect</span></div>
+            <div class="endpoint"><span class="m">DELETE</span><span class="p">/v1/memories/{id}</span></div>
+            <div class="endpoint"><span class="m">GET</span><span class="p">/v1/memories/{id}/graph</span></div>
+            <div class="endpoint"><span class="m">GET</span><span class="p">/v1/profiles/{project_id}</span></div>
+            <div class="endpoint"><span class="m">POST</span><span class="p">/v1/sessions</span></div>
+            <div class="endpoint"><span class="m">GET</span><span class="p">/v1/health</span></div>
+            <div class="endpoint"><span class="m">GET</span><span class="p">/metrics</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ INSTALL ============ -->
+  <section id="install" data-stage="install" data-intensity="0.2">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Install</p>
+        <h2>Running in your cluster in minutes</h2>
+      </div>
+      <div class="install-grid">
+        <div class="code-block">
+          <div class="code-head"><span>Docker Compose</span><button class="copy-btn" data-copy="compose">copy</button></div>
+          <pre><code><span class="c"># .env</span>
+cat &gt; .env &lt;&lt;EOF
+POSTGRES_PASSWORD=$(openssl rand -hex 16)
+CONTEXT0_API_KEYS=$(go run ./cmd/cli keys generate)
+EOF
+docker compose up</code></pre>
+        </div>
+        <div class="code-block">
+          <div class="code-head"><span>Helm</span><button class="copy-btn" data-copy="helm">copy</button></div>
+          <pre><code>helm install context0 ./charts/context0 \
+  -n context0 --create-namespace \
+  --set postgres.existingSecret=my-postgres-secret \
+  --set auth.existingSecret=my-api-keys</code></pre>
+        </div>
+      </div>
+      <div class="install-extra">
+        <span class="chip">pip install context0</span>
+        <span class="chip">context0 store</span>
+        <span class="chip">context0 query</span>
+        <span class="chip">context0 graph &lt;id&gt; --depth 2</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STACK ============ -->
+  <section id="stack" data-stage="stack" data-intensity="0.35">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Stack</p>
+        <h2>Every dependency OSI-approved</h2>
+      </div>
+      <div class="stack-grid">
+        <div class="stack-chips">
+          <span class="stack-chip">Go</span>
+          <span class="stack-chip">PostgreSQL 18</span>
+          <span class="stack-chip">Apache AGE (graph)</span>
+          <span class="stack-chip">pgvector (vectors)</span>
+          <span class="stack-chip">gRPC + REST</span>
+          <span class="stack-chip">React web UI</span>
+          <span class="stack-chip">Prometheus metrics</span>
+          <span class="stack-chip">Helm chart</span>
+        </div>
+        <div class="db-diagram panel">
+          <svg viewBox="0 0 280 140" fill="none">
+            <rect x="6" y="6" width="268" height="128" rx="12" stroke="#47bfff" stroke-width="1.4" stroke-dasharray="4 4"/>
+            <text x="140" y="24" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="#47bfff">one PostgreSQL 18 instance</text>
+            <circle cx="105" cy="82" r="42" fill="rgba(134,59,255,0.12)" stroke="#863bff" stroke-width="1.4"/>
+            <circle cx="175" cy="82" r="42" fill="rgba(71,191,255,0.1)" stroke="#47bfff" stroke-width="1.4"/>
+            <text x="88" y="86" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#e1e2e8">AGE</text>
+            <text x="192" y="86" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#e1e2e8">pgvector</text>
+            <text x="140" y="86" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#9295a3">graph +</text>
+            <text x="140" y="96" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#9295a3">vector</text>
+          </svg>
+          <p class="cap-txt">Graph traversal and vector similarity execute in one database, one query path — no sync job between two stores to fall out of date.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ RIGOR ============ -->
+  <section id="rigor" data-stage="rigor" data-intensity="0.2">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Engineering rigor</p>
+        <h2>Verified against a live cluster, not mocks</h2>
+      </div>
+      <div class="rigor-list">
+        <div class="rigor-item panel"><span class="script mono">verify_k8s.sh</span><p>80 checks: probes, security contexts, NetworkPolicy, PDB evictions and recoverability.</p></div>
+        <div class="rigor-item panel"><span class="script mono">verify_install.sh</span><p>A from-scratch install test, the way a new user would actually run it.</p></div>
+        <div class="rigor-item panel"><span class="script mono">backup.sh</span><p>Dump, restore, and verify — the restore path is the one that silently skipped the index.</p></div>
+        <div class="rigor-item panel"><span class="script mono">soak.py</span><p>Long-running invariant checks under continuous load.</p></div>
+        <div class="rigor-item panel"><span class="script mono">mutate.py</span><p>Mutation testing that checks the tests actually fail when the code is wrong.</p></div>
+        <div class="rigor-item panel"><span class="script mono">verify_perf.sh</span><p>Every performance claim printed next to its observed value and measurement regime.</p></div>
+      </div>
+      <div class="rigor-stats">
+        <div class="stat"><b>Apache 2.0</b><span>every dependency OSI-approved</span></div>
+        <div class="stat"><b>10</b><span>REST endpoints</span></div>
+        <div class="stat"><b>1</b><span>database for graph + vector</span></div>
+        <div class="stat"><b>80</b><span>live-cluster checks</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ROADMAP ============ -->
+  <section id="roadmap" data-stage="roadmap" data-intensity="0.7">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Roadmap</p>
+        <h2>Not built yet — the dashed nodes on the graph</h2>
+        <p>Shown honestly, not shipped. These are ghost nodes: outlined, unconnected, waiting.</p>
+      </div>
+      <div class="roadmap-grid">
+        <div class="road-item"><div class="dot"></div><p>Content ingestion — PDF, URLs, code</p><span class="soon">coming soon</span></div>
+        <div class="road-item"><div class="dot"></div><p>Framework SDKs — LangChain, CrewAI, MCP</p><span class="soon">coming soon</span></div>
+        <div class="road-item"><div class="dot"></div><p>Connectors — GitHub, Drive, Notion</p><span class="soon">coming soon</span></div>
+        <div class="road-item"><div class="dot"></div><p>Kubernetes Operator with CRDs</p><span class="soon">coming soon</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FOOTER ============ -->
+  <footer id="footer" data-stage="footer" data-intensity="0.4">
+    <div class="wrap">
+      <div class="foot-grid">
+        <div>
+          <div class="foot-brand">
+            <svg viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"/></svg>
+            <strong>Context0</strong>
+          </div>
+          <p class="foot-meta">Apache 2.0 · Open source memory engine for AI agents</p>
+        </div>
+        <ul class="foot-links">
+          <li><a href="https://github.com/context0/Context0" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="#api">Docs</a></li>
+          <li><a href="#install">Contributing</a></li>
+          <li><a href="#rigor">Security</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---------- nav scroll state ---------- */
+  var nav = document.getElementById('nav');
+  function onScrollNav(){ nav.classList.toggle('scrolled', window.scrollY > 12); }
+  window.addEventListener('scroll', onScrollNav, {passive:true}); onScrollNav();
+
+  /* ================= GRAPH ENGINE ================= */
+  var canvas = document.getElementById('graph-canvas');
+  var ctx = canvas.getContext('2d');
+  var W = 0, H = 0, DPR = 1;
+
+  function resize(){
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener('resize', resize); resize();
+
+  var TYPE_COLOR = { fact: '#863bff', preference: '#47bfff', event: '#ede6ff' };
+  var TYPE_R = { fact: 8, preference: 7, event: 7 };
+
+  var nodes = new Map();
+  var edges = new Map();
+  var focusIds = null; // when set, non-focus nodes dim
+
+  function upsertNode(spec){
+    var n = nodes.get(spec.id);
+    if (!n){
+      var spawn = spec.spawn || spec;
+      n = { id: spec.id, x: spawn.fx * W, y: spawn.fy * H, vx:0, vy:0, opacity:0, muteAmt:0 };
+      nodes.set(spec.id, n);
+    }
+    n.fx = spec.fx; n.fy = spec.fy; n.type = spec.type; n.label = spec.label; n.detail = spec.detail;
+    n.targetOpacity = spec.opacity != null ? spec.opacity : 1;
+    n.targetMuteAmt = spec.muted ? 1 : 0;
+    n.roadmap = !!spec.roadmap;
+    n.active = true;
+    return n;
+  }
+  function upsertEdge(spec){
+    var e = edges.get(spec.id);
+    if (!e){ e = { id: spec.id, progress: 0, opacity: 0 }; edges.set(spec.id, e); }
+    e.from = spec.from; e.to = spec.to; e.type = spec.type; e.label = spec.label;
+    e.targetProgress = 1; e.targetOpacity = 1; e.active = true;
+    return e;
+  }
+  function removeNode(id){ var n = nodes.get(id); if (n){ n.targetOpacity = 0; n.active = false; } }
+  function removeEdgesTouching(id){
+    edges.forEach(function(e){ if (e.from === id || e.to === id){ e.targetOpacity = 0; e.active = false; } });
+  }
+
+  /* ---------- graph content, built up additively as sections reveal ---------- */
+  var G = {
+    arch:     { id:'arch',     type:'fact',       label:'Explained architecture',    detail:'Monday conversation, coding assistant', fx:0.74, fy:0.32 },
+    vim:      { id:'vim',      type:'preference', label:'Prefers vim',               detail:'Stable developer preference',           fx:0.85, fy:0.56 },
+    onboarding:{id:'onboarding',type:'event',     label:'Onboarding Q&A repeats',    detail:'Support bot re-asks known answers',     fx:0.14, fy:0.64 },
+    tools:    { id:'tools',    type:'event',      label:'5 tools, no sharing',       detail:'Nothing learned is shared across tools',fx:0.28, fy:0.82 },
+    go:       { id:'go',       type:'preference', label:'Prefers Go for backend',    detail:'Stable developer preference',           fx:0.9,  fy:0.72 },
+    graphneed:{ id:'graphneed',type:'event',      label:'Needed graph support',      detail:'The reason for the database switch',    fx:0.6,  fy:0.78 },
+    mysql:    { id:'mysql',    type:'fact',       label:'MySQL',                     detail:'Original database fact',                fx:0.4,  fy:0.5 },
+    postgres: { id:'postgres', type:'fact',       label:'PostgreSQL',                detail:'Current database fact',                 fx:0.56, fy:0.42 }
+  };
+  var ROADMAP = [
+    { id:'rm-pdf',   label:'Content ingestion', fx:0.16, fy:0.22 },
+    { id:'rm-lc',    label:'Framework SDKs',    fx:0.32, fy:0.13 },
+    { id:'rm-conn',  label:'Connectors',        fx:0.7,  fy:0.16 },
+    { id:'rm-op',    label:'K8s Operator',      fx:0.87, fy:0.28 }
+  ];
+
+  function revealHero(){
+    upsertNode(G.arch); upsertNode(G.vim);
+  }
+  function revealProblem(){
+    upsertNode(G.onboarding); upsertNode(G.tools);
+  }
+  function revealCapabilities(){
+    upsertNode(G.go); upsertNode(G.graphneed); upsertNode(G.postgres);
+    upsertNode(Object.assign({}, G.mysql, { opacity: 0.55 }));
+    upsertEdge({ id:'e-vg', from:'vim', to:'go', type:'relates_to', label:'relates_to' });
+    upsertEdge({ id:'e-ap', from:'arch', to:'postgres', type:'relates_to', label:'relates_to' });
+    upsertEdge({ id:'e-pn', from:'postgres', to:'graphneed', type:'caused_by', label:'caused_by' });
+    upsertEdge({ id:'e-ot', from:'onboarding', to:'tools', type:'relates_to', label:'relates_to' });
+  }
+  var beatPlayed = false;
+  function playSupersedesBeat(){
+    upsertNode(G.postgres); upsertNode(Object.assign({}, G.mysql, { opacity: 1 }));
+    focusIds = { postgres:1, mysql:1 };
+    upsertEdge({ id:'e-supersedes', from:'postgres', to:'mysql', type:'supersedes', label:'supersedes' });
+    var caption = document.getElementById('beat-caption');
+    setTimeout(function(){
+      var m = nodes.get('mysql'); if (m) m.targetMuteAmt = 1;
+      if (caption) caption.classList.add('in');
+    }, reduceMotion ? 0 : 900);
+  }
+  function clearFocus(){ focusIds = null; }
+  function revealRoadmap(){
+    ROADMAP.forEach(function(r){
+      upsertNode({ id:r.id, type:'event', label:r.label, detail:'Roadmap — not built yet', fx:r.fx, fy:r.fy, opacity:0.6, roadmap:true });
+    });
+  }
+  function hideRoadmap(){ ROADMAP.forEach(function(r){ removeNode(r.id); }); }
+
+  /* ---------- stage -> action map ---------- */
+  var STAGE_ACTIONS = {
+    hero:          function(){ revealHero(); },
+    problem:       function(){ revealProblem(); },
+    approaches:    function(){},
+    capabilities:  function(){ revealCapabilities(); },
+    centerpiece:   function(){ if (!beatPlayed){ beatPlayed = true; playSupersedesBeat(); } },
+    query:         function(){ clearFocus(); },
+    table:         function(){},
+    api:           function(){},
+    install:       function(){},
+    stack:         function(){},
+    rigor:         function(){},
+    roadmap:       function(){ revealRoadmap(); },
+    footer:        function(){ hideRoadmap(); }
+  };
+
+  var sections = Array.prototype.slice.call(document.querySelectorAll('section[data-stage]'));
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(entry){
+      if (!entry.isIntersecting) return;
+      var stage = entry.target.getAttribute('data-stage');
+      var intensity = entry.target.getAttribute('data-intensity') || '1';
+      canvas.style.opacity = intensity;
+      if (STAGE_ACTIONS[stage]) STAGE_ACTIONS[stage]();
+    });
+  }, { threshold: 0.45 });
+  sections.forEach(function(s){ io.observe(s); });
+
+  /* ---------- physics + render loop ---------- */
+  function distinctCurve(id){
+    var h = 0; for (var i=0;i<id.length;i++) h = (h*31 + id.charCodeAt(i)) % 997;
+    return ((h / 997) - 0.5) * 46;
+  }
+
+  function bezierPoint(ax,ay,cx,cy,bx,by,t){
+    var mt = 1-t;
+    return { x: mt*mt*ax + 2*mt*t*cx + t*t*bx, y: mt*mt*ay + 2*mt*t*cy + t*t*by };
+  }
+
+  var hovered = null;
+  var tooltip = document.getElementById('node-tooltip');
+
+  function drawDiamond(x,y,r){ ctx.beginPath(); ctx.moveTo(x, y-r); ctx.lineTo(x+r, y); ctx.lineTo(x, y+r); ctx.lineTo(x-r, y); ctx.closePath(); }
+  function drawTriangle(x,y,r){ ctx.beginPath(); ctx.moveTo(x, y-r*1.05); ctx.lineTo(x-r*1.05, y+r*0.85); ctx.lineTo(x+r*1.05, y+r*0.85); ctx.closePath(); }
+
+  function lerpColor(hex, target, t){
+    function h2r(h){ h=h.replace('#',''); return [parseInt(h.substr(0,2),16),parseInt(h.substr(2,2),16),parseInt(h.substr(4,2),16)]; }
+    var a=h2r(hex), b=h2r(target);
+    var r=Math.round(a[0]+(b[0]-a[0])*t), g=Math.round(a[1]+(b[1]-a[1])*t), bl=Math.round(a[2]+(b[2]-a[2])*t);
+    return 'rgb('+r+','+g+','+bl+')';
+  }
+
+  var activeQuery = null; // {path:[nodeIds], edgePath:[edgeIds], start}
+
+  function frame(now){
+    if (!reduceMotion){
+      // repulsion (cheap, small n)
+      var list = Array.from(nodes.values());
+      for (var i=0;i<list.length;i++){
+        for (var j=i+1;j<list.length;j++){
+          var a=list[i], b=list[j];
+          var dx=b.x-a.x, dy=b.y-a.y; var d2=dx*dx+dy*dy; var minD=54;
+          if (d2 < minD*minD && d2 > 0.01){
+            var d=Math.sqrt(d2); var f=(minD-d)/minD*0.35;
+            var nx=dx/d, ny=dy/d;
+            a.vx-=nx*f; a.vy-=ny*f; b.vx+=nx*f; b.vy+=ny*f;
+          }
+        }
+      }
+    }
+    nodes.forEach(function(n, id){
+      var tx = n.fx * W, ty = n.fy * H;
+      if (reduceMotion){
+        n.x = tx; n.y = ty; n.opacity = n.targetOpacity; n.muteAmt = n.targetMuteAmt;
+      } else {
+        n.vx += (tx - n.x) * 0.02; n.vy += (ty - n.y) * 0.02;
+        n.vx *= 0.82; n.vy *= 0.82;
+        n.x += n.vx; n.y += n.vy;
+        n.opacity += (n.targetOpacity - n.opacity) * 0.08;
+        n.muteAmt += (n.targetMuteAmt - n.muteAmt) * 0.05;
+      }
+      if (!n.active && n.opacity < 0.02){ nodes.delete(id); removeEdgesTouching(id); }
+    });
+    edges.forEach(function(e, id){
+      if (reduceMotion){ e.progress = e.targetProgress; e.opacity = e.targetOpacity; }
+      else { e.progress += (e.targetProgress - e.progress) * 0.06; e.opacity += (e.targetOpacity - e.opacity) * 0.08; }
+      if (!e.active && e.opacity < 0.02) edges.delete(id);
+    });
+
+    ctx.clearRect(0,0,W,H);
+
+    // edges
+    edges.forEach(function(e){
+      var a = nodes.get(e.from), b = nodes.get(e.to);
+      if (!a || !b) return;
+      var mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+      var dx=b.x-a.x, dy=b.y-a.y, len=Math.max(1,Math.sqrt(dx*dx+dy*dy));
+      var px=-dy/len, py=dx/len; var curve=distinctCurve(e.id);
+      var cx=mx+px*curve, cy=my+py*curve;
+
+      var inQueryPath = activeQuery && activeQuery.edgeSet.has(e.id);
+      var reveal = 1;
+      if (inQueryPath){
+        var idx = activeQuery.edgeOrder.indexOf(e.id);
+        reveal = reduceMotion ? 1 : Math.max(0, Math.min(1, (now - activeQuery.start - idx*260) / 420));
+      }
+
+      var baseColor = e.type === 'supersedes' ? '#863bff' : (e.type === 'caused_by' ? '#47bfff' : 'rgba(225,226,232,0.4)');
+      var width = e.type === 'supersedes' ? 2.2 : (e.type === 'caused_by' ? 1.6 : 1);
+      if (inQueryPath){ width += 1.6 * reveal; }
+
+      ctx.save();
+      ctx.globalAlpha = e.opacity * (0.55 + 0.45*(e.type!=='relates_to')) * (inQueryPath ? Math.max(0.35, reveal) : 1);
+      ctx.strokeStyle = inQueryPath ? '#47bfff' : baseColor;
+      ctx.lineWidth = width;
+      if (e.type === 'caused_by') ctx.setLineDash([5,4]); else ctx.setLineDash([]);
+      var steps = 24, endT = e.progress;
+      ctx.beginPath();
+      for (var s=0; s<=steps; s++){
+        var t = (s/steps) * endT;
+        var p = bezierPoint(a.x,a.y,cx,cy,b.x,b.y,t);
+        if (s===0) ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      if (e.progress > 0.9 && e.type !== 'relates_to'){
+        var tip = bezierPoint(a.x,a.y,cx,cy,b.x,b.y,e.progress);
+        var back = bezierPoint(a.x,a.y,cx,cy,b.x,b.y,Math.max(0,e.progress-0.04));
+        var ang = Math.atan2(tip.y-back.y, tip.x-back.x);
+        ctx.save(); ctx.translate(tip.x,tip.y); ctx.rotate(ang);
+        ctx.fillStyle = inQueryPath ? '#47bfff' : baseColor;
+        ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-7,-4); ctx.lineTo(-7,4); ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+      if (e.label && e.progress > 0.55 && W > 480){
+        var lp = bezierPoint(a.x,a.y,cx,cy,b.x,b.y,0.5);
+        ctx.font = '600 9px JetBrains Mono, monospace';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        var tw = ctx.measureText(e.label).width;
+        ctx.fillStyle = 'rgba(10,10,15,0.82)';
+        ctx.fillRect(lp.x-tw/2-5, lp.y-8, tw+10, 16);
+        ctx.fillStyle = inQueryPath ? '#47bfff' : (e.type==='supersedes' ? '#ede6ff' : e.type==='caused_by' ? '#47bfff' : 'rgba(225,226,232,0.55)');
+        ctx.fillText(e.label, lp.x, lp.y+0.5);
+      }
+      ctx.restore();
+    });
+
+    // nodes
+    nodes.forEach(function(n){
+      var baseColor = TYPE_COLOR[n.type] || '#e1e2e8';
+      var color = n.muteAmt > 0 ? lerpColor(baseColor, '#6b6b78', n.muteAmt) : baseColor;
+      var r = (TYPE_R[n.type] || 7) * (1 - 0.12*n.muteAmt);
+      var isHover = hovered === n.id;
+      var inQueryPath = activeQuery && activeQuery.nodeSet.has(n.id);
+      var focusDim = focusIds && !focusIds[n.id];
+      var opacity = n.opacity * (focusDim ? 0.22 : 1);
+      if (isHover) r *= 1.18;
+      if (inQueryPath) r *= 1.1;
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, opacity));
+
+      if (!n.roadmap){
+        var glow = ctx.createRadialGradient(n.x,n.y,0,n.x,n.y,r*3.4);
+        glow.addColorStop(0, hexToRgba(color, isHover||inQueryPath ? 0.45 : 0.22));
+        glow.addColorStop(1, hexToRgba(color, 0));
+        ctx.fillStyle = glow;
+        ctx.beginPath(); ctx.arc(n.x, n.y, r*3.4, 0, Math.PI*2); ctx.fill();
+      }
+
+      ctx.fillStyle = n.roadmap ? 'rgba(13,13,19,0.4)' : color;
+      ctx.strokeStyle = n.roadmap ? 'rgba(225,226,232,0.5)' : (isHover||inQueryPath ? '#fff' : 'transparent');
+      ctx.lineWidth = n.roadmap ? 1.3 : 1.6;
+      if (n.roadmap) ctx.setLineDash([3,3]); else ctx.setLineDash([]);
+
+      if (n.type === 'fact') drawDiamond(n.x,n.y,r);
+      else if (n.type === 'preference'){ ctx.beginPath(); ctx.arc(n.x,n.y,r,0,Math.PI*2); }
+      else drawTriangle(n.x,n.y,r);
+      ctx.fill();
+      if (n.roadmap || isHover || inQueryPath) ctx.stroke();
+      ctx.setLineDash([]);
+
+      if (W > 520 && n.opacity > 0.4 && !focusDim){
+        ctx.font = '500 10.5px JetBrains Mono, monospace';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = n.roadmap ? 'rgba(146,149,163,0.7)' : 'rgba(225,226,232,0.82)';
+        ctx.fillText(n.label, n.x + r + 8, n.y);
+      }
+      ctx.restore();
+    });
+  }
+  function hexToRgba(hex, a){
+    if (hex.indexOf('rgb') === 0) return hex;
+    hex = hex.replace('#','');
+    var r=parseInt(hex.substr(0,2),16), g=parseInt(hex.substr(2,2),16), b=parseInt(hex.substr(4,2),16);
+    return 'rgba('+r+','+g+','+b+','+a+')';
+  }
+
+  function loop(now){ frame(now); requestAnimationFrame(loop); }
+  requestAnimationFrame(loop);
+  if (reduceMotion){ setTimeout(function(){ frame(performance.now()); }, 50); }
+
+  /* ---------- hover / tap tooltip ---------- */
+  function findNodeAt(px,py){
+    var found = null, best = 16*16;
+    nodes.forEach(function(n){
+      if (n.opacity < 0.3) return;
+      var dx=px-n.x, dy=py-n.y, d2=dx*dx+dy*dy;
+      if (d2 < best){ best = d2; found = n; }
+    });
+    return found;
+  }
+  function edgesOf(id){
+    var out = [];
+    edges.forEach(function(e){
+      if (e.from === id) out.push(e.type + ' → ' + (nodes.get(e.to) ? nodes.get(e.to).label : e.to));
+      if (e.to === id) out.push((nodes.get(e.from) ? nodes.get(e.from).label : e.from) + ' → ' + e.type);
+    });
+    return out;
+  }
+  function showTooltip(n, clientX, clientY){
+    tooltip.innerHTML =
+      '<div class="t-type mono" style="color:'+ (TYPE_COLOR[n.type]||'#e1e2e8') +'">'+ n.type +'</div>' +
+      '<div class="t-label">'+ n.label +'</div>' +
+      '<div class="t-edges">'+ edgesOf(n.id).slice(0,4).map(function(s){return s;}).join('<br>') + (n.detail ? '<br>'+n.detail : '') +'</div>';
+    tooltip.style.left = clientX + 'px'; tooltip.style.top = clientY + 'px';
+    tooltip.classList.add('show');
+  }
+  function hideTooltip(){ tooltip.classList.remove('show'); hovered = null; }
+
+  canvas.addEventListener('pointermove', function(e){
+    var n = findNodeAt(e.clientX, e.clientY);
+    if (n){ hovered = n.id; canvas.style.cursor = 'pointer'; showTooltip(n, e.clientX, e.clientY); }
+    else { canvas.style.cursor = 'default'; hideTooltip(); }
+  });
+  canvas.addEventListener('pointerleave', hideTooltip);
+  canvas.addEventListener('click', function(e){
+    var n = findNodeAt(e.clientX, e.clientY);
+    if (n) showTooltip(n, e.clientX, e.clientY);
+  });
+
+  /* ---------- query traversal ---------- */
+  var QUERIES = {
+    db:   { nodes:['postgres','mysql'], edges:['e-supersedes'],
+            answer: '<strong>PostgreSQL</strong> — supersedes an older MySQL fact from the same project. The stale answer stays attached, marked superseded, instead of ranking alongside the current one.' },
+    why:  { nodes:['postgres','graphneed'], edges:['e-pn'],
+            answer: 'Needed graph support — the event connected to PostgreSQL via <strong>caused_by</strong>. That\'s the "why," not just the "what."' },
+    pref: { nodes:['vim','go'], edges:['e-vg'],
+            answer: '<strong>vim</strong>, and Go for backend services — two preference nodes, directly linked as part of the same static profile.' },
+    ctx:  { nodes:['arch','postgres'], edges:['e-ap'],
+            answer: 'Explained on Monday, still linked to the current PostgreSQL fact today via <strong>relates_to</strong> — nothing gets lost between sessions.' }
+  };
+  var presetBtns = document.querySelectorAll('.preset-btn');
+  var answerEl = document.getElementById('query-answer');
+  presetBtns.forEach(function(btn){
+    btn.addEventListener('click', function(){
+      presetBtns.forEach(function(b){ b.setAttribute('aria-pressed','false'); });
+      btn.setAttribute('aria-pressed','true');
+      var q = QUERIES[btn.getAttribute('data-query')];
+      if (!q) return;
+      activeQuery = {
+        nodeSet: new Set(q.nodes), edgeSet: new Set(q.edges), edgeOrder: q.edges.slice(),
+        start: performance.now()
+      };
+      var delay = reduceMotion ? 0 : 260;
+      setTimeout(function(){
+        answerEl.innerHTML = '<span class="a-label">Answer</span>' + q.answer;
+      }, delay);
+    });
+  });
+
+  /* ---------- copy buttons ---------- */
+  var CODE = {
+    curl: 'curl -X POST http://localhost:8080/v1/memories/extract \\\n  -H "X-API-Key: $API_KEY" \\\n  -d \'{"conversation": "user: We switched from MySQL to PostgreSQL last week because we needed graph support", "project_id": "my-project"}\'',
+    py: 'from context0 import Context0Client\n\nclient = Context0Client(endpoint="localhost:50051", api_key=..., project="my-project")\n\nclient.extract("user: We switched to PostgreSQL\\nuser: I prefer vim")\nresults = client.query("what database does this project use?", top_k=3)',
+    compose: 'cat > .env <<EOF\nPOSTGRES_PASSWORD=$(openssl rand -hex 16)\nCONTEXT0_API_KEYS=$(go run ./cmd/cli keys generate)\nEOF\ndocker compose up',
+    helm: 'helm install context0 ./charts/context0 -n context0 --create-namespace \\\n  --set postgres.existingSecret=my-postgres-secret \\\n  --set auth.existingSecret=my-api-keys'
+  };
+  document.querySelectorAll('.copy-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var key = btn.getAttribute('data-copy');
+      var text = CODE[key] || '';
+      if (navigator.clipboard) navigator.clipboard.writeText(text).catch(function(){});
+      var orig = btn.textContent; btn.textContent = 'copied';
+      setTimeout(function(){ btn.textContent = orig; }, 1400);
+    });
+  });
+
+  /* initial paint for reduced-motion / first load meaningful state */
+  revealHero();
+  if (reduceMotion){ frame(performance.now()); }
+})();
+</script>
+</body>
+</html>
