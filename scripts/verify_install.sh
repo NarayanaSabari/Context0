@@ -78,7 +78,7 @@ trap cleanup EXIT
 # a 2-core CI runner: the later installs sat Pending until helm timed out, which
 # reads as "the documented install is broken" rather than "the runner is full".
 teardown() {
-  helm uninstall context0 -n "$1" >/dev/null 2>&1
+  helm uninstall kora -n "$1" >/dev/null 2>&1
   # Synchronous: the PersistentVolumeClaim is released when the namespace
   # finishes deleting, and the next install needs that capacity back.
   kubectl delete ns "$1" --wait=true --timeout=90s >/dev/null 2>&1
@@ -88,9 +88,9 @@ teardown() {
 # waits out its timeout on ImagePullBackOff for reasons that have nothing to do
 # with the docs. Overridable because CI tags images differently from local dev,
 # and a hardcoded tag here means the script hangs rather than fails.
-API_REPO="${API_IMAGE_REPO:-context0-api}"
+API_REPO="${API_IMAGE_REPO:-kora-api}"
 API_TAG="${API_IMAGE_TAG:-dev}"
-PG_REPO="${PG_IMAGE_REPO:-context0/postgres-age-vector}"
+PG_REPO="${PG_IMAGE_REPO:-kora/postgres-age-vector}"
 PG_TAG="${PG_IMAGE_TAG:-dev}"
 
 IMAGE_ARGS=(
@@ -123,7 +123,7 @@ WAIT_TIMEOUT="${WAIT_TIMEOUT:-3m}"
 section "1. The chart refuses to install without credentials"
 # The guard that started all this. If it regresses, every install below would
 # still pass while silently shipping an empty password.
-out=$(helm install guard-test ./charts/context0 -n guard-test --dry-run=client 2>&1)
+out=$(helm install guard-test ./charts/kora -n guard-test --dry-run=client 2>&1)
 check "a credential-less install is refused" "postgres.password is required" "$out"
 check "the refusal says how to fix it" "existingSecret" "$out"
 
@@ -135,7 +135,7 @@ check "cmd/cli keys generate prints a usable key" "ctx0_" "$key"
 ns=readme-install
 NAMESPACES+=("$ns")
 kubectl delete ns "$ns" --ignore-not-found --wait=true >/dev/null 2>&1
-out=$(helm install context0 ./charts/context0 -n "$ns" --create-namespace \
+out=$(helm install kora ./charts/kora -n "$ns" --create-namespace \
   --set postgres.password="$(openssl rand -base64 24 | tr -d '/+=')" \
   --set auth.apiKeys="$key" \
   "${IMAGE_ARGS[@]}" --wait --timeout "$WAIT_TIMEOUT" 2>&1)
@@ -144,11 +144,11 @@ check "the documented helm install succeeds" "STATUS: deployed" "$out"
 # Rendering is not working. A chart that installs and then crash-loops has
 # still failed the user.
 check "the API pod becomes ready" "true" \
-  "$(kubectl get pod -n "$ns" -l app=context0-api \
+  "$(kubectl get pod -n "$ns" -l app=kora-api \
     -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2>/dev/null)"
 
 # And the key the user was told to generate must actually authenticate.
-stored=$(kubectl exec -n "$ns" deploy/context0-api -- sh -c \
+stored=$(kubectl exec -n "$ns" deploy/kora-api -- sh -c \
   "wget -q -O- --header='X-API-Key: $key' --header='Content-Type: application/json' \
    --post-data='{\"content\":\"install verification\",\"project_id\":\"verify\",\"type\":\"MEMORY_TYPE_SEMANTIC\"}' \
    http://localhost:8080/v1/memories" 2>/dev/null)
@@ -165,13 +165,13 @@ kubectl create secret generic my-postgres-secret -n "$ns" \
 kubectl create secret generic my-api-keys -n "$ns" \
   --from-literal=keys="$(go run ./cmd/cli keys generate 2>/dev/null)" >/dev/null 2>&1
 
-out=$(helm install context0 ./charts/context0 -n "$ns" \
+out=$(helm install kora ./charts/kora -n "$ns" \
   --set postgres.existingSecret=my-postgres-secret \
   --set auth.existingSecret=my-api-keys \
   "${IMAGE_ARGS[@]}" --wait --timeout "$WAIT_TIMEOUT" 2>&1)
 check "the existingSecret install succeeds" "STATUS: deployed" "$out"
 check "the API pod becomes ready with operator-managed Secrets" "true" \
-  "$(kubectl get pod -n "$ns" -l app=context0-api \
+  "$(kubectl get pod -n "$ns" -l app=kora-api \
     -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2>/dev/null)"
 
 # The chart must not have created Secrets of its own on this path, or it is
@@ -212,11 +212,11 @@ recipe=$(make --dry-run --always-make deploy 2>/dev/null \
 check "make deploy passes credentials to helm" "auth.apiKeys" "$recipe"
 check "make deploy passes a database password to helm" "postgres.password" "$recipe"
 
-out=$(eval "${recipe//-n context0 /-n $ns }" \
+out=$(eval "${recipe//-n kora /-n $ns }" \
   "${IMAGE_ARGS[*]}" --wait --timeout "$WAIT_TIMEOUT" 2>&1 || true)
 check "make deploy's install succeeds from scratch" "STATUS: deployed" "$out"
 check "the generated key works against the deployment" "make deploy verification" \
-  "$(kubectl exec -n "$ns" deploy/context0-api -- sh -c \
+  "$(kubectl exec -n "$ns" deploy/kora-api -- sh -c \
     "wget -q -O- --header='X-API-Key: $DEV_API_KEY' --header='Content-Type: application/json' \
      --post-data='{\"content\":\"make deploy verification\",\"project_id\":\"v\",\"type\":\"MEMORY_TYPE_SEMANTIC\"}' \
      http://localhost:8080/v1/memories" 2>/dev/null)"
@@ -233,7 +233,7 @@ check_empty "docker-compose.yaml ships no default API key" \
   "$(grep -n 'ctx0_dev_key' docker-compose.yaml 2>/dev/null \
     | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
 check "compose requires an API key to be supplied" "required variable" \
-  "$(env -u CONTEXT0_API_KEYS -u POSTGRES_PASSWORD docker compose --env-file /dev/null config 2>&1 | tail -1)"
+  "$(env -u KORA_API_KEYS -u POSTGRES_PASSWORD docker compose --env-file /dev/null config 2>&1 | tail -1)"
 
 # The web container listens on 8080 since it moved to nginx-unprivileged, so a
 # port mapping of :80 silently serves nothing.
@@ -243,7 +243,7 @@ check "the web port mapping matches the container's listen port" "8080" \
 section "5. The docs do not reference things that no longer exist"
 # Cheap, and it is exactly the class of rot that broke the README: a flag or a
 # file named in the docs that was renamed or deleted.
-for f in charts/context0/values-local.yaml charts/context0/values-production.yaml; do
+for f in charts/kora/values-local.yaml charts/kora/values-production.yaml; do
   # Only lines that tell a reader to *use* the file matter. An unchecked
   # roadmap item ("- [ ] values-local.yaml") names a file that is meant not to
   # exist yet, and failing on that would train people to ignore this check.

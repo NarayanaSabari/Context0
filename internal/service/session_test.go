@@ -12,9 +12,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	pb "github.com/context0/context0/api/gen/context0/v1"
-	"github.com/context0/context0/internal/graph"
-	"github.com/context0/context0/internal/metrics"
+	pb "github.com/NarayanaSabari/Kora/api/gen/kora/v1"
+	"github.com/NarayanaSabari/Kora/internal/graph"
+	"github.com/NarayanaSabari/Kora/internal/metrics"
 )
 
 // sessionTestService builds a SessionService against the real database. The
@@ -23,9 +23,9 @@ import (
 func sessionTestService(t *testing.T) (*SessionService, context.Context) {
 	t.Helper()
 
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+		t.Skip("KORA_TEST_DATABASE_URL not set")
 	}
 
 	ctx := context.Background()
@@ -49,7 +49,7 @@ func sessionTestService(t *testing.T) (*SessionService, context.Context) {
 // so a second call overwrote the original timestamp, returned success, and ran
 // metrics.ActiveSessions.Dec() again. Reproduced against the live API: one
 // StartSession followed by three EndSession calls left
-// context0_active_sessions at -2. A negative gauge silently breaks any alert
+// kora_active_sessions at -2. A negative gauge silently breaks any alert
 // or dashboard built on it, and losing the first ended_at also corrupts
 // session duration.
 //

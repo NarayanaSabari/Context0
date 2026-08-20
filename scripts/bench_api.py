@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure Context0 query latency through the public REST API.
+"""Measure Kora query latency through the public REST API.
 
 Run against a corpus large enough that plan choice matters (the 50k seed used
 in docs/research/performance-audit-2026-08.md). Uses persistent connections and

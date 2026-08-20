@@ -1,4 +1,4 @@
-// Package embedding provides text-to-vector embedding generation for Context0's
+// Package embedding provides text-to-vector embedding generation for Kora's
 // semantic memory search. It defines the Embedder interface and ships multiple
 // implementations:
 //

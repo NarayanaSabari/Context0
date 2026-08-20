@@ -1,4 +1,4 @@
-# Context0 performance and Kubernetes-native audit
+# Kora performance and Kubernetes-native audit
 
 Measured 2026-08-18 against a local `docker compose` stack: PostgreSQL 18 +
 Apache AGE 1.7.0 + pgvector, 50,053 `Memory` vertices across 50 projects, 201
@@ -192,7 +192,7 @@ exactly the undirected set.
 
 ## 7. The liveness probe runs two full graph scans
 
-`charts/context0/templates/api.yaml` points **both** liveness and readiness at
+`charts/kora/templates/api.yaml` points **both** liveness and readiness at
 `/v1/health`, and `internal/service/health.go` implements that as:
 
 ```cypher

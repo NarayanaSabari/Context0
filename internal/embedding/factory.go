@@ -16,7 +16,7 @@ type ProviderConfig struct {
 	// "text-embedding-3-small", "text-embedding-004"). Empty means use default.
 	Model string
 	// APIKey is required for cloud providers (openai, google). Set via
-	// CONTEXT0_EMBEDDING_API_KEY environment variable.
+	// KORA_EMBEDDING_API_KEY environment variable.
 	APIKey string
 	// BaseURL overrides the default API endpoint. Useful for self-hosted
 	// Ollama instances or OpenAI-compatible proxies (vLLM, LiteLLM, etc.).
@@ -44,13 +44,13 @@ func NewFromConfig(cfg ProviderConfig) (Embedder, error) {
 
 	case "openai":
 		if cfg.APIKey == "" {
-			return nil, fmt.Errorf("openai embedding provider requires CONTEXT0_EMBEDDING_API_KEY")
+			return nil, fmt.Errorf("openai embedding provider requires KORA_EMBEDDING_API_KEY")
 		}
 		return NewOpenAIEmbedder(cfg.BaseURL, cfg.APIKey, cfg.Model, cfg.Dim), nil
 
 	case "google":
 		if cfg.APIKey == "" {
-			return nil, fmt.Errorf("google embedding provider requires CONTEXT0_EMBEDDING_API_KEY")
+			return nil, fmt.Errorf("google embedding provider requires KORA_EMBEDDING_API_KEY")
 		}
 		return NewGoogleEmbedder(cfg.APIKey, cfg.Model, cfg.Dim), nil
 

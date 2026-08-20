@@ -1,4 +1,4 @@
-// Package graph implements graph-backed persistence for Context0's memory
+// Package graph implements graph-backed persistence for Kora's memory
 // storage using Apache AGE, a PostgreSQL extension that adds openCypher graph
 // query support. Graph data (nodes and edges) lives inside AGE's internal
 // storage, while vector embeddings are stored in a separate pgvector-backed
@@ -16,15 +16,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/context0/context0/pkg/model"
+	"github.com/NarayanaSabari/Kora/pkg/model"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // GraphName is the name of the Apache AGE graph instance that stores all
-// Context0 nodes (Memory, Session) and their relationships. This constant is
+// Kora nodes (Memory, Session) and their relationships. This constant is
 // referenced in every Cypher query executed via AGERepository.
+//
+// It stays "context0" after the rename to Kora on purpose. The graph name is
+// also the Postgres schema AGE creates -- every existing deployment holds its
+// data in context0."Memory", context0."Session", and the label tables beneath
+// them. Changing this constant would not rename that schema; it would point a
+// new build at a graph that does not exist, and the engine would come up empty
+// against a populated database. Renaming it for real means an ALTER SCHEMA
+// migration plus a coordinated deploy, which is a data change, not a rebrand.
 const GraphName = "context0"
 
 // searchPath puts ag_catalog ahead of the default schemas so AGE's custom
@@ -144,7 +152,7 @@ type QueryFilter struct {
 	OverFetch bool
 }
 
-// AGERepository stores and queries Context0's memory graph using Apache AGE.
+// AGERepository stores and queries Kora's memory graph using Apache AGE.
 // All Cypher queries are executed through AGE's ag_catalog.cypher() SQL
 // function, which wraps a Cypher string inside a standard PostgreSQL query.
 // Results come back as agtype values (a JSON-like format specific to AGE)
@@ -395,7 +403,7 @@ func (r *AGERepository) verifyEmbeddingDim(ctx context.Context) error {
 			"embedding dimension mismatch: public.memory_embeddings stores %d-dimensional "+
 				"vectors but the configured embedder produces %d. The embedding provider or "+
 				"model changed since the table was created. Re-embed the corpus against the new "+
-				"model, or set CONTEXT0_EMBEDDING_DIM=%d to keep the previous one",
+				"model, or set KORA_EMBEDDING_DIM=%d to keep the previous one",
 			actual, r.embeddingDim, actual,
 		)
 	}

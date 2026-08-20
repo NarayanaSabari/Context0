@@ -124,8 +124,8 @@ func TestSetPoolStatsSourceIgnoresNilPool(t *testing.T) {
 // reads the exposed bucket boundaries back out of the gathered metric.
 func TestHistogramsUseTheTunedBuckets(t *testing.T) {
 	for name, h := range map[string]prometheus.Histogram{
-		"context0_query_duration_seconds": QueryDuration,
-		"context0_store_duration_seconds": StoreDuration,
+		"kora_query_duration_seconds": QueryDuration,
+		"kora_store_duration_seconds": StoreDuration,
 	} {
 		reg := prometheus.NewPedanticRegistry()
 		if err := reg.Register(h); err != nil {
@@ -172,9 +172,9 @@ func TestHistogramsUseTheTunedBuckets(t *testing.T) {
 // blind spot the metrics were added to remove, while /metrics still listed
 // the series.
 func TestSetPoolStatsSourcePopulatesGauges(t *testing.T) {
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+		t.Skip("KORA_TEST_DATABASE_URL not set")
 	}
 
 	saved := poolStatsSource
@@ -257,9 +257,9 @@ func TestSetPoolStatsSourcePopulatesGauges(t *testing.T) {
 // life of the process, and one that outlived its context would keep touching
 // a closed pool.
 func TestSetPoolStatsSourceStopsWithContext(t *testing.T) {
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+		t.Skip("KORA_TEST_DATABASE_URL not set")
 	}
 
 	saved := poolStatsSource
@@ -300,9 +300,9 @@ func TestSetPoolStatsSourceStopsWithContext(t *testing.T) {
 // pool because pgxpool.Stat wraps an internal struct that cannot be
 // constructed from outside the package.
 func TestPoolWaitSecondsReadsTheInstalledSource(t *testing.T) {
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+		t.Skip("KORA_TEST_DATABASE_URL not set")
 	}
 
 	saved := poolStatsSource

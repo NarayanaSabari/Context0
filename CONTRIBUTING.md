@@ -1,6 +1,6 @@
-# Contributing to Context0
+# Contributing to Kora
 
-Thank you for your interest in contributing to Context0! This guide will help you get started.
+Thank you for your interest in contributing to Kora! This guide will help you get started.
 
 ## Code of Conduct
 
@@ -10,9 +10,9 @@ By participating in this project, you agree to abide by our [Code of Conduct](CO
 
 ### Reporting Issues
 
-- **Bug reports**: Use the [Bug Report](https://github.com/context0/context0/issues/new?template=bug_report.md) template
-- **Feature requests**: Use the [Feature Request](https://github.com/context0/context0/issues/new?template=feature_request.md) template
-- **Questions**: Open a [Discussion](https://github.com/context0/context0/discussions)
+- **Bug reports**: Use the [Bug Report](https://github.com/NarayanaSabari/Kora/issues/new?template=bug_report.md) template
+- **Feature requests**: Use the [Feature Request](https://github.com/NarayanaSabari/Kora/issues/new?template=feature_request.md) template
+- **Questions**: Open a [Discussion](https://github.com/NarayanaSabari/Kora/discussions)
 
 Before opening an issue, please search existing issues to avoid duplicates.
 
@@ -65,8 +65,8 @@ All PRs must:
 
 ```bash
 # Clone
-git clone https://github.com/context0/context0.git
-cd context0
+git clone https://github.com/NarayanaSabari/Kora.git
+cd kora
 
 # Install Go dependencies
 go mod download
@@ -93,7 +93,7 @@ make deploy
 
 # Option 3: Local PostgreSQL + AGE
 # Start PostgreSQL with AGE extension, then:
-CONTEXT0_DATABASE_URL="postgres://user:pass@localhost:5432/context0" make run
+KORA_DATABASE_URL="postgres://user:pass@localhost:5432/kora" make run
 ```
 
 ## Coding Standards
@@ -136,7 +136,7 @@ Types: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `ci`, `chore`
 
 ### Good First Issues
 
-Look for issues labeled [`good first issue`](https://github.com/context0/context0/labels/good%20first%20issue). These are beginner-friendly tasks.
+Look for issues labeled [`good first issue`](https://github.com/NarayanaSabari/Kora/labels/good%20first%20issue). These are beginner-friendly tasks.
 
 ### Areas Where Help is Needed
 

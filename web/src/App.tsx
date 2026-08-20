@@ -1,6 +1,6 @@
 /**
  * @file App.tsx
- * Root application component for the Context0 Memory Graph web UI.
+ * Root application component for the Kora Memory Graph web UI.
  * Manages global state (selected memory, graph nodes/edges, view mode) and
  * orchestrates data fetching, sidebar navigation, and graph visualization.
  */
@@ -106,7 +106,7 @@ export default function App() {
         <div className="flex items-center gap-3">
           <Network size={20} className="text-[#7aa2f7]" />
           <h1 className="text-[16px] font-bold tracking-tight">
-            <span className="text-[#7aa2f7]">Context0</span> Memory Graph
+            <span className="text-[#7aa2f7]">Kora</span> Memory Graph
           </h1>
         </div>
 

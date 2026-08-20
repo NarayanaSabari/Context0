@@ -118,7 +118,7 @@ should be started before there is a workload that actually needs it.
 ## Reproducing
 
 ```sh
-kubectl exec -n context0 postgres-age-0 -- psql -U context0 -d context0 -c "
+kubectl exec -n kora postgres-age-0 -- psql -U kora -d kora -c "
 LOAD 'age'; SET search_path=ag_catalog,public; SET enable_seqscan=off;
 EXPLAIN (ANALYZE, TIMING OFF) SELECT * FROM cypher('context0', \$\$
   MATCH (m:Memory) WHERE toLower(m.content) CONTAINS 'prometheus' RETURN m

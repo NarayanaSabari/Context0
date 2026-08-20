@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/context0/context0/api/gen/context0/v1"
-	"github.com/context0/context0/internal/embedding"
-	"github.com/context0/context0/internal/graph"
+	pb "github.com/NarayanaSabari/Kora/api/gen/kora/v1"
+	"github.com/NarayanaSabari/Kora/internal/embedding"
+	"github.com/NarayanaSabari/Kora/internal/graph"
 	"github.com/google/uuid"
 )
 
@@ -32,9 +32,9 @@ import (
 func concurrentTestService(t *testing.T) (*MemoryService, context.Context) {
 	t.Helper()
 
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+		t.Skip("KORA_TEST_DATABASE_URL not set")
 	}
 	// A tiny pool makes any surplus connection per request fatal rather than
 	// merely slow, so the failure is unambiguous.

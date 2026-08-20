@@ -1,4 +1,4 @@
-# Context0 — MVP Scope
+# Kora — MVP Scope
 
 > **Status: historical.**
 > This plan is complete — the engine, API, retrieval, Helm chart, SDK, and CLI
@@ -10,7 +10,7 @@
 
 Ship a working, K8s-deployable memory engine that a single agent can use to store, retrieve, and relate memories via a graph database. Prove that graph-first retrieval is meaningfully better than flat vector search.
 
-**One sentence:** An agent can `helm install context0`, store memories, and get back the right memory at the right time — via graph traversal, not vector similarity.
+**One sentence:** An agent can `helm install kora`, store memories, and get back the right memory at the right time — via graph traversal, not vector similarity.
 
 ---
 
@@ -48,7 +48,7 @@ Ship a working, K8s-deployable memory engine that a single agent can use to stor
 - [ ] Custom Postgres container image with AGE extension pre-installed
 - [ ] Go client using `jackc/pgx` (PostgreSQL driver) with AGE Cypher queries via `ag_catalog.cypher()`
 - [ ] Graph repository interface (abstraction layer — so we can swap AGE for another graph DB later)
-- [ ] Schema initialization: create graph with `SELECT create_graph('context0')` + base node labels and relationship types on startup
+- [ ] Schema initialization: create graph with `SELECT create_graph('kora')` + base node labels and relationship types on startup
 
 #### 1.3 Graph Schema (Initial)
 
@@ -77,7 +77,7 @@ Ship a working, K8s-deployable memory engine that a single agent can use to stor
 #### 2.1 gRPC API
 
 ```protobuf
-service Context0 {
+service Kora {
   // Store a new memory
   rpc Store(StoreRequest) returns (StoreResponse);
 
@@ -172,21 +172,21 @@ service Context0 {
 ### Phase 4: K8s Deployment (Week 7-8)
 
 #### 4.1 Helm Chart
-- [ ] `charts/context0/` with standard Helm structure
+- [ ] `charts/kora/` with standard Helm structure
 - [ ] Configurable values:
   - Apache AGE (PostgreSQL) resources (memory, CPU, storage size)
   - API server replicas
   - API key secret name
   - Rate limit config
   - Consolidation schedule
-- [ ] Single command install: `helm install context0 ./charts/context0`
+- [ ] Single command install: `helm install kora ./charts/kora`
 
 #### 4.2 K8s Manifests (Non-Helm Alternative)
 - [ ] `deploy/` directory with raw YAML manifests
 - [ ] Kustomize overlays for dev/staging/prod
 
 #### 4.3 Workloads
-- [ ] **context0-api** — Deployment (2 replicas default), ClusterIP Service (gRPC :50051, REST :8080)
+- [ ] **kora-api** — Deployment (2 replicas default), ClusterIP Service (gRPC :50051, REST :8080)
 - [ ] **age-postgres** — CloudNativePG Cluster CR (1 instance for MVP, PVC auto-managed), ClusterIP Service
 - [ ] **consolidation** — CronJob (every 6h default), runs merge + decay
 
@@ -199,26 +199,26 @@ service Context0 {
 #### 4.5 Observability (Basic)
 - [ ] Prometheus `/metrics` endpoint on the API server
 - [ ] Metrics:
-  - `context0_memories_total` (counter, by type)
-  - `context0_edges_total` (counter, by relationship)
-  - `context0_query_duration_seconds` (histogram)
-  - `context0_store_duration_seconds` (histogram)
-  - `context0_query_results_count` (histogram)
-  - `context0_active_sessions` (gauge)
+  - `kora_memories_total` (counter, by type)
+  - `kora_edges_total` (counter, by relationship)
+  - `kora_query_duration_seconds` (histogram)
+  - `kora_store_duration_seconds` (histogram)
+  - `kora_query_results_count` (histogram)
+  - `kora_active_sessions` (gauge)
 
 ---
 
 ### Phase 5: SDK + Demo (Week 9-10)
 
 #### 5.1 Python SDK (First SDK)
-- [ ] `pip install context0`
+- [ ] `pip install kora`
 - [ ] Generated from `.proto` files via `grpcio-tools`
 - [ ] Thin wrapper with Pythonic API:
   ```python
-  from context0 import Context0Client
+  from kora import KoraClient
 
-  client = Context0Client(
-      endpoint="context0.default.svc.cluster.local:50051",
+  client = KoraClient(
+      endpoint="kora.default.svc.cluster.local:50051",
       api_key="ctx0_...",
       project="my-project",
   )
@@ -244,17 +244,17 @@ service Context0 {
   ```
 
 #### 5.2 CLI Tool
-- [ ] `context0` CLI for debugging and manual operations
+- [ ] `kora` CLI for debugging and manual operations
 - [ ] Commands:
-  - `context0 store "memory content" --type semantic --tags db,postgres`
-  - `context0 query "what database?" --top-k 5`
-  - `context0 graph <memory-id> --depth 2` (ASCII visualization of subgraph)
-  - `context0 list --type semantic --limit 20`
-  - `context0 delete <memory-id>`
-  - `context0 stats` (node count, edge count, memory types breakdown)
+  - `kora store "memory content" --type semantic --tags db,postgres`
+  - `kora query "what database?" --top-k 5`
+  - `kora graph <memory-id> --depth 2` (ASCII visualization of subgraph)
+  - `kora list --type semantic --limit 20`
+  - `kora delete <memory-id>`
+  - `kora stats` (node count, edge count, memory types breakdown)
 
 #### 5.3 Demo
-- [ ] Demo script: spin up a local K8s cluster (kind/minikube), install Context0, run a scripted agent interaction
+- [ ] Demo script: spin up a local K8s cluster (kind/minikube), install Kora, run a scripted agent interaction
 - [ ] Shows: store → query → connect → query-with-context → consolidate → query-again
 - [ ] README with GIF/recording of the demo
 
@@ -294,7 +294,7 @@ Before calling the MVP done, these must be true:
 - [ ] API keys restrict access per project
 
 ### Deployment
-- [ ] `helm install context0 ./charts/context0` works on a fresh cluster
+- [ ] `helm install kora ./charts/kora` works on a fresh cluster
 - [ ] Works on kind, minikube, EKS, GKE (standard K8s)
 - [ ] Apache AGE (PostgreSQL) data persists across pod restarts (PVC)
 - [ ] API is accessible in-cluster via ClusterIP and externally via Ingress
@@ -329,7 +329,7 @@ Week 9-10:  SDK + Demo — Python SDK, CLI, demo script, README
 ## Repo Structure (Planned)
 
 ```
-context0/
+kora/
 ├── cmd/
 │   ├── server/              # API server entrypoint
 │   │   └── main.go
@@ -339,7 +339,7 @@ context0/
 │       └── main.go
 ├── api/
 │   └── proto/               # .proto files
-│       └── context0/
+│       └── kora/
 │           └── v1/
 │               ├── memory.proto
 │               ├── session.proto
@@ -366,7 +366,7 @@ context0/
 │       ├── edge.go
 │       └── session.go
 ├── charts/
-│   └── context0/            # Helm chart
+│   └── kora/            # Helm chart
 │       ├── Chart.yaml
 │       ├── values.yaml
 │       └── templates/
@@ -374,7 +374,7 @@ context0/
 ├── sdk/
 │   └── python/              # Python SDK
 │       ├── pyproject.toml
-│       └── src/context0/
+│       └── src/kora/
 ├── scripts/                 # Build, test, demo scripts
 ├── docs/                    # Additional documentation
 ├── Dockerfile

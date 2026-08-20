@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	pb "github.com/context0/context0/api/gen/context0/v1"
-	"github.com/context0/context0/internal/embedding"
-	"github.com/context0/context0/internal/graph"
+	pb "github.com/NarayanaSabari/Kora/api/gen/kora/v1"
+	"github.com/NarayanaSabari/Kora/internal/embedding"
+	"github.com/NarayanaSabari/Kora/internal/graph"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"os"
@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/context0/context0/pkg/model"
+	"github.com/NarayanaSabari/Kora/pkg/model"
 	"github.com/google/uuid"
 )
 
@@ -195,9 +195,9 @@ func (e *failingEmbedder) Dimension() int { return 384 }
 // Nothing asserted any of this: mutation testing skipped the whole embedding
 // block and every test still passed.
 func TestStoreSucceedsWhenEmbeddingFails(t *testing.T) {
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+		t.Skip("KORA_TEST_DATABASE_URL not set")
 	}
 
 	ctx := context.Background()
@@ -268,9 +268,9 @@ func TestStoreSucceedsWhenEmbeddingFails(t *testing.T) {
 // in this session" traversal returns an incomplete answer with no error to
 // explain it.
 func TestStoreLinksToSession(t *testing.T) {
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+		t.Skip("KORA_TEST_DATABASE_URL not set")
 	}
 
 	ctx := context.Background()
@@ -356,9 +356,9 @@ func TestStoreLinksToSession(t *testing.T) {
 // TestStoreWithoutEmbedderSucceeds: the embedder is optional, and a nil one
 // disables vector search rather than breaking writes.
 func TestStoreWithoutEmbedderSucceeds(t *testing.T) {
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+		t.Skip("KORA_TEST_DATABASE_URL not set")
 	}
 
 	ctx := context.Background()
@@ -402,9 +402,9 @@ func TestStoreWithoutEmbedderSucceeds(t *testing.T) {
 // Once the memory is committed, finishing its record belongs to the write
 // rather than to the caller, so that work now runs on its own bounded context.
 func TestCancelledStoreStillFinishesTheRecord(t *testing.T) {
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+		t.Skip("KORA_TEST_DATABASE_URL not set")
 	}
 
 	ctx := context.Background()
@@ -490,9 +490,9 @@ func TestStoreFinishWorkIsBounded(t *testing.T) {
 // fix across a spread of cancellation points: 3 of 10 persisted memories had
 // no embedding, and the responses reported 7 while 10 had actually landed.
 func TestCancelledExtractStillFinishesItsMemories(t *testing.T) {
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+		t.Skip("KORA_TEST_DATABASE_URL not set")
 	}
 
 	ctx := context.Background()

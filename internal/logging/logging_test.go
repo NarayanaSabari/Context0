@@ -40,7 +40,7 @@ func TestSetupEmitsParseableJSON(t *testing.T) {
 }
 
 // TestParseLevel covers the mapping, including the fallback: a typo in
-// CONTEXT0_LOG_LEVEL must not silence a deployment.
+// KORA_LOG_LEVEL must not silence a deployment.
 func TestParseLevel(t *testing.T) {
 	cases := map[string]slog.Level{
 		"debug":    slog.LevelDebug,

@@ -25,7 +25,7 @@ package extraction
 import (
 	"strings"
 
-	"github.com/context0/context0/pkg/model"
+	"github.com/NarayanaSabari/Kora/pkg/model"
 )
 
 // Contradiction represents a detected conflict between a newly stored memory and

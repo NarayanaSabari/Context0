@@ -2,11 +2,11 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in Context0, please report it responsibly.
+If you discover a security vulnerability in Kora, please report it responsibly.
 
 **Do NOT open a public GitHub issue for security vulnerabilities.**
 
-Instead, please email: **security@context0.dev** (or open a private security advisory on GitHub)
+Instead, please email: **security@kora.dev** (or open a private security advisory on GitHub)
 
 ### What to include
 
@@ -30,7 +30,7 @@ Instead, please email: **security@context0.dev** (or open a private security adv
 
 ## Security Practices
 
-Context0 follows these security practices:
+Kora follows these security practices:
 
 - **No hardcoded secrets**: all credentials via environment variables or K8s Secrets
 - **API key authentication**: with token bucket rate limiting

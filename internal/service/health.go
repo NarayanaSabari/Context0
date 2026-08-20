@@ -20,12 +20,12 @@ package service
 import (
 	"context"
 
-	"github.com/context0/context0/internal/auth"
+	"github.com/NarayanaSabari/Kora/internal/auth"
 	"sync"
 	"time"
 
-	pb "github.com/context0/context0/api/gen/context0/v1"
-	"github.com/context0/context0/internal/graph"
+	pb "github.com/NarayanaSabari/Kora/api/gen/kora/v1"
+	"github.com/NarayanaSabari/Kora/internal/graph"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -100,7 +100,7 @@ func (s *HealthService) Health(ctx context.Context, _ *pb.HealthRequest) (*pb.He
 	//
 	// This endpoint answers without a credential because Kubernetes probes
 	// cannot present one, but it was volunteering the version, node count and
-	// edge count to anyone who could reach the port -- `context0 stats` with no
+	// edge count to anyone who could reach the port -- `kora stats` with no
 	// key at all returned them. Those are not secrets individually; together
 	// they are a free reconnaissance signal (what is running, and how much data
 	// is in it) that a probe has no need for.

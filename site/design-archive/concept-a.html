@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Context0 — Memory for AI agents that remembers how things relate</title>
+<title>Kora — Memory for AI agents that remembers how things relate</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -314,7 +314,7 @@
 <nav id="nav">
   <a href="#hero" class="brand">
     <svg viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"/></svg>
-    Context0
+    Kora
   </a>
   <ul class="navlinks">
     <li><a href="#problem">Problem</a></li>
@@ -324,7 +324,7 @@
     <li><a href="#install">Install</a></li>
   </ul>
   <div class="navcta">
-    <a class="btn btn-ghost btn-sm" href="https://github.com/context0/Context0" target="_blank" rel="noopener">GitHub</a>
+    <a class="btn btn-ghost btn-sm" href="https://github.com/kora/Kora" target="_blank" rel="noopener">GitHub</a>
     <a class="btn btn-primary btn-sm" href="#install">Get started</a>
   </div>
 </nav>
@@ -338,11 +338,11 @@
         <div class="hero-copy">
           <p class="eyebrow">Open source · Apache 2.0 · Self-hosted</p>
           <h1>Your agent forgets everything. <span class="grad">Give it a memory that connects.</span></h1>
-          <p class="hero-sub">Context0 is a graph-first memory engine. Store conversations, auto-extract facts,
+          <p class="hero-sub">Kora is a graph-first memory engine. Store conversations, auto-extract facts,
             query by meaning and relationship — in your own cluster, on your own data.</p>
           <div class="hero-ctas">
             <a class="btn btn-primary" href="#install">Get started</a>
-            <a class="btn btn-ghost" href="https://github.com/context0/Context0" target="_blank" rel="noopener">View on GitHub</a>
+            <a class="btn btn-ghost" href="https://github.com/kora/Kora" target="_blank" rel="noopener">View on GitHub</a>
           </div>
 
           <div class="hero-legend" aria-hidden="true">
@@ -378,7 +378,7 @@
                 <p>Returns every chunk mentioning “database,” MySQL and PostgreSQL ranked as equally relevant.</p>
               </div>
               <div class="compare-card panel">
-                <h4>Context0 graph <span class="tag tag-good">connected</span></h4>
+                <h4>Kora graph <span class="tag tag-good">connected</span></h4>
                 <svg viewBox="0 0 240 120" fill="none">
                   <line x1="140" y1="40" x2="92" y2="64" stroke="#863bff" stroke-width="2"/>
                   <polygon points="96,60 92,64 98,68" fill="#863bff"/>
@@ -491,7 +491,7 @@
       <div class="query-box">
         <p class="eyebrow">Ask the graph</p>
         <h2 style="font-size:clamp(24px,3.4vw,32px);font-weight:700;">Pick a question. Watch it traverse.</h2>
-        <p class="hero-sub" style="margin-top:12px;">Each preset lights the exact path Context0 follows through the
+        <p class="hero-sub" style="margin-top:12px;">Each preset lights the exact path Kora follows through the
           graph behind this page — no vector soup, a route.</p>
         <div class="presets" role="group" aria-label="Preset questions">
           <button class="preset-btn" data-query="db" aria-pressed="false">What database does this project use? <span class="arrow">traverse →</span></button>
@@ -512,11 +512,11 @@
     <div class="wrap">
       <div class="section-head">
         <p class="eyebrow">Side by side</p>
-        <h2>Traditional vs. Context0</h2>
+        <h2>Traditional vs. Kora</h2>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th scope="col"></th><th scope="col">Traditional</th><th scope="col">Context0</th></tr></thead>
+          <thead><tr><th scope="col"></th><th scope="col">Traditional</th><th scope="col">Kora</th></tr></thead>
           <tbody>
             <tr><th scope="row">Memory structure</th><td class="trad">Flat text chunks</td><td class="c0">Connected knowledge graph</td></tr>
             <tr><th scope="row">Retrieval</th><td class="trad">Find similar text</td><td class="c0">Follow relationships, not just similarity</td></tr>
@@ -549,9 +549,9 @@
           </div>
           <div class="code-block" style="margin-top:16px;">
             <div class="code-head"><span>client.py</span><button class="copy-btn" data-copy="py">copy</button></div>
-            <pre><code><span class="k">from</span> context0 <span class="k">import</span> Context0Client
+            <pre><code><span class="k">from</span> kora <span class="k">import</span> KoraClient
 
-client = Context0Client(endpoint=<span class="s">"localhost:50051"</span>, api_key=..., project=<span class="s">"my-project"</span>)
+client = KoraClient(endpoint=<span class="s">"localhost:50051"</span>, api_key=..., project=<span class="s">"my-project"</span>)
 
 client.extract(<span class="s">"user: We switched to PostgreSQL\nuser: I prefer vim"</span>)
 results = client.query(<span class="s">"what database does this project use?"</span>, top_k=3)</code></pre>
@@ -591,23 +591,23 @@ results = client.query(<span class="s">"what database does this project use?"</s
           <pre><code><span class="c"># .env</span>
 cat &gt; .env &lt;&lt;EOF
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
-CONTEXT0_API_KEYS=$(go run ./cmd/cli keys generate)
+KORA_API_KEYS=$(go run ./cmd/cli keys generate)
 EOF
 docker compose up</code></pre>
         </div>
         <div class="code-block">
           <div class="code-head"><span>Helm</span><button class="copy-btn" data-copy="helm">copy</button></div>
-          <pre><code>helm install context0 ./charts/context0 \
-  -n context0 --create-namespace \
+          <pre><code>helm install kora ./charts/kora \
+  -n kora --create-namespace \
   --set postgres.existingSecret=my-postgres-secret \
   --set auth.existingSecret=my-api-keys</code></pre>
         </div>
       </div>
       <div class="install-extra">
-        <span class="chip">pip install context0</span>
-        <span class="chip">context0 store</span>
-        <span class="chip">context0 query</span>
-        <span class="chip">context0 graph &lt;id&gt; --depth 2</span>
+        <span class="chip">pip install kora</span>
+        <span class="chip">kora store</span>
+        <span class="chip">kora query</span>
+        <span class="chip">kora graph &lt;id&gt; --depth 2</span>
       </div>
     </div>
   </section>
@@ -695,12 +695,12 @@ docker compose up</code></pre>
         <div>
           <div class="foot-brand">
             <svg viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"/></svg>
-            <strong>Context0</strong>
+            <strong>Kora</strong>
           </div>
           <p class="foot-meta">Apache 2.0 · Open source memory engine for AI agents</p>
         </div>
         <ul class="foot-links">
-          <li><a href="https://github.com/context0/Context0" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://github.com/kora/Kora" target="_blank" rel="noopener">GitHub</a></li>
           <li><a href="#api">Docs</a></li>
           <li><a href="#install">Contributing</a></li>
           <li><a href="#rigor">Security</a></li>
@@ -1095,9 +1095,9 @@ docker compose up</code></pre>
   /* ---------- copy buttons ---------- */
   var CODE = {
     curl: 'curl -X POST http://localhost:8080/v1/memories/extract \\\n  -H "X-API-Key: $API_KEY" \\\n  -d \'{"conversation": "user: We switched from MySQL to PostgreSQL last week because we needed graph support", "project_id": "my-project"}\'',
-    py: 'from context0 import Context0Client\n\nclient = Context0Client(endpoint="localhost:50051", api_key=..., project="my-project")\n\nclient.extract("user: We switched to PostgreSQL\\nuser: I prefer vim")\nresults = client.query("what database does this project use?", top_k=3)',
-    compose: 'cat > .env <<EOF\nPOSTGRES_PASSWORD=$(openssl rand -hex 16)\nCONTEXT0_API_KEYS=$(go run ./cmd/cli keys generate)\nEOF\ndocker compose up',
-    helm: 'helm install context0 ./charts/context0 -n context0 --create-namespace \\\n  --set postgres.existingSecret=my-postgres-secret \\\n  --set auth.existingSecret=my-api-keys'
+    py: 'from kora import KoraClient\n\nclient = KoraClient(endpoint="localhost:50051", api_key=..., project="my-project")\n\nclient.extract("user: We switched to PostgreSQL\\nuser: I prefer vim")\nresults = client.query("what database does this project use?", top_k=3)',
+    compose: 'cat > .env <<EOF\nPOSTGRES_PASSWORD=$(openssl rand -hex 16)\nKORA_API_KEYS=$(go run ./cmd/cli keys generate)\nEOF\ndocker compose up',
+    helm: 'helm install kora ./charts/kora -n kora --create-namespace \\\n  --set postgres.existingSecret=my-postgres-secret \\\n  --set auth.existingSecret=my-api-keys'
   };
   document.querySelectorAll('.copy-btn').forEach(function(btn){
     btn.addEventListener('click', function(){

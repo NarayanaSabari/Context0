@@ -1,6 +1,6 @@
 /**
  * @file main.tsx
- * Application entry point for the Context0 Memory Graph web UI.
+ * Application entry point for the Kora Memory Graph web UI.
  * Sets up React strict mode and mounts the root App component into the DOM.
  */
 

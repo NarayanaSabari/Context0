@@ -1,6 +1,6 @@
 # Resilience and Data Durability Research (report only, no code changed)
 
-Scope: Context0 - Go API (gRPC + HTTP) on Kubernetes, hand-rolled single-replica PostgreSQL
+Scope: Kora - Go API (gRPC + HTTP) on Kubernetes, hand-rolled single-replica PostgreSQL
 StatefulSet with a custom image (Apache AGE + pgvector), consolidation CronJob, pgxpool.
 
 Legend: **[F]** = verified against a cited primary source. **[I]** = inference/judgment by me.
@@ -9,10 +9,10 @@ Legend: **[F]** = verified against a cited primary source. **[I]** = inference/j
 
 ## 0. What the repo actually does today (read from source)
 
-- `charts/context0/templates/postgres.yaml`: single-replica StatefulSet, `volumeClaimTemplates` 5Gi
+- `charts/kora/templates/postgres.yaml`: single-replica StatefulSet, `volumeClaimTemplates` 5Gi
   RWO, args include `-c shared_preload_libraries=age`, probes are `pg_isready`. No archive_mode, no
   backup sidecar, no `ScheduledBackup`, no replica. **[F, repo]**
-- `charts/context0/templates/consolidation.yaml`: `concurrencyPolicy: Forbid`,
+- `charts/kora/templates/consolidation.yaml`: `concurrencyPolicy: Forbid`,
   `successfulJobsHistoryLimit: 3`, `failedJobsHistoryLimit: 3`, `restartPolicy: OnFailure`.
   No `startingDeadlineSeconds`, no `activeDeadlineSeconds`, no `backoffLimit`. **[F, repo]**
 - `internal/service/memory.go:172`: `vectorResults, _ = s.repo.SearchByVector(...)` - the vector leg
@@ -51,7 +51,7 @@ CNPG-I Barman Cloud Plugin. Same page. **[F]** This matters: an older blog post 
 `imageCatalogRef.major`, or make the tag *begin* with a valid major version (`16`, `16.4`,
 `16.4-age1.5`). `latest` is explicitly not a valid tag. **[F, same page]**
 
-Practical consequence for Context0: your image is currently `context0/postgres-age-vector:dev`.
+Practical consequence for Kora: your image is currently `kora/postgres-age-vector:dev`.
 `dev` is not a parseable tag, so under CNPG you would have to retag to something like
 `16.4-age1.5.0-pgvector0.8.0`, or declare an `ImageCatalog` entry with `major: 16`
 (<https://cloudnative-pg.io/docs/devel/image_catalog>). **[F for the rule, I for the naming]**
@@ -122,7 +122,7 @@ poolers are **not** garbage-collected with the cluster. **[F, connection_pooling
    `pg_dump | psql` (small DB) - or use CNPG's `import` / `pg_basebackup` bootstrap for larger ones.
    Note CNPG explicitly says `pg_dump` is "**not suitable for business continuity**" as an ongoing
    strategy, but as a one-shot cutover it is fine. **[F for the quote, I for the cutover advice]**
-5. Point `CONTEXT0_DATABASE_URL` at `<cluster>-rw` (or the `Pooler` service).
+5. Point `KORA_DATABASE_URL` at `<cluster>-rw` (or the `Pooler` service).
 6. Add `ScheduledBackup` + test a PITR restore into a throwaway cluster before declaring done.
 
 ### Alternatives
@@ -208,11 +208,11 @@ Startup traps that bite latency-sensitive services: CPU metrics from not-yet-rea
 aside; `--horizontal-pod-autoscaler-cpu-initialization-period` defaults to **5 minutes** and
 `--horizontal-pod-autoscaler-initial-readiness-delay` to **30 seconds**, both cluster-wide only. The
 docs' own guidance is to gate readiness/startup probes so the warm-up CPU spike does not feed the
-autoscaler. **[F, same page]** Context0's `/startupz` probe already gives you that hook. **[I]**
+autoscaler. **[F, same page]** Kora's `/startupz` probe already gives you that hook. **[I]**
 
 ### Which metric
 
-- **CPU**: correct-by-default only if latency correlates with CPU. Context0's hot path is dominated by
+- **CPU**: correct-by-default only if latency correlates with CPU. Kora's hot path is dominated by
   Postgres round-trips and pgxpool waits, so a saturated replica can sit at modest CPU while p99
   climbs. CPU HPA will under-scale. **[I]**
 - **The metric that actually matches the bottleneck: pool saturation / in-flight requests.**
@@ -296,7 +296,7 @@ The pool already handles much of the failover case for you, and this is the impo
 - `Pool.Reset()` exists to close all current connections - the right sledgehammer after a detected
   failover. **[F]**
 - `MaxConnLifetime` + `MaxConnLifetimeJitter` ("helps prevent all connections from being closed at
-  the exact same time, starving the pool") **[F]** - Context0 sets neither today. Setting
+  the exact same time, starving the pool") **[F]** - Kora sets neither today. Setting
   `MaxConnLifetime: 30m, MaxConnLifetimeJitter: 5m` means a failover's stale connections age out
   instead of lingering. **[F for the fields, I for the values]**
 - `PingTimeout` - "If zero, the default is **no timeout**." **[F]** Leaving this at zero means a
@@ -345,7 +345,7 @@ General principle for a composite read path: classify each leg as **essential** 
 - Failing an enriching leg should degrade, but the degradation must be **explicit, observable, and
   bounded**.
 
-For Context0: graph traversal is the source of truth for what memories exist and their relations;
+For Kora: graph traversal is the source of truth for what memories exist and their relations;
 vector similarity is a *ranking and recall enhancer*. So graph = essential, vector = enriching.
 Vector-only with graph down would return memories with no relational context - arguably wrong.
 Graph-only with vector down returns fewer semantically-similar hits but nothing incorrect.
@@ -354,7 +354,7 @@ Graph-only with vector down returns fewer semantically-similar hits but nothing 
 What is missing today, in priority order:
 
 1. **The error is discarded entirely** (`_`). It should be logged and counted
-   (`context0_query_degraded_total{leg="vector"}`), so an operator whose embedder has been broken for
+   (`kora_query_degraded_total{leg="vector"}`), so an operator whose embedder has been broken for
    three weeks finds out. **[I]**
 2. **The response should say so.** A `degraded` flag / `partial_results` field in the query response
    lets a caller decide whether to trust recall. Silent degradation is how "search quality slowly got

@@ -1,8 +1,8 @@
-# Context0
+# Kora
 
 **The open-source memory engine for AI agents.** Graph-first, Kubernetes-native.
 
-Context0 gives any AI agent persistent, intelligent memory. Store conversations, auto-extract facts, query by meaning, and build user profiles -- all through a simple API running in your own cluster.
+Kora gives any AI agent persistent, intelligent memory. Store conversations, auto-extract facts, query by meaning, and build user profiles -- all through a simple API running in your own cluster.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg)](https://go.dev)
@@ -10,11 +10,11 @@ Context0 gives any AI agent persistent, intelligent memory. Store conversations,
 
 ---
 
-## Why Context0?
+## Why Kora?
 
 Every AI agent framework today has the same problem: **agents are amnesiac**. Sessions start from scratch, context is lost, and agents never learn from past interactions.
 
-Context0 solves this with a **graph-based memory engine** that runs in your Kubernetes cluster:
+Kora solves this with a **graph-based memory engine** that runs in your Kubernetes cluster:
 
 - **Graph-first retrieval** -- relationships between memories, not flat vector similarity
 - **Hybrid search** -- Apache AGE graph traversal + pgvector similarity in one PostgreSQL instance
@@ -24,6 +24,34 @@ Context0 solves this with a **graph-based memory engine** that runs in your Kube
 - **Self-hosted** -- your data stays in your cluster, period
 
 ## Quick Start
+
+### Upgrading from Context0
+
+This project was called Context0. If you are running an older deployment, the
+rename is not purely cosmetic and a plain `helm upgrade` is not enough.
+
+Environment variables moved from `CONTEXT0_*` to `KORA_*`. The engine now
+**refuses to start** when it sees an old name rather than falling back to a
+default, because an unset `KORA_API_KEYS` disables authentication entirely - a
+silent fallback would have brought the API up serving every stored memory
+unauthenticated.
+
+The Postgres role and database were also renamed from `context0` to `kora`.
+Those live in your data, not in this repo, so a new image points at names that
+do not exist yet and fails with `role "kora" does not exist`. Run the migration
+against a stopped API:
+
+```bash
+scripts/migrate_rename.sh
+```
+
+It renames the role and the database (catalog-only, so the cost does not scale
+with database size), reaps any privileged helper role left by an interrupted
+run, and verifies the graph is still readable afterwards. It is idempotent.
+
+The AGE graph and its schema keep the name `context0` deliberately - renaming
+those is a data migration with no functional benefit. See `GraphName` in
+`internal/graph/age.go`.
 
 ### Prerequisites
 
@@ -37,7 +65,7 @@ Context0 solves this with a **graph-based memory engine** that runs in your Kube
 # Generate an API key (offline; the server stores only its hash)
 go run ./cmd/cli keys generate
 
-helm install context0 ./charts/context0 -n context0 --create-namespace \
+helm install kora ./charts/kora -n kora --create-namespace \
   --set postgres.password="$(openssl rand -base64 24 | tr -d '/+=')" \
   --set auth.apiKeys="<the key printed above>"
 ```
@@ -47,7 +75,7 @@ them: a default credential in a public chart is a published credential. For
 anything beyond a local trial, point it at Secrets you manage instead:
 
 ```bash
-helm install context0 ./charts/context0 -n context0 --create-namespace \
+helm install kora ./charts/kora -n kora --create-namespace \
   --set postgres.existingSecret=my-postgres-secret \
   --set auth.existingSecret=my-api-keys
 ```
@@ -60,13 +88,13 @@ helm install context0 ./charts/context0 -n context0 --create-namespace \
 # published in a public repo is one every unchanged install shares.
 cat > .env <<EOF
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
-CONTEXT0_API_KEYS=$(go run ./cmd/cli keys generate)
+KORA_API_KEYS=$(go run ./cmd/cli keys generate)
 EOF
 
 docker compose up
 ```
 
-This builds and starts PostgreSQL + Apache AGE + pgvector, the Context0 API, and
+This builds and starts PostgreSQL + Apache AGE + pgvector, the Kora API, and
 the web UI on <http://localhost:3000>. See
 [docker-compose.yaml](docker-compose.yaml) for service details.
 
@@ -139,13 +167,13 @@ Returns an aggregated profile:
 ### Python SDK
 
 ```bash
-pip install context0
+pip install kora
 ```
 
 ```python
-from context0 import Context0Client
+from kora import KoraClient
 
-client = Context0Client(
+client = KoraClient(
     endpoint="localhost:50051",
     api_key="your-key",
     project="my-project",
@@ -172,19 +200,19 @@ with client.session() as s:
 
 ```bash
 # Build the CLI
-go build -o context0 ./cmd/cli
+go build -o kora ./cmd/cli
 
 # Store
-context0 store "Project uses Go 1.26" --type semantic --tags golang
+kora store "Project uses Go 1.26" --type semantic --tags golang
 
 # Query
-context0 query "what language" --top-k 5
+kora query "what language" --top-k 5
 
 # View graph neighborhood
-context0 graph <memory-id> --depth 2
+kora graph <memory-id> --depth 2
 
 # Stats
-context0 stats
+kora stats
 ```
 
 ## Architecture
@@ -199,7 +227,7 @@ context0 stats
 │                      │  gRPC / REST                             │
 │                      v                                          │
 │  ┌──────────────────────────────────────────────┐              │
-│  │            Context0 Engine                    │              │
+│  │            Kora Engine                    │              │
 │  │                                               │              │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │              │
 │  │  │ Ingest + │ │ Hybrid   │ │ Consolidation│ │              │
@@ -272,7 +300,7 @@ Conversation ──> Extract ──> Memory Nodes (fact/preference/event)
 ## Project Structure
 
 ```
-context0/
+kora/
 ├── cmd/                    # Server, consolidation job, CLI
 ├── api/proto/              # gRPC proto definitions
 ├── internal/
@@ -283,7 +311,7 @@ context0/
 │   ├── llm/                # LLM providers (Ollama, OpenAI-compat)
 │   ├── ranking/            # Scoring and ranking
 │   └── service/            # gRPC service handlers
-├── charts/context0/        # Helm chart (deployment topology)
+├── charts/kora/        # Helm chart (deployment topology)
 ├── web/                    # React web UI
 ├── sdk/python/             # Python SDK
 └── test/e2e/               # End-to-end tests
@@ -322,8 +350,8 @@ make deploy
 
 # Run E2E tests against the deployed cluster
 . ./.dev-credentials
-CONTEXT0_E2E_HTTP=http://localhost:8080 \
-CONTEXT0_E2E_API_KEY="$DEV_API_KEY" \
+KORA_E2E_HTTP=http://localhost:8080 \
+KORA_E2E_API_KEY="$DEV_API_KEY" \
 go test ./test/e2e/... -v -tags=e2e
 
 # Teardown

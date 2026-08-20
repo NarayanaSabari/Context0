@@ -1,4 +1,4 @@
-"""End-to-end tests for the Python SDK, against a running Context0.
+"""End-to-end tests for the Python SDK, against a running Kora.
 
 The SDK is a public interface with no test coverage at all: 11 methods, a
 hand-maintained route table, and response parsing that renames every field on
@@ -9,7 +9,7 @@ users with nothing to catch it.
 
 Run against a reachable deployment:
 
-    CONTEXT0_ENDPOINT=localhost:8080 CONTEXT0_API_KEY=ctx0_... \\
+    KORA_ENDPOINT=localhost:8080 KORA_API_KEY=ctx0_... \\
         python3 sdk/python/tests/test_e2e.py
 
 Note the endpoint convention: the client takes a gRPC-style host:port and
@@ -24,10 +24,10 @@ import uuid
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from context0 import Context0Client, SessionAlreadyEndedError  # noqa: E402
+from kora import KoraClient, SessionAlreadyEndedError  # noqa: E402
 
-ENDPOINT = os.environ.get("CONTEXT0_ENDPOINT", "localhost:50051")
-KEY = os.environ.get("CONTEXT0_API_KEY", "")
+ENDPOINT = os.environ.get("KORA_ENDPOINT", "localhost:50051")
+KEY = os.environ.get("KORA_API_KEY", "")
 
 PASSED = 0
 FAILED = 0
@@ -66,11 +66,11 @@ def attempt(name, fn, *args, **kwargs):
 
 def main():
     if not KEY:
-        print("CONTEXT0_API_KEY is required", file=sys.stderr)
+        print("KORA_API_KEY is required", file=sys.stderr)
         return 1
 
     project = f"sdk-test-{uuid.uuid4().hex[:8]}"
-    client = Context0Client(endpoint=ENDPOINT, api_key=KEY, project=project)
+    client = KoraClient(endpoint=ENDPOINT, api_key=KEY, project=project)
 
     section("1. Health")
     health = attempt("health() completes", client.health)
@@ -161,7 +161,7 @@ def main():
           "the deleted memory is still returned by query")
 
     section("8. Authentication is enforced through the SDK")
-    anon = Context0Client(endpoint=ENDPOINT, api_key="ctx0_wrong_key", project=project)
+    anon = KoraClient(endpoint=ENDPOINT, api_key="ctx0_wrong_key", project=project)
     try:
         anon.query(question="x")
         check("a bad key is rejected", False, "the request succeeded")

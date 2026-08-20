@@ -1,6 +1,6 @@
 /**
  * @file types.ts
- * Shared TypeScript interfaces and type definitions for the Context0 Memory Graph.
+ * Shared TypeScript interfaces and type definitions for the Kora Memory Graph.
  * Defines the core domain models (Memory, Edge), API response shapes, and
  * helper functions for parsing protobuf-style enum strings into display-friendly values.
  */

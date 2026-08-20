@@ -13,7 +13,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/context0/context0/internal/metrics"
+	"github.com/NarayanaSabari/Kora/internal/metrics"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

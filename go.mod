@@ -1,4 +1,4 @@
-module github.com/context0/context0
+module github.com/NarayanaSabari/Kora
 
 go 1.26.1
 

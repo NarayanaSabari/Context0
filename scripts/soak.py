@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Continuous soak + correctness harness against a running Context0.
+"""Continuous soak + correctness harness against a running Kora.
 
 Runs mixed read/write load forever, verifying invariants on every cycle rather
 than only measuring latency. A soak test that only reports throughput will miss
@@ -205,7 +205,7 @@ def _cycle(client, stats, projects):
         client.health()
 
 
-def cpu_throttling(namespace="context0", deploy="deploy/context0-api"):
+def cpu_throttling(namespace="kora", deploy="deploy/kora-api"):
     """Cumulative CPU throttling for the API container, or None if unreadable.
 
     A latency budget measured against a throttled pod says nothing about the

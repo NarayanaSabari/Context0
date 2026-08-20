@@ -3,8 +3,8 @@ package service
 import (
 	"testing"
 
-	"github.com/context0/context0/internal/ranking"
-	"github.com/context0/context0/pkg/model"
+	"github.com/NarayanaSabari/Kora/internal/ranking"
+	"github.com/NarayanaSabari/Kora/pkg/model"
 	"github.com/google/uuid"
 )
 

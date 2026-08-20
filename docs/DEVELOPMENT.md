@@ -1,4 +1,4 @@
-# Context0 — Development Workflow & Release Strategy
+# Kora — Development Workflow & Release Strategy
 
 ## Git Branching Strategy
 
@@ -81,9 +81,9 @@ While we're in `v0.x.x`, the API is not considered stable:
 
 Every version produces:
 - Git tag: `v0.2.0`
-- Docker images: `context0/context0:v0.2.0`, `context0/context0:latest`
+- Docker images: `kora/kora:v0.2.0`, `kora/kora:latest`
 - Helm chart version: `0.2.0`
-- Python SDK: `context0==0.2.0` on PyPI
+- Python SDK: `kora==0.2.0` on PyPI
 - GitHub Release with changelog and binaries
 
 ### Release Cadence
@@ -98,19 +98,19 @@ Every version produces:
 
 ## Two Deployment Modes
 
-Context0 ships in two configurations from the **same codebase, same branch**.
+Kora ships in two configurations from the **same codebase, same branch**.
 No separate branches — configuration controls the mode.
 
 ### Mode 1: Local (Development / Self-Hosted Minimal)
 
-For developers trying Context0, local testing, or small self-hosted deployments.
+For developers trying Kora, local testing, or small self-hosted deployments.
 
 ```yaml
 # Example local overrides (pass with -f, or use `make deploy`)
 mode: local
 
 postgres:
-  image: context0/postgres-age-vector:latest
+  image: kora/postgres-age-vector:latest
   replicas: 1
   storage: 5Gi
 
@@ -147,7 +147,7 @@ auth:
 make kind-up && make deploy
 
 # Or explicitly:
-helm install context0 ./charts/context0 -n context0 --create-namespace \
+helm install kora ./charts/kora -n kora --create-namespace \
   --set postgres.password="$(openssl rand -hex 16)" \
   --set auth.apiKeys="$(go run ./cmd/cli keys generate)"
 ```
@@ -161,7 +161,7 @@ For production deployments with HA, real embeddings, monitoring, and security.
 mode: production
 
 postgres:
-  image: context0/postgres-age-vector:latest
+  image: kora/postgres-age-vector:latest
   replicas: 3              # 1 primary + 2 read replicas
   storage: 100Gi
   resources:
@@ -197,7 +197,7 @@ consolidation:
 auth:
   enabled: true
   apiKeys:
-    secretName: context0-api-keys
+    secretName: kora-api-keys
 
 monitoring:
   prometheus: true
@@ -217,17 +217,17 @@ security:
 # Credentials come from Secrets you manage (External Secrets, Sealed Secrets,
 # SOPS, or a CSI driver). With existingSecret set, the chart creates no Secret
 # of its own and never sees the values.
-helm install context0 ./charts/context0 -n context0 --create-namespace \
+helm install kora ./charts/kora -n kora --create-namespace \
   -f my-production-values.yaml \
-  --set postgres.existingSecret=context0-postgres \
-  --set auth.existingSecret=context0-api-keys
+  --set postgres.existingSecret=kora-postgres \
+  --set auth.existingSecret=kora-api-keys
 ```
 
 Then enforce the Pod Security "restricted" profile on the namespace. Helm does
 not manage the namespace it installs into, so this is a separate step:
 
 ```bash
-kubectl label namespace context0 \
+kubectl label namespace kora \
   pod-security.kubernetes.io/enforce=restricted \
   pod-security.kubernetes.io/enforce-version=latest
 ```
@@ -288,10 +288,10 @@ kubectl label namespace context0 \
 #### Job 3: Build
 ```yaml
 - go build ./cmd/server ./cmd/consolidate ./cmd/cli
-- docker build -t context0/context0:ci .
-- docker build -t context0/web:ci ./web
-- docker build -t context0/postgres-age-vector:ci ./docker/postgres-age-vector
-- helm lint ./charts/context0
+- docker build -t kora/kora:ci .
+- docker build -t kora/web:ci ./web
+- docker build -t kora/postgres-age-vector:ci ./docker/postgres-age-vector
+- helm lint ./charts/kora
 ```
 
 #### Job 4: E2E Tests (on main only, not every PR)
@@ -305,8 +305,8 @@ kubectl label namespace context0 \
 #### Job 5: Security Scan
 ```yaml
 - gosec ./...
-- trivy image context0/context0:ci
-- trivy image context0/postgres-age-vector:ci
+- trivy image kora/kora:ci
+- trivy image kora/postgres-age-vector:ci
 ```
 
 ### CD Jobs (Run on tag push v*)
@@ -318,15 +318,15 @@ triggers: push tag v*.*.*
 steps:
   - Build multi-arch Docker images (amd64 + arm64)
   - Push to Docker Hub:
-      context0/context0:v0.2.0
-      context0/context0:latest
-      context0/web:v0.2.0
-      context0/postgres-age-vector:v0.2.0
+      kora/kora:v0.2.0
+      kora/kora:latest
+      kora/web:v0.2.0
+      kora/postgres-age-vector:v0.2.0
   - Package and push Helm chart to OCI registry
   - Build and publish Python SDK to PyPI
   - Create GitHub Release with:
       - Changelog (auto-generated from conventional commits)
-      - Binary artifacts (context0-cli for linux/mac/windows)
+      - Binary artifacts (kora-cli for linux/mac/windows)
       - SHA256 checksums
 ```
 
@@ -371,11 +371,11 @@ That starts the Compose `postgres` service, waits for it, and runs the suite.
 To point at a database you already have running:
 
 ```bash
-CONTEXT0_TEST_DATABASE_URL="postgres://context0:context0@localhost:5432/context0?sslmode=disable" \
+KORA_TEST_DATABASE_URL="postgres://kora:kora@localhost:5432/kora?sslmode=disable" \
   go test ./internal/graph/... -count=1
 ```
 
-Without `CONTEXT0_TEST_DATABASE_URL` the suite skips, so plain `go test ./...`
+Without `KORA_TEST_DATABASE_URL` the suite skips, so plain `go test ./...`
 needs no database. Each test scopes its data to a unique project id and cleans
 up after itself, so runs are repeatable against a persistent database.
 
@@ -411,13 +411,13 @@ whether a probe path exists. Deploy and check the running cluster:
 
 ```bash
 make kind-up
-for img in context0/context0:dev context0/postgres-age-vector:dev context0/web:dev; do
-  kind load docker-image "$img" --name context0-dev
+for img in kora/kora:dev kora/postgres-age-vector:dev kora/web:dev; do
+  kind load docker-image "$img" --name kora-dev
 done
-helm install context0 ./charts/context0 -n context0 --create-namespace \
+helm install kora ./charts/kora -n kora --create-namespace \
   --set postgres.password="$(openssl rand -hex 16)" \
   --set auth.apiKeys="$(go run ./cmd/cli keys generate)"
-CONTEXT0_API_KEY=<the key above> scripts/verify_k8s.sh
+KORA_API_KEY=<the key above> scripts/verify_k8s.sh
 ```
 
 The script maps each requirement to a check against the live cluster: probe
@@ -460,7 +460,7 @@ run it against a throwaway cluster rather than anything you care about.
 - [ ] CHANGELOG.md updated
 - [ ] Version bumped in:
   - [ ] `internal/config/config.go` (default version)
-  - [ ] `charts/context0/Chart.yaml` (appVersion + version)
+  - [ ] `charts/kora/Chart.yaml` (appVersion + version)
   - [ ] `sdk/python/pyproject.toml` (version)
   - [ ] `web/package.json` (version)
 
@@ -496,7 +496,7 @@ git push origin main
 ## Repository Structure (Final)
 
 ```
-context0/
+kora/
 ├── .github/
 │   └── workflows/
 │       ├── ci.yaml              # Lint, test, build on every PR
@@ -507,7 +507,7 @@ context0/
 │   ├── proto/                   # Proto definitions (source of truth)
 │   └── gen/                     # Generated Go code (gitignored)
 ├── charts/
-│   └── context0/
+│   └── kora/
 │       ├── values.yaml          # All values, documented inline
 │       └── templates/           # Manifests, NetworkPolicy, ServiceAccounts
 ├── cmd/

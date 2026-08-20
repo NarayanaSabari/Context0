@@ -1,9 +1,9 @@
-# Context0: remaining performance optimizations
+# Kora: remaining performance optimizations
 
 Research report, 2026-08-18. **Research only - no service code was modified.**
 
 Every number below marked **[M]** was measured in this session against a throwaway
-container built from this repo's own image, `context0/postgres-age-vector:dev`
+container built from this repo's own image, `kora/postgres-age-vector:dev`
 (PostgreSQL 18.4, Apache AGE 1.7.0, pgvector, pg_trgm, btree_gin), loaded with 50k
 `:Memory` vertices across 20 projects plus a 20k x 768-dim vector table.
 Claims marked **[V]** are verified against primary sources with URLs.
@@ -151,7 +151,7 @@ Cond` **[M]**.
   <https://www.postgresql.org/docs/17/pgtrgm.html>
 - **Search terms shorter than 3 characters produce no trigrams and degrade to a full
   index scan.** The docs state this explicitly: "a pattern with no extractable
-  trigrams will degenerate to a full-index scan" **[V]**. Context0 must keep a
+  trigrams will degenerate to a full-index scan" **[V]**. Kora must keep a
   minimum-keyword-length guard or short queries get *slower* than today.
 - Moving off `cypher()` to the label table means you take responsibility for the
   label's storage contract. AGE label tables are ordinary tables, but this is a
@@ -239,7 +239,7 @@ pgvector 0.8 supports `sparsevec` with up to 1000 non-zero elements **[V]** (REA
 SPLADE-style learned sparse vectors and do both retrievals through one index type.
 
 **Verdict: not appropriate here [I].** Three reasons:
-1. It requires a learned sparse model. Context0's embedder is pluggable and the
+1. It requires a learned sparse model. Kora's embedder is pluggable and the
    default is bag-of-words; there is no SPLADE in the stack, so this is a large new
    dependency, not a tuning change.
 2. The 1000-non-zero cap is a real constraint for long memories.
@@ -273,7 +273,7 @@ typically compressed into a narrow high band (0.6-0.9) and its absolute value is
 model-dependent, while `LexicalRelevance` is quantized to a few discrete values
 (0, 0.75, 1.0 for a single keyword). Adding them with a fixed weight means **the
 weight is implicitly calibrated to whichever embedding model happens to be
-configured**, and Context0's embedder is swappable (384/768/1536-dim). Change the
+configured**, and Kora's embedder is swappable (384/768/1536-dim). Change the
 model and the ranking silently changes character. **[I]**, but it follows directly
 from the code.
 
@@ -287,7 +287,7 @@ result is that this simple rank-based fusion outperformed both the individual sy
 and the considerably more complex Condorcet fusion and score-standardization methods
 they compared against, using $k=60$.
 
-**Why it fits Context0 specifically:** RRF consumes only *ranks*, so it never
+**Why it fits Kora specifically:** RRF consumes only *ranks*, so it never
 compares a cosine similarity to a keyword score. It is therefore immune to the
 embedder-swap problem above. That is a structural robustness gain, not a tuning gain.
 
@@ -297,7 +297,7 @@ show the algorithm performs best when you set `k` to a small value, such as 60."
 
 Note the Azure doc also documents **weighted RRF** - per-retriever multipliers applied
 before fusion. That is the natural way to keep the "tags are stronger evidence" and
-"agreement is evidence" intuitions that Context0's current code encodes, without
+"agreement is evidence" intuitions that Kora's current code encodes, without
 reintroducing raw-score comparison.
 
 ### 2.3 State of the art, 2026
@@ -317,8 +317,8 @@ them, but I would not treat their specific quality percentages as reliable. The
 Cormack paper and the Azure documentation are the two sources here I would actually
 stand behind.
 
-**Recommendation for Context0:** switch fusion to weighted RRF. Do *not* add a
-cross-encoder reranker - it implies a model server on the query path and Context0's
+**Recommendation for Kora:** switch fusion to weighted RRF. Do *not* add a
+cross-encoder reranker - it implies a model server on the query path and Kora's
 value proposition is a self-contained Go binary plus Postgres. **[I]**
 
 One caution: RRF discards score magnitude, which means it cannot express "nothing
@@ -355,7 +355,7 @@ Doubling `m` roughly doubled build time **[M]**, consistent with the documented
 tradeoff.
 
 The README's own advice is to **"use the defaults unless seeing low recall"** **[V]**.
-Given Context0 has no recall measurement in place, that is the correct posture: do not
+Given Kora has no recall measurement in place, that is the correct posture: do not
 tune blind.
 
 ### 3.2 `hnsw.ef_search`
@@ -387,7 +387,7 @@ So: **the recall-vs-`ef_search` tradeoff is unmeasured here [U].** The build-tim
 size numbers above are sound; any recall claim would need held-out query vectors and
 real embeddings. I have written this up as a measurement task in section 7 rather than
 guessing. The general direction (higher `ef_search` -> higher recall, slower) is
-documented by pgvector **[V]**; the magnitude *for Context0's data* is unknown.
+documented by pgvector **[V]**; the magnitude *for Kora's data* is unknown.
 
 ### 3.4 When to prefer IVFFlat
 
@@ -396,7 +396,7 @@ performance (in terms of speed-recall tradeoff)" **[V]**. It also requires the t
 to have data before building, and a `lists` parameter of `rows/1000` up to 1M rows
 **[V]**.
 
-**Verdict for Context0: stay on HNSW [I].** IVFFlat's requirement that the index be
+**Verdict for Kora: stay on HNSW [I].** IVFFlat's requirement that the index be
 built after data exists conflicts with `InitSchema` running on every startup against a
 possibly-empty database, and a memory engine's corpus grows continuously, so the
 k-means centroids would drift and need periodic rebuilds. HNSW's "index can be created
@@ -419,7 +419,7 @@ or the index will not be used - the same exact-match rule as section 1.1. Becaus
 underlying `vector` column is retained at full precision, **this is reversible**: drop
 the index and you have lost nothing. That makes it a low-risk change.
 
-Accuracy impact is **[U]** for Context0's data - unmeasured for the same reason as
+Accuracy impact is **[U]** for Kora's data - unmeasured for the same reason as
 3.3. fp16 retains ~3 decimal digits, and for cosine similarity over normalized
 embeddings the effect on ranking is generally small **[I]**, but "generally small"
 should be verified before it ships.
@@ -428,7 +428,7 @@ should be verified before it ships.
 vectors with Hamming/Jaccard distance **[V]**, and the README recommends it for
 "faster build times at scale" **[V]**. Binary quantization typically costs substantial
 recall and is used as a *first-stage* filter with full-precision reranking. At
-Context0's scale that machinery is unjustified: halfvec gets a solid memory win with
+Kora's scale that machinery is unjustified: halfvec gets a solid memory win with
 far less risk. **[I]**
 
 ---
@@ -456,7 +456,7 @@ So **there is no win available here - it is already optimal.** The docstring for
 Queries are executed in a single round trip after the statement is cached. This is the
 default." **[V]**
 
-**But there is a real problem hiding behind this, specific to Context0's design.**
+**But there is a real problem hiding behind this, specific to Kora's design.**
 `cypherSQL` interpolates the Cypher body into the SQL string:
 
 ```go
@@ -471,7 +471,7 @@ With a 512-entry LRU and enough filter shapes, the cache thrashes: each miss cos
 comment in `age.go` ("The generated Cypher text therefore depends solely on how many
 keywords and types were supplied") shows the shape count is bounded, but bounded by a
 product of two variables. **[I] - the mechanism is certain from the pgx source; that
-Context0 actually exceeds 512 shapes is not, and would need `pg_prepared_statements`
+Kora actually exceeds 512 shapes is not, and would need `pg_prepared_statements`
 monitoring to confirm.**
 
 Moving keyword search to a fixed-text SQL statement (section 1.3) removes this class
@@ -564,7 +564,7 @@ once when pgx opens a connection. PgBouncer's own compatibility matrix marks
 `SET/RESET` as **"Never"** supported in transaction pooling **[V]**
 <https://www.pgbouncer.org/features.html>.
 
-Reproduction, pgx v5 with Context0's exact `AfterConnect` hook, through PgBouncer in
+Reproduction, pgx v5 with Kora's exact `AfterConnect` hook, through PgBouncer in
 transaction mode **[M]**:
 
 ```
@@ -597,7 +597,7 @@ persists nor reliably resets - the worst of both.
 1. **Session-mode pooling.** Preserves all session state; you lose most of the
    multiplexing benefit.
 2. **Set `search_path` as a server-side default** so it is not session state at all:
-   `ALTER ROLE context0 SET search_path = ag_catalog, "$user", public`. This survives
+   `ALTER ROLE kora SET search_path = ag_catalog, "$user", public`. This survives
    transaction pooling because every new backend picks it up, and it removes the need
    for the `AfterConnect` hook entirely. **This is the clean fix** and is worth doing
    regardless of whether PgBouncer is ever deployed, because it makes the service
@@ -665,7 +665,7 @@ lookup, well under a millisecond. Not worth an invalidation story.
 
 ### 6.3 Query-result caching - **do not [I]**
 
-This is where the brief's concern is well founded. Context0 is a memory engine whose
+This is where the brief's concern is well founded. Kora is a memory engine whose
 entire purpose is that something stored is immediately retrievable. Caching result sets
 means a `Store` must invalidate every cached query whose results *might* have changed -
 which, for semantic search, is undecidable without running the search. The available
@@ -736,9 +736,9 @@ robustness advantage under embedder swaps; the statement-cache-thrash argument i
 halfvec accuracy being acceptable; the recommendation against sparse vectors and
 against result caching.
 
-**Not verified [U]:** recall vs `ef_search` for Context0's data, and halfvec's accuracy
+**Not verified [U]:** recall vs `ef_search` for Kora's data, and halfvec's accuracy
 cost - my harness was invalid twice and I did not obtain a trustworthy number; Go-side
-JSON unmarshalling overhead, which I did not profile; whether Context0 actually exceeds
+JSON unmarshalling overhead, which I did not profile; whether Kora actually exceeds
 pgx's 512-statement cache in practice; the PgBouncer concurrency crossover, which is
 reasoning from configuration rather than a measured sweep.
 

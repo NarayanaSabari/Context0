@@ -1,10 +1,10 @@
-# Context0 — Memory for AI Agents
+# Kora — Memory for AI Agents
 
-## What is Context0?
+## What is Kora?
 
-Context0 is a **memory engine for AI agents**. It gives AI systems the ability to remember — just like how humans remember facts, experiences, and learned skills across conversations and over time.
+Kora is a **memory engine for AI agents**. It gives AI systems the ability to remember — just like how humans remember facts, experiences, and learned skills across conversations and over time.
 
-Today, every time you talk to an AI assistant, it starts from scratch. It doesn't remember what you discussed yesterday, what decisions were made last week, or what your preferences are. Context0 fixes this by providing a persistent, intelligent memory layer that any AI agent can plug into.
+Today, every time you talk to an AI assistant, it starts from scratch. It doesn't remember what you discussed yesterday, what decisions were made last week, or what your preferences are. Kora fixes this by providing a persistent, intelligent memory layer that any AI agent can plug into.
 
 **Think of it as the brain's memory system, but for AI.**
 
@@ -30,15 +30,15 @@ This isn't just annoying — it makes AI agents fundamentally less useful. They 
 
 ---
 
-## What Context0 Does
+## What Kora Does
 
-Context0 provides three core capabilities:
+Kora provides three core capabilities:
 
 ### 1. Remember Everything
 
-Feed Context0 any conversation, document, or piece of information. It automatically extracts the important facts, preferences, and events — and stores them in a structured memory graph.
+Feed Kora any conversation, document, or piece of information. It automatically extracts the important facts, preferences, and events — and stores them in a structured memory graph.
 
-> **Example**: An AI coding assistant has a conversation where the user says "We switched from MySQL to PostgreSQL last week because we needed graph support." Context0 automatically extracts:
+> **Example**: An AI coding assistant has a conversation where the user says "We switched from MySQL to PostgreSQL last week because we needed graph support." Kora automatically extracts:
 > - Fact: The project uses PostgreSQL
 > - Event: Migrated from MySQL to PostgreSQL
 > - Reason: Needed graph support
@@ -46,14 +46,14 @@ Feed Context0 any conversation, document, or piece of information. It automatica
 
 ### 2. Recall What Matters
 
-When an AI agent needs context, Context0 returns exactly the right memories — not 50 vaguely related chunks, but the 3-5 memories that actually matter for the current question. It understands relationships between memories, not just text similarity.
+When an AI agent needs context, Kora returns exactly the right memories — not 50 vaguely related chunks, but the 3-5 memories that actually matter for the current question. It understands relationships between memories, not just text similarity.
 
 > **Example**: Agent asks "What database does this project use?"
-> Context0 returns: "PostgreSQL" (current fact) with context that it superseded MySQL, and the reason for the switch.
+> Kora returns: "PostgreSQL" (current fact) with context that it superseded MySQL, and the reason for the switch.
 
 ### 3. Build User Profiles
 
-Context0 automatically builds and maintains a profile for each user or project — combining stable facts (role, expertise, preferences) with recent context (current project, recent decisions). This profile makes every AI interaction personalized from the first message.
+Kora automatically builds and maintains a profile for each user or project — combining stable facts (role, expertise, preferences) with recent context (current project, recent decisions). This profile makes every AI interaction personalized from the first message.
 
 > **Example**: A user profile might contain:
 > - **Static**: Senior engineer, prefers Go, uses Vim, values concise responses
@@ -65,7 +65,7 @@ Context0 automatically builds and maintains a profile for each user or project �
 
 ### For AI-Powered Products
 
-| Use Case | How Context0 Helps |
+| Use Case | How Kora Helps |
 |----------|-------------------|
 | **AI Coding Assistants** | Remember project architecture, tech stack, coding preferences, past decisions across sessions |
 | **Customer Support Bots** | Know returning customers instantly — their plan, past issues, preferences — without asking again |
@@ -76,7 +76,7 @@ Context0 automatically builds and maintains a profile for each user or project �
 
 ### For Development Teams
 
-| Use Case | How Context0 Helps |
+| Use Case | How Kora Helps |
 |----------|-------------------|
 | **Multi-Agent Workflows** | Multiple AI agents working on the same project share a single memory — no duplicate work |
 | **Tool Switching** | Switch from one AI tool to another without losing all accumulated context |
@@ -84,9 +84,9 @@ Context0 automatically builds and maintains a profile for each user or project �
 
 ---
 
-## Why Context0 is Different
+## Why Kora is Different
 
-| | Traditional Approach | Context0 |
+| | Traditional Approach | Kora |
 |---|---------------------|----------|
 | **Memory structure** | Flat text chunks | Connected knowledge graph (facts linked to reasons, decisions linked to outcomes) |
 | **Retrieval** | "Find similar text" | "Find what's related" — follows relationships, not just similarity |
@@ -102,16 +102,16 @@ Context0 automatically builds and maintains a profile for each user or project �
 ```
 1. AI agent has a conversation with a user
                     ↓
-2. Conversation is sent to Context0
+2. Conversation is sent to Kora
                     ↓
-3. Context0 extracts facts, preferences, events
+3. Kora extracts facts, preferences, events
                     ↓
 4. Memories are stored in a knowledge graph
    (with relationships: "this supersedes that",
     "this was caused by that", etc.)
                     ↓
 5. Next time any AI agent needs context,
-   it queries Context0 and gets back
+   it queries Kora and gets back
    exactly the right memories
 ```
 
@@ -128,6 +128,6 @@ Context0 automatically builds and maintains a profile for each user or project �
 
 ## Open Source
 
-Context0 is **100% open source** under the Apache 2.0 license. Every component — the engine, the database, the search, the UI — uses OSI-approved open-source software. No vendor lock-in, no proprietary dependencies.
+Kora is **100% open source** under the Apache 2.0 license. Every component — the engine, the database, the search, the UI — uses OSI-approved open-source software. No vendor lock-in, no proprietary dependencies.
 
 You can run it on your own servers, in your own cloud, with your own data. Forever.

@@ -9,9 +9,9 @@ import (
 
 func TestLoad_Defaults(t *testing.T) {
 	// Clear any env vars that might be set.
-	os.Unsetenv("CONTEXT0_GRPC_PORT")
-	os.Unsetenv("CONTEXT0_HTTP_PORT")
-	os.Unsetenv("CONTEXT0_DATABASE_URL")
+	os.Unsetenv("KORA_GRPC_PORT")
+	os.Unsetenv("KORA_HTTP_PORT")
+	os.Unsetenv("KORA_DATABASE_URL")
 
 	cfg := Load()
 
@@ -30,11 +30,11 @@ func TestLoad_Defaults(t *testing.T) {
 }
 
 func TestLoad_EnvOverride(t *testing.T) {
-	t.Setenv("CONTEXT0_GRPC_PORT", "9090")
-	t.Setenv("CONTEXT0_HTTP_PORT", "9091")
-	t.Setenv("CONTEXT0_DATABASE_URL", "postgres://test:test@db:5432/test")
-	t.Setenv("CONTEXT0_API_KEYS", "key1,key2,key3")
-	t.Setenv("CONTEXT0_VERSION", "1.2.3")
+	t.Setenv("KORA_GRPC_PORT", "9090")
+	t.Setenv("KORA_HTTP_PORT", "9091")
+	t.Setenv("KORA_DATABASE_URL", "postgres://test:test@db:5432/test")
+	t.Setenv("KORA_API_KEYS", "key1,key2,key3")
+	t.Setenv("KORA_VERSION", "1.2.3")
 
 	cfg := Load()
 
@@ -55,7 +55,7 @@ func TestLoad_EnvOverride(t *testing.T) {
 	}
 }
 
-// TestSplitEnv_DiscardsEmptySegments guards the parsing of CONTEXT0_API_KEYS.
+// TestSplitEnv_DiscardsEmptySegments guards the parsing of KORA_API_KEYS.
 //
 // A trailing comma, a doubled comma, or a stray space is the normal result of
 // editing a key list by hand or generating one in a shell loop. Without the
@@ -82,8 +82,8 @@ func TestSplitEnv_DiscardsEmptySegments(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("CONTEXT0_TEST_SPLIT", tc.value)
-			got := splitEnv("CONTEXT0_TEST_SPLIT", ",")
+			t.Setenv("KORA_TEST_SPLIT", tc.value)
+			got := splitEnv("KORA_TEST_SPLIT", ",")
 
 			if len(got) != len(tc.want) {
 				t.Fatalf("splitEnv(%q) = %#v, want %#v", tc.value, got, tc.want)
@@ -109,7 +109,7 @@ func TestSplitEnv_DiscardsEmptySegments(t *testing.T) {
 // from an empty one, because the auth layer treats "no keys configured" as a
 // deliberate state rather than an error.
 func TestSplitEnv_UnsetReturnsNil(t *testing.T) {
-	if got := splitEnv("CONTEXT0_DEFINITELY_UNSET_VAR", ","); got != nil {
+	if got := splitEnv("KORA_DEFINITELY_UNSET_VAR", ","); got != nil {
 		t.Errorf("splitEnv on an unset variable = %#v, want nil", got)
 	}
 }
@@ -119,7 +119,7 @@ func TestSplitEnv_UnsetReturnsNil(t *testing.T) {
 //
 // A value that was set but could not be parsed used to be discarded, leaving
 // the default in place with nothing anywhere saying the setting was ignored.
-// An operator who typed CONTEXT0_RATE_LIMIT_PER_MINUTE=6OOO -- letter O --
+// An operator who typed KORA_RATE_LIMIT_PER_MINUTE=6OOO -- letter O --
 // got the default limit and no way to tell. The same pattern in the
 // consolidation job silently deleted memories on default thresholds.
 func TestValidateRejectsUnparseableIntegers(t *testing.T) {
@@ -127,10 +127,10 @@ func TestValidateRejectsUnparseableIntegers(t *testing.T) {
 		env   string
 		value string
 	}{
-		{"CONTEXT0_RATE_LIMIT_PER_MINUTE", "6OOO"},
-		{"CONTEXT0_GRPC_PORT", "50051x"},
-		{"CONTEXT0_HTTP_PORT", "eighty-eighty"},
-		{"CONTEXT0_EMBEDDING_DIM", "384.0"},
+		{"KORA_RATE_LIMIT_PER_MINUTE", "6OOO"},
+		{"KORA_GRPC_PORT", "50051x"},
+		{"KORA_HTTP_PORT", "eighty-eighty"},
+		{"KORA_EMBEDDING_DIM", "384.0"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.env, func(t *testing.T) {
@@ -165,37 +165,37 @@ func TestValidateRejectsOutOfRangeValues(t *testing.T) {
 	}{
 		{
 			name: "port above the valid range",
-			env:  map[string]string{"CONTEXT0_HTTP_PORT": "80800"},
+			env:  map[string]string{"KORA_HTTP_PORT": "80800"},
 			why:  "net.Listen reports this only for the listener that failed, after the other is already serving",
 		},
 		{
 			name: "port zero",
-			env:  map[string]string{"CONTEXT0_GRPC_PORT": "0"},
+			env:  map[string]string{"KORA_GRPC_PORT": "0"},
 			why:  "port 0 binds an arbitrary free port, so nothing can reach the service",
 		},
 		{
 			name: "negative port",
-			env:  map[string]string{"CONTEXT0_GRPC_PORT": "-1"},
+			env:  map[string]string{"KORA_GRPC_PORT": "-1"},
 			why:  "cannot bind",
 		},
 		{
 			name: "both listeners on one port",
-			env:  map[string]string{"CONTEXT0_GRPC_PORT": "9000", "CONTEXT0_HTTP_PORT": "9000"},
+			env:  map[string]string{"KORA_GRPC_PORT": "9000", "KORA_HTTP_PORT": "9000"},
 			why:  "one of the two listeners would fail to bind",
 		},
 		{
 			name: "zero rate limit",
-			env:  map[string]string{"CONTEXT0_RATE_LIMIT_PER_MINUTE": "0"},
+			env:  map[string]string{"KORA_RATE_LIMIT_PER_MINUTE": "0"},
 			why:  "a bucket that never refills rejects every request, which looks like an outage",
 		},
 		{
 			name: "negative rate limit",
-			env:  map[string]string{"CONTEXT0_RATE_LIMIT_PER_MINUTE": "-100"},
+			env:  map[string]string{"KORA_RATE_LIMIT_PER_MINUTE": "-100"},
 			why:  "same, and the negative is not visible anywhere at runtime",
 		},
 		{
 			name: "negative embedding dimension",
-			env:  map[string]string{"CONTEXT0_EMBEDDING_DIM": "-384"},
+			env:  map[string]string{"KORA_EMBEDDING_DIM": "-384"},
 			why:  "this width is handed to the pgvector column definition",
 		},
 	}
@@ -227,11 +227,11 @@ func TestValidateAcceptsWorkingConfiguration(t *testing.T) {
 	}
 
 	for _, env := range []map[string]string{
-		{"CONTEXT0_RATE_LIMIT_PER_MINUTE": "1"},
-		{"CONTEXT0_RATE_LIMIT_PER_MINUTE": "100000"},
-		{"CONTEXT0_GRPC_PORT": "1", "CONTEXT0_HTTP_PORT": "65535"},
-		{"CONTEXT0_EMBEDDING_DIM": "0"}, // 0 means auto-detect
-		{"CONTEXT0_EMBEDDING_DIM": "1536"},
+		{"KORA_RATE_LIMIT_PER_MINUTE": "1"},
+		{"KORA_RATE_LIMIT_PER_MINUTE": "100000"},
+		{"KORA_GRPC_PORT": "1", "KORA_HTTP_PORT": "65535"},
+		{"KORA_EMBEDDING_DIM": "0"}, // 0 means auto-detect
+		{"KORA_EMBEDDING_DIM": "1536"},
 	} {
 		t.Run(fmt.Sprint(env), func(t *testing.T) {
 			for k, v := range env {
@@ -248,8 +248,8 @@ func TestValidateAcceptsWorkingConfiguration(t *testing.T) {
 // TestValidateReportsEveryProblemAtOnce: fixing configuration one error per
 // restart is slow when each restart is a rollout.
 func TestValidateReportsEveryProblemAtOnce(t *testing.T) {
-	t.Setenv("CONTEXT0_RATE_LIMIT_PER_MINUTE", "notanumber")
-	t.Setenv("CONTEXT0_HTTP_PORT", "99999")
+	t.Setenv("KORA_RATE_LIMIT_PER_MINUTE", "notanumber")
+	t.Setenv("KORA_HTTP_PORT", "99999")
 	envProblems = nil
 	t.Cleanup(func() { envProblems = nil })
 
@@ -257,9 +257,55 @@ func TestValidateReportsEveryProblemAtOnce(t *testing.T) {
 	if err == nil {
 		t.Fatal("two invalid settings were accepted")
 	}
-	for _, want := range []string{"CONTEXT0_RATE_LIMIT_PER_MINUTE", "CONTEXT0_HTTP_PORT"} {
+	for _, want := range []string{"KORA_RATE_LIMIT_PER_MINUTE", "KORA_HTTP_PORT"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error reports only some problems, missing %s: %v", want, err)
 		}
+	}
+}
+
+// TestRenamedEnvVarsAreRejected covers the failure the Context0 -> Kora rename
+// created: every setting falls back to a default when its variable is unset,
+// so a deployment left on the old names does not fail, it comes up
+// misconfigured. The worst case is authentication. An empty key list disables
+// auth, so a pod still passing CONTEXT0_API_KEYS would start with
+// auth_enabled=false and serve every stored memory unauthenticated.
+func TestRenamedEnvVarsAreRejected(t *testing.T) {
+	for _, old := range []string{
+		"CONTEXT0_API_KEYS",
+		"CONTEXT0_DATABASE_URL",
+		"CONTEXT0_GRPC_PORT",
+		"CONTEXT0_EMBEDDING_PROVIDER",
+	} {
+		t.Run(old, func(t *testing.T) {
+			t.Setenv(old, "some-value")
+			envProblems = nil
+			t.Cleanup(func() { envProblems = nil })
+
+			err := Load().Validate()
+			if err == nil {
+				t.Fatalf("%s was set and startup was allowed to continue; "+
+					"the setting is silently ignored", old)
+			}
+			// The message has to name the replacement, or the operator is
+			// told something is wrong without being told what to set.
+			want := "KORA_" + strings.TrimPrefix(old, "CONTEXT0_")
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the error does not name the replacement %s: %v", want, err)
+			}
+		})
+	}
+}
+
+// TestRenamedEnvCheckIgnoresUnrelatedVars keeps the check above from being
+// satisfied by rejecting every environment it sees.
+func TestRenamedEnvCheckIgnoresUnrelatedVars(t *testing.T) {
+	t.Setenv("CONTEXTUAL_SOMETHING", "x") // shares a prefix up to "CONTEXT"
+	t.Setenv("KORA_API_KEYS", "ctx0_aaaa_bbbb")
+	envProblems = nil
+	t.Cleanup(func() { envProblems = nil })
+
+	if err := Load().Validate(); err != nil {
+		t.Errorf("an unrelated variable was treated as a renamed one: %v", err)
 	}
 }

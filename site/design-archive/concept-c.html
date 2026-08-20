@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Context0 is an open-source, graph-first memory engine for AI agents.">
-  <title>Context0 — Memory that connects</title>
+  <meta name="description" content="Kora is an open-source, graph-first memory engine for AI agents.">
+  <title>Kora — Memory that connects</title>
   <style>
     :root {
       color-scheme: dark;
@@ -113,7 +113,7 @@
     .argument-grid{display:grid;grid-template-columns:minmax(0,1fr) 1px minmax(0,1fr);border:1px solid var(--line2);background:var(--raised)}
     .argument-divider{background:var(--line2)}
     .argument-panel{position:relative;min-width:0;padding:34px}
-    .argument-panel.context0{background:linear-gradient(140deg,rgba(134,59,255,.08),transparent 55%)}
+    .argument-panel.kora{background:linear-gradient(140deg,rgba(134,59,255,.08),transparent 55%)}
     .panel-index{position:absolute;top:14px;right:16px;color:#5d606d;font-family:var(--mono);font-size:8px}
     .argument-panel h3{margin:14px 0 8px;font-size:22px;font-weight:560;letter-spacing:-.03em}
     .argument-panel>p:not(.eyebrow){max-width:500px;margin:0 0 30px;color:#9a9daa;font-size:14px}
@@ -310,16 +310,16 @@
 
   <header class="site-header">
     <nav class="nav container" aria-label="Primary navigation">
-      <a class="brand" href="#top" aria-label="Context0 home">
+      <a class="brand" href="#top" aria-label="Kora home">
         <svg class="logo" viewBox="0 0 48 46" aria-hidden="true">
           <defs><filter id="logoGlow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2.6" result="blur"></feGaussianBlur><feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter></defs>
           <path fill="#863bff" filter="url(#logoGlow)" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"></path>
         </svg>
-        <span>Context0</span>
+        <span>Kora</span>
       </a>
       <div class="nav-links">
         <a href="#architecture">Architecture</a><a href="#api">API</a><a href="#install">Install</a>
-        <a class="nav-action" href="https://github.com/context0/Context0" target="_blank" rel="noreferrer">
+        <a class="nav-action" href="https://github.com/kora/Kora" target="_blank" rel="noreferrer">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M15 4h5v5M10 14 20 4M18 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h6"></path></svg><span>GitHub</span>
         </a>
       </div>
@@ -332,10 +332,10 @@
         <div class="hero-copy">
           <p class="eyebrow">Open source · Apache 2.0 · Self-hosted</p>
           <h1>Your agent forgets. The graph remembers what <span class="connected">changed</span></h1>
-          <p class="hero-sub">Context0 is a graph-first memory engine. Store conversations, auto-extract facts, query by meaning and relationship - in your own cluster, on your own data.</p>
+          <p class="hero-sub">Kora is a graph-first memory engine. Store conversations, auto-extract facts, query by meaning and relationship - in your own cluster, on your own data.</p>
           <div class="actions">
             <a class="button primary" href="#install">Get started <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"></path></svg></a>
-            <a class="button secondary" href="https://github.com/context0/Context0" target="_blank" rel="noreferrer">View on GitHub <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M15 4h5v5M10 14 20 4M18 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h6"></path></svg></a>
+            <a class="button secondary" href="https://github.com/kora/Kora" target="_blank" rel="noreferrer">View on GitHub <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M15 4h5v5M10 14 20 4M18 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h6"></path></svg></a>
           </div>
           <div class="hero-meta" aria-label="Product characteristics"><span>Kubernetes-native</span><span>Graph-first</span><span>Framework-agnostic</span></div>
         </div>
@@ -365,7 +365,7 @@
         <div class="section-head">
           <div><span class="coord">B-02 / RETRIEVAL</span><div class="rule-label">Design argument</div></div>
           <h2>Similarity finds mentions. Relationships find the truth.</h2>
-          <p class="lead">A flat vector index cannot tell an old fact from a current one. Context0 stores memory as a connected model, then combines graph traversal with vector similarity.</p>
+          <p class="lead">A flat vector index cannot tell an old fact from a current one. Kora stores memory as a connected model, then combines graph traversal with vector similarity.</p>
         </div>
         <div class="argument-grid">
           <article class="argument-panel">
@@ -373,8 +373,8 @@
             <div class="result-stack"><div class="result-row"><span class="result-rank">01</span><span class="content">“We switched to PostgreSQL...”</span><span class="similarity">0.93</span></div><div class="result-row stale"><span class="result-rank">02</span><span class="content">“The project uses MySQL...”</span><span class="similarity">0.91</span></div><div class="result-row"><span class="result-rank">03</span><span class="content">“Database migration notes...”</span><span class="similarity">0.86</span></div></div>
           </article>
           <div class="argument-divider" aria-hidden="true"></div>
-          <article class="argument-panel context0">
-            <span class="panel-index">B-02.2</span><p class="eyebrow">Context0 graph + vector</p><h3>One answer. With provenance.</h3><p>Typed edges resolve the current fact and preserve the reason it changed.</p>
+          <article class="argument-panel kora">
+            <span class="panel-index">B-02.2</span><p class="eyebrow">Kora graph + vector</p><h3>One answer. With provenance.</h3><p>Typed edges resolve the current fact and preserve the reason it changed.</p>
             <div class="result-stack"><div class="result-row current"><span class="result-rank">01</span><span class="content">PostgreSQL · current</span><span class="similarity">FACT</span></div><div class="result-row explained"><span class="result-rank">↳</span><span class="content">Changed because graph support was needed.</span></div></div>
             <div class="supersede-strip"><span>MySQL</span><span class="arrow">── superseded by ──▶</span><strong>PostgreSQL</strong></div>
           </article>
@@ -397,13 +397,13 @@
       <div class="container">
         <div class="section-head"><div><span class="coord">D-04 / TOPOLOGY</span><div class="rule-label">Deployment view</div></div><h2>One memory engine. One database. Nothing to synchronize.</h2><p class="lead">Apache AGE and pgvector live together inside a single PostgreSQL instance. Graph traversal and vector search share one query path and one source of truth.</p></div>
         <div class="architecture-board">
-          <div class="board-topline"><span>Context0 reference architecture</span><span>Scale / NTS · Rev 01</span></div>
+          <div class="board-topline"><span>Kora reference architecture</span><span>Scale / NTS · Rev 01</span></div>
           <div class="cluster-frame">
             <span class="cluster-label">Kubernetes cluster / your infrastructure</span>
             <div class="agent-row"><div class="agent-box"><small>Client / 01</small><strong>Coding assistant</strong></div><div class="agent-box"><small>Client / 02</small><strong>Support bot</strong></div><div class="agent-box"><small>Client / 03</small><strong>Any agent</strong></div></div>
             <div class="protocol-bar"><span>gRPC / REST</span></div>
             <div class="engine-box">
-              <div class="engine-title"><strong>Context0 Engine</strong><span>single memory interface</span></div>
+              <div class="engine-title"><strong>Kora Engine</strong><span>single memory interface</span></div>
               <div class="engine-modules"><div class="system-box"><small>Write path</small><strong>Ingest + Extract</strong></div><div class="system-box"><small>Read path</small><strong>Hybrid Query</strong></div><div class="system-box"><small>Lifecycle</small><strong>Consolidation</strong></div></div>
               <div class="database-shell"><span class="db-cap">one PostgreSQL 18 instance</span><div class="db-grid"><div class="db-box"><small>Extension / Graph</small><strong>Apache AGE</strong></div><div class="db-box"><small>Extension / Vectors</small><strong>pgvector</strong></div></div><p class="db-foot"><b>01</b> database · <b>01</b> query path · <b>00</b> stores to sync</p></div>
             </div>
@@ -425,7 +425,7 @@
 
     <section class="section section-pad" id="schema">
       <div class="container">
-        <div class="section-head"><div><span class="coord">F-06 / DATA MODEL</span><div class="rule-label">Schema view</div></div><h2>Memory is typed. Change is an edge.</h2><p class="lead">Facts do not pile up as anonymous chunks. Context0 keeps their type and the relationships between them explicit.</p></div>
+        <div class="section-head"><div><span class="coord">F-06 / DATA MODEL</span><div class="rule-label">Schema view</div></div><h2>Memory is typed. Change is an edge.</h2><p class="lead">Facts do not pile up as anonymous chunks. Kora keeps their type and the relationships between them explicit.</p></div>
         <div class="schema-wrap">
           <div class="schema-copy"><p class="eyebrow">Typed node / edge model</p><h3>A data model that knows what changed, and why.</h3><p>Contradiction detection marks stale facts as superseded instead of leaving old and new claims to compete in retrieval.</p><div class="type-list"><div class="type-item"><span>semantic</span><span>stable fact</span></div><div class="type-item"><span>episodic</span><span>event in time</span></div><div class="type-item"><span>procedural</span><span>learned process</span></div><div class="type-item"><span>preference</span><span>user choice</span></div></div></div>
           <div class="schema-figure" aria-label="Typed memory schema diagram">
@@ -451,9 +451,9 @@
       <div class="container">
         <div class="section-head"><div><span class="coord">H-08 / INTERFACE</span><div class="rule-label">REST surface</div></div><h2>Real API. Ten precise entry points.</h2><p class="lead">Store, extract, connect, query, inspect, and delete memories through a compact REST surface. Use the Python SDK or call the service directly.</p></div>
         <div class="api-layout">
-          <div class="code-column"><div class="column-head"><span>Python / query example</span><button class="copy" type="button" data-copy="python-code">Copy</button></div><pre class="code-block" id="python-code"><span class="fn">from</span> context0 <span class="fn">import</span> Context0Client
+          <div class="code-column"><div class="column-head"><span>Python / query example</span><button class="copy" type="button" data-copy="python-code">Copy</button></div><pre class="code-block" id="python-code"><span class="fn">from</span> kora <span class="fn">import</span> KoraClient
 
-client = Context0Client(
+client = KoraClient(
   endpoint=<span class="str">"localhost:50051"</span>,
   api_key=...,
   project=<span class="str">"my-project"</span>
@@ -480,19 +480,19 @@ results = client.query(
           <article class="install-card"><div class="column-head"><span>Docker Compose</span><button class="copy" type="button" data-copy="docker-code">Copy</button></div><pre class="code-block" id="docker-code"><span class="comment"># Generate credentials</span>
 cat &gt; .env &lt;&lt;EOF
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
-CONTEXT0_API_KEYS=$(go run ./cmd/cli keys generate)
+KORA_API_KEYS=$(go run ./cmd/cli keys generate)
 EOF
 
 docker compose up</pre></article>
           <article class="install-card"><div class="column-head"><span>Helm / Kubernetes</span><button class="copy" type="button" data-copy="helm-code">Copy</button></div><pre class="code-block" id="helm-code"><span class="comment"># Install into your cluster</span>
-helm install context0 ./charts/context0 \
-  -n context0 --create-namespace \
+helm install kora ./charts/kora \
+  -n kora --create-namespace \
   --set postgres.existingSecret=\
 my-postgres-secret \
   --set auth.existingSecret=\
 my-api-keys</pre></article>
         </div>
-        <div class="sdk-strip"><div class="sdk-item"><b>Python SDK</b>pip install context0</div><div class="sdk-item"><b>Go CLI / store</b>context0 store</div><div class="sdk-item"><b>Go CLI / query</b>context0 query</div><div class="sdk-item"><b>Go CLI / inspect</b>context0 graph &lt;id&gt; --depth 2</div></div>
+        <div class="sdk-strip"><div class="sdk-item"><b>Python SDK</b>pip install kora</div><div class="sdk-item"><b>Go CLI / store</b>kora store</div><div class="sdk-item"><b>Go CLI / query</b>kora query</div><div class="sdk-item"><b>Go CLI / inspect</b>kora graph &lt;id&gt; --depth 2</div></div>
       </div>
     </section>
 
@@ -510,21 +510,21 @@ my-api-keys</pre></article>
       <div class="container">
         <div class="section-head"><div><span class="coord">K-11 / BILL OF MATERIALS</span><div class="rule-label">Open-source stack</div></div><h2>Inspect every layer.</h2><p class="lead">Every dependency is OSI-approved open source. No SSPL, BSL, or proprietary components hidden in the deployment path.</p></div>
         <div class="stack-scroll"><table class="stack-table"><thead><tr><th>Layer</th><th>Technology</th><th>Role</th><th>License</th></tr></thead><tbody><tr><td>Engine</td><td>Go</td><td>Memory service</td><td class="license-ok">BSD-3-Clause</td></tr><tr><td>Database</td><td>PostgreSQL 18</td><td>Shared data plane</td><td class="license-ok">PostgreSQL</td></tr><tr><td>Graph</td><td>Apache AGE</td><td>Graph traversal</td><td class="license-ok">Apache 2.0</td></tr><tr><td>Vectors</td><td>pgvector</td><td>Similarity search</td><td class="license-ok">PostgreSQL</td></tr><tr><td>API</td><td>gRPC + REST</td><td>Agent interface</td><td class="license-ok">Apache 2.0</td></tr><tr><td>Web UI</td><td>React + React Flow</td><td>Live graph visualization</td><td class="license-ok">MIT</td></tr><tr><td>Observability</td><td>Prometheus</td><td>Metrics</td><td class="license-ok">Apache 2.0</td></tr><tr><td>Deployment</td><td>Helm</td><td>Kubernetes packaging</td><td class="license-ok">Apache 2.0</td></tr></tbody></table></div>
-        <p class="stack-note">Every dependency OSI-approved · Context0 licensed Apache 2.0</p>
+        <p class="stack-note">Every dependency OSI-approved · Kora licensed Apache 2.0</p>
       </div>
     </section>
 
     <section class="section final-cta">
-      <div class="container final-inner"><p class="eyebrow">Open memory infrastructure</p><h2>Give your agents a memory they can share.</h2><p>Graph-first, self-hosted, and ready to run in your own cluster. Start with the install path or inspect every line on GitHub.</p><div class="actions"><a class="button primary" href="#install">Get started</a><a class="button secondary" href="https://github.com/context0/Context0" target="_blank" rel="noreferrer">View on GitHub</a></div></div>
+      <div class="container final-inner"><p class="eyebrow">Open memory infrastructure</p><h2>Give your agents a memory they can share.</h2><p>Graph-first, self-hosted, and ready to run in your own cluster. Start with the install path or inspect every line on GitHub.</p><div class="actions"><a class="button primary" href="#install">Get started</a><a class="button secondary" href="https://github.com/kora/Kora" target="_blank" rel="noreferrer">View on GitHub</a></div></div>
     </section>
   </main>
 
   <footer class="site-footer">
     <div class="container footer-main">
-      <div class="footer-brand"><a class="brand" href="#top"><svg class="logo" viewBox="0 0 48 46" aria-hidden="true"><path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"></path></svg><span>Context0</span></a><p>The open-source memory engine for AI agents. Graph-first, Kubernetes-native, and built to run on your infrastructure.</p></div>
-      <nav class="footer-links" aria-label="Footer navigation"><a href="https://github.com/context0/Context0" target="_blank" rel="noreferrer">GitHub</a><a href="#api">Docs</a><a href="https://github.com/context0/Context0/blob/main/CONTRIBUTING.md" target="_blank" rel="noreferrer">Contributing</a><a href="https://github.com/context0/Context0/security" target="_blank" rel="noreferrer">Security</a><a href="https://github.com/context0/Context0/blob/main/LICENSE" target="_blank" rel="noreferrer">Apache 2.0</a></nav>
+      <div class="footer-brand"><a class="brand" href="#top"><svg class="logo" viewBox="0 0 48 46" aria-hidden="true"><path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"></path></svg><span>Kora</span></a><p>The open-source memory engine for AI agents. Graph-first, Kubernetes-native, and built to run on your infrastructure.</p></div>
+      <nav class="footer-links" aria-label="Footer navigation"><a href="https://github.com/kora/Kora" target="_blank" rel="noreferrer">GitHub</a><a href="#api">Docs</a><a href="https://github.com/kora/Kora/blob/main/CONTRIBUTING.md" target="_blank" rel="noreferrer">Contributing</a><a href="https://github.com/kora/Kora/security" target="_blank" rel="noreferrer">Security</a><a href="https://github.com/kora/Kora/blob/main/LICENSE" target="_blank" rel="noreferrer">Apache 2.0</a></nav>
     </div>
-    <div class="container footer-bottom"><span>github.com/context0/Context0</span><span>Memory substrate / Rev 01</span></div>
+    <div class="container footer-bottom"><span>github.com/kora/Kora</span><span>Memory substrate / Rev 01</span></div>
   </footer>
 
   <script>

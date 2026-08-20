@@ -32,7 +32,7 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
-    # Proxy API requests to the Context0 backend
+    # Proxy API requests to the Kora backend
     location /v1/ {
         proxy_pass http://${API_HOST}:${API_PORT};
         proxy_set_header Host $host;

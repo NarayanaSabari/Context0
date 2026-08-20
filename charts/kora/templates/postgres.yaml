@@ -1,0 +1,155 @@
+{{/*
+A tmpfs /dev/shm counts against the container's memory limit, so shmSize and
+resources.limits.memory come out of the same budget. Measured on a live pod:
+writing 100MB into /dev/shm moved cgroup memory.current by exactly 100Mi.
+
+Sizing them independently is easy to get wrong -- an earlier revision of this
+chart ran 256Mi of shm plus 320MB of shared_buffers inside a 1Gi limit and was
+OOM-killable at rest. A configuration where shm alone can exhaust the limit
+cannot work, so it is refused at render time rather than becoming a
+CrashLoopBackOff nobody can explain.
+
+The comparison is on bytes, so the units in each value do not have to match.
+*/}}
+{{- $shm := include "kora.bytes" .Values.postgres.shmSize | int64 }}
+{{- $memLimit := include "kora.bytes" .Values.postgres.resources.limits.memory | int64 }}
+{{- if ge $shm $memLimit }}
+{{- fail (printf "postgres.shmSize (%s) must be smaller than postgres.resources.limits.memory (%s): /dev/shm is tmpfs and counts against the same limit, so this pod would be OOM-killed by filling shared memory alone. Leave headroom for shared_buffers (%s) and work_mem (%s) on top." .Values.postgres.shmSize .Values.postgres.resources.limits.memory .Values.postgres.tuning.sharedBuffers .Values.postgres.tuning.workMem) }}
+{{- end }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-age
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: postgres-age
+spec:
+  serviceName: postgres-age
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-age
+  template:
+    metadata:
+      labels:
+        app: postgres-age
+    spec:
+      # No Kubernetes API access: this workload never calls it, so the
+      # token would only be a credential available to steal.
+      serviceAccountName: postgres-age-sa
+      automountServiceAccountToken: false
+      # Satisfies the Pod Security "restricted" profile. The image already
+      # contains a postgres user (uid 999); this makes the pod actually run as
+      # it rather than relying on the image default, which the admission
+      # controller cannot see. fsGroup gives that uid ownership of the mounted
+      # data volume, without which initdb fails on a fresh PVC.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres-age
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # Not readOnlyRootFilesystem: Postgres writes its socket to
+            # /var/run/postgresql and temp files outside the data volume.
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.existingSecret | default "postgres-age-secret" }}
+                  key: {{ .Values.postgres.existingSecretKey | default "password" }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+            # Kubernetes defaults /dev/shm to 64Mi, which PostgreSQL uses for
+            # parallel workers' shared memory. Building the pgvector HNSW index
+            # needs far more than that in one allocation: at 94k embeddings it
+            # asked for 131MB and failed with "could not resize shared memory
+            # segment ... No space left on device".
+            #
+            # That is not a theoretical limit. It makes a restored backup
+            # unusable: pg_restore skips the index, and the API rebuilds it on
+            # startup and treats the failure as fatal, so the deployment cannot
+            # come up on recovered data. The running database never hits it
+            # because its index grew a row at a time.
+            - name: dshm
+              mountPath: /dev/shm
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+          # PostgreSQL ships defaults sized for a shared workstation
+          # (shared_buffers=128MB, work_mem=4MB) and does not read the cgroup
+          # limit, so without these it leaves most of the pod's memory unused
+          # and re-reads from disk what it could have cached.
+          args:
+            - -c
+            - shared_buffers={{ .Values.postgres.tuning.sharedBuffers }}
+            - -c
+            - effective_cache_size={{ .Values.postgres.tuning.effectiveCacheSize }}
+            - -c
+            - work_mem={{ .Values.postgres.tuning.workMem }}
+            - -c
+            - maintenance_work_mem={{ .Values.postgres.tuning.maintenanceWorkMem }}
+            # AGE requires its shared library to be preloaded.
+            - -c
+            - shared_preload_libraries=age
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}]
+            periodSeconds: 3
+            # Generous: a first start initialises the data directory, and a
+            # restart after an unclean shutdown replays WAL before accepting
+            # connections. Liveness must not fire during either.
+            failureThreshold: 40
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}]
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}]
+            periodSeconds: 5
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.postgres.shmSize }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.postgres.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-age
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: postgres-age
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres
+  selector:
+    app: postgres-age

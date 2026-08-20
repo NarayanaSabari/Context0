@@ -24,7 +24,7 @@ import (
 
 func serverBinary(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "context0-server")
+	bin := filepath.Join(t.TempDir(), "kora-server")
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build server: %v\n%s", err, out)
@@ -72,9 +72,9 @@ func TestUnreachableDatabaseIsFatal(t *testing.T) {
 	bin := serverBinary(t)
 
 	out, code, _ := runServer(t, bin,
-		"CONTEXT0_DATABASE_URL=postgres://nobody@127.0.0.1:1/none?sslmode=disable",
-		fmt.Sprintf("CONTEXT0_GRPC_PORT=%d", freePort(t)),
-		fmt.Sprintf("CONTEXT0_HTTP_PORT=%d", freePort(t)),
+		"KORA_DATABASE_URL=postgres://nobody@127.0.0.1:1/none?sslmode=disable",
+		fmt.Sprintf("KORA_GRPC_PORT=%d", freePort(t)),
+		fmt.Sprintf("KORA_HTTP_PORT=%d", freePort(t)),
 	)
 
 	if code == 0 {
@@ -91,17 +91,17 @@ func TestUnreachableDatabaseIsFatal(t *testing.T) {
 // back to a working default, because the fallback would produce vectors of a
 // different distribution and silently degrade every search.
 func TestUnknownEmbeddingProviderIsFatal(t *testing.T) {
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+		t.Skip("KORA_TEST_DATABASE_URL not set")
 	}
 	bin := serverBinary(t)
 
 	out, code, _ := runServer(t, bin,
-		"CONTEXT0_DATABASE_URL="+dsn,
-		"CONTEXT0_EMBEDDING_PROVIDER=nonsense",
-		fmt.Sprintf("CONTEXT0_GRPC_PORT=%d", freePort(t)),
-		fmt.Sprintf("CONTEXT0_HTTP_PORT=%d", freePort(t)),
+		"KORA_DATABASE_URL="+dsn,
+		"KORA_EMBEDDING_PROVIDER=nonsense",
+		fmt.Sprintf("KORA_GRPC_PORT=%d", freePort(t)),
+		fmt.Sprintf("KORA_HTTP_PORT=%d", freePort(t)),
 	)
 
 	if code == 0 {
@@ -125,9 +125,9 @@ func TestUnknownEmbeddingProviderIsFatal(t *testing.T) {
 // conflict at all: the server started correctly and the test would have
 // reported that as a defect.
 func TestOccupiedGRPCPortIsFatal(t *testing.T) {
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+		t.Skip("KORA_TEST_DATABASE_URL not set")
 	}
 	bin := serverBinary(t)
 
@@ -140,9 +140,9 @@ func TestOccupiedGRPCPortIsFatal(t *testing.T) {
 	defer holder.Close()
 
 	out, code, _ := runServer(t, bin,
-		"CONTEXT0_DATABASE_URL="+dsn,
-		fmt.Sprintf("CONTEXT0_GRPC_PORT=%d", port),
-		fmt.Sprintf("CONTEXT0_HTTP_PORT=%d", freePort(t)),
+		"KORA_DATABASE_URL="+dsn,
+		fmt.Sprintf("KORA_GRPC_PORT=%d", port),
+		fmt.Sprintf("KORA_HTTP_PORT=%d", freePort(t)),
 	)
 
 	if code == 0 {
@@ -168,16 +168,16 @@ func TestInvalidConfigurationIsFatalBeforeAnyIO(t *testing.T) {
 	out, code, _ := runServer(t, bin,
 		// Unreachable on purpose: if validation ran after the connection, this
 		// is the error that would surface instead.
-		"CONTEXT0_DATABASE_URL=postgres://nobody@127.0.0.1:1/none?sslmode=disable",
-		"CONTEXT0_RATE_LIMIT_PER_MINUTE=6OOO",
-		fmt.Sprintf("CONTEXT0_GRPC_PORT=%d", freePort(t)),
-		fmt.Sprintf("CONTEXT0_HTTP_PORT=%d", freePort(t)),
+		"KORA_DATABASE_URL=postgres://nobody@127.0.0.1:1/none?sslmode=disable",
+		"KORA_RATE_LIMIT_PER_MINUTE=6OOO",
+		fmt.Sprintf("KORA_GRPC_PORT=%d", freePort(t)),
+		fmt.Sprintf("KORA_HTTP_PORT=%d", freePort(t)),
 	)
 
 	if code == 0 {
 		t.Fatalf("the server started with an unparseable rate limit: %s", out)
 	}
-	if !strings.Contains(out, "CONTEXT0_RATE_LIMIT_PER_MINUTE") {
+	if !strings.Contains(out, "KORA_RATE_LIMIT_PER_MINUTE") {
 		t.Errorf("the failure does not name the offending variable: %s", out)
 	}
 	if strings.Contains(out, "failed to connect to database") {
@@ -190,9 +190,9 @@ func TestInvalidConfigurationIsFatalBeforeAnyIO(t *testing.T) {
 // attributable to its configuration. The API key list is reported as a count,
 // never as values -- this line is written on every start.
 func TestStartupLogsTheEffectiveConfiguration(t *testing.T) {
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+		t.Skip("KORA_TEST_DATABASE_URL not set")
 	}
 	bin := serverBinary(t)
 
@@ -202,11 +202,11 @@ func TestStartupLogsTheEffectiveConfiguration(t *testing.T) {
 	grpcPort := freePort(t)
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(),
-		"CONTEXT0_DATABASE_URL="+dsn,
-		"CONTEXT0_API_KEYS="+secret,
-		"CONTEXT0_RATE_LIMIT_PER_MINUTE=4242",
-		fmt.Sprintf("CONTEXT0_GRPC_PORT=%d", grpcPort),
-		fmt.Sprintf("CONTEXT0_HTTP_PORT=%d", freePort(t)),
+		"KORA_DATABASE_URL="+dsn,
+		"KORA_API_KEYS="+secret,
+		"KORA_RATE_LIMIT_PER_MINUTE=4242",
+		fmt.Sprintf("KORA_GRPC_PORT=%d", grpcPort),
+		fmt.Sprintf("KORA_HTTP_PORT=%d", freePort(t)),
 	)
 	var buf strings.Builder
 	cmd.Stdout = &buf

@@ -1,6 +1,6 @@
 /**
  * @file api.ts
- * HTTP client functions for communicating with the Context0 Memory Graph API.
+ * HTTP client functions for communicating with the Kora Memory Graph API.
  * Handles API key management (from URL params or manual entry) and provides
  * typed fetch wrappers for health, memory query, and subgraph endpoints.
  */
@@ -71,7 +71,7 @@ function headers(): HeadersInit {
 }
 
 /**
- * Fetches the health/status of the Context0 API.
+ * Fetches the health/status of the Kora API.
  * @returns A promise resolving to the health response with node/edge counts and version.
  */
 export async function fetchHealth(): Promise<HealthResponse> {

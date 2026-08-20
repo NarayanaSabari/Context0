@@ -1,5 +1,5 @@
-// Package metrics defines and registers Prometheus metrics for the Context0
-// engine. All metric names are prefixed with "context0_" to avoid collisions.
+// Package metrics defines and registers Prometheus metrics for the Kora
+// engine. All metric names are prefixed with "kora_" to avoid collisions.
 // Metrics are exposed at the /metrics HTTP endpoint via promhttp.Handler.
 package metrics
 
@@ -35,7 +35,7 @@ var (
 	// by memory type (semantic, episodic, procedural).
 	MemoriesTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "context0_memories_total",
+			Name: "kora_memories_total",
 			Help: "Total number of memories stored, by type.",
 		},
 		[]string{"type"},
@@ -45,7 +45,7 @@ var (
 	// by relationship type (relates_to, supersedes, caused_by).
 	EdgesTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "context0_edges_total",
+			Name: "kora_edges_total",
 			Help: "Total number of edges created, by relationship.",
 		},
 		[]string{"relationship"},
@@ -54,7 +54,7 @@ var (
 	// QueryDuration observes the latency of query requests in seconds.
 	QueryDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
-			Name:    "context0_query_duration_seconds",
+			Name:    "kora_query_duration_seconds",
 			Help:    "Duration of query requests.",
 			Buckets: latencyBuckets,
 		},
@@ -63,7 +63,7 @@ var (
 	// StoreDuration observes the latency of store requests in seconds.
 	StoreDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
-			Name:    "context0_store_duration_seconds",
+			Name:    "kora_store_duration_seconds",
 			Help:    "Duration of store requests.",
 			Buckets: latencyBuckets,
 		},
@@ -80,7 +80,7 @@ var (
 	// this service breaking, and alerting on their sum catches neither well.
 	RequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "context0_requests_total",
+			Name: "kora_requests_total",
 			Help: "Total RPCs, by method and gRPC status code.",
 		},
 		[]string{"method", "code"},
@@ -90,7 +90,7 @@ var (
 	// that happened to be instrumented by hand.
 	RequestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "context0_request_duration_seconds",
+			Name:    "kora_request_duration_seconds",
 			Help:    "Duration of RPCs, by method.",
 			Buckets: latencyBuckets,
 		},
@@ -101,7 +101,7 @@ var (
 	// Custom buckets are tuned for the typical result set sizes (0-20).
 	QueryResultsCount = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
-			Name:    "context0_query_results_count",
+			Name:    "kora_query_results_count",
 			Help:    "Number of results returned per query.",
 			Buckets: []float64{0, 1, 2, 3, 5, 10, 20},
 		},
@@ -110,7 +110,7 @@ var (
 	// ActiveSessions tracks the number of currently open agent sessions.
 	ActiveSessions = prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "context0_active_sessions",
+			Name: "kora_active_sessions",
 			Help: "Number of currently active sessions.",
 		},
 	)
@@ -125,7 +125,7 @@ var (
 	// between a busy service and a stuck one.
 	PoolConnections = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "context0_pool_connections",
+			Name: "kora_pool_connections",
 			Help: "Database connection pool connections, by state.",
 		},
 		[]string{"state"},
@@ -138,7 +138,7 @@ var (
 	// outage, and a gauge sampled every 15s would miss it entirely.
 	PoolAcquireWait = prometheus.NewCounterFunc(
 		prometheus.CounterOpts{
-			Name: "context0_pool_acquire_wait_seconds_total",
+			Name: "kora_pool_acquire_wait_seconds_total",
 			Help: "Cumulative time spent waiting to acquire a pooled connection.",
 		},
 		func() float64 { return poolWaitSeconds() },
@@ -189,7 +189,7 @@ func SetPoolStatsSource(ctx context.Context, pool *pgxpool.Pool) {
 	}()
 }
 
-// Register registers all Context0 metrics with the default Prometheus
+// Register registers all Kora metrics with the default Prometheus
 // registry. It must be called exactly once during server startup; calling
 // it more than once will panic (prometheus.MustRegister behavior).
 func Register() {

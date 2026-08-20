@@ -96,7 +96,7 @@ jobs:
         run: |
           {
             echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
-            echo "CONTEXT0_API_KEYS=ctx0_$(openssl rand -hex 6)_$(openssl rand -hex 24)"
+            echo "KORA_API_KEYS=ctx0_$(openssl rand -hex 6)_$(openssl rand -hex 24)"
           } > .env
           # Exported for the test DSN below, which must match.
           grep POSTGRES_PASSWORD .env >> "$GITHUB_ENV"
@@ -105,7 +105,7 @@ jobs:
         run: |
           docker compose up -d postgres
           for _ in $(seq 1 60); do
-            if docker compose exec -T postgres pg_isready -U context0 >/dev/null 2>&1; then
+            if docker compose exec -T postgres pg_isready -U kora >/dev/null 2>&1; then
               echo "postgres ready"; exit 0
             fi
             sleep 2
@@ -114,7 +114,7 @@ jobs:
 
       - name: Run graph integration tests
         env:
-          CONTEXT0_TEST_DATABASE_URL: postgres://context0:${{ env.POSTGRES_PASSWORD }}@localhost:5432/context0?sslmode=disable
+          KORA_TEST_DATABASE_URL: postgres://kora:${{ env.POSTGRES_PASSWORD }}@localhost:5432/kora?sslmode=disable
         run: go test ./internal/graph/... -race -count=1 -v
 
       - name: Stop services
@@ -134,15 +134,15 @@ jobs:
 
       - name: Build Go binaries
         run: |
-          CGO_ENABLED=0 go build -o bin/context0-server ./cmd/server
-          CGO_ENABLED=0 go build -o bin/context0-consolidate ./cmd/consolidate
-          CGO_ENABLED=0 go build -o bin/context0 ./cmd/cli
+          CGO_ENABLED=0 go build -o bin/kora-server ./cmd/server
+          CGO_ENABLED=0 go build -o bin/kora-consolidate ./cmd/consolidate
+          CGO_ENABLED=0 go build -o bin/kora ./cmd/cli
 
       - name: Build API Docker image
-        run: docker build -t context0/context0:ci .
+        run: docker build -t kora/kora:ci .
 
       - name: Build Postgres+AGE+pgvector image
-        run: docker build -t context0/postgres-age-vector:ci ./docker/postgres-age-vector/
+        run: docker build -t kora/postgres-age-vector:ci ./docker/postgres-age-vector/
 
       - name: Build Web UI
         working-directory: web
@@ -152,28 +152,28 @@ jobs:
           pnpm build
 
       - name: Build Web Docker image
-        run: docker build -t context0/web:ci ./web/
+        run: docker build -t kora/web:ci ./web/
 
       - name: Helm lint
         run: |
           # Credentials must be supplied: the chart ships no default password or
           # API key, because a default in a public chart is a published
           # credential.
-          helm lint ./charts/context0 \
+          helm lint ./charts/kora \
             --set postgres.password=ci-render-only \
             --set auth.apiKeys=ctx0_ci_render_only
-          helm template context0 ./charts/context0 \
+          helm template kora ./charts/kora \
             --set postgres.password=ci-render-only \
             --set auth.apiKeys=ctx0_ci_render_only > /dev/null
 
           # The other supported path: bring your own Secrets, chart creates none.
-          helm template context0 ./charts/context0 \
+          helm template kora ./charts/kora \
             --set postgres.existingSecret=my-pg \
             --set auth.existingSecret=my-keys > /dev/null
 
           # And the guard itself must hold: a credential-less install has to
           # fail loudly rather than quietly shipping an empty password.
-          if helm template context0 ./charts/context0 > /dev/null 2>&1; then
+          if helm template kora ./charts/kora > /dev/null 2>&1; then
             echo "::error::chart rendered without credentials; the required-value guard is gone"
             exit 1
           fi
@@ -188,7 +188,7 @@ jobs:
           # of shared_buffers inside a 1Gi limit and was OOM-killable at rest.
           for combo in "8Gi:1Gi" "2Gi:2Gi" "1G:512M"; do
             shm="${combo%%:*}"; lim="${combo##*:}"
-            if helm template context0 ./charts/context0 "${creds[@]}" \
+            if helm template kora ./charts/kora "${creds[@]}" \
                  --set postgres.shmSize="$shm" \
                  --set postgres.resources.limits.memory="$lim" > /dev/null 2>&1; then
               echo "::error::chart accepted shmSize=$shm with limits.memory=$lim; that pod is OOM-killable by filling /dev/shm alone"
@@ -200,7 +200,7 @@ jobs:
           # guard above is just breaking the chart.
           for combo in "256Mi:2Gi" "512Mi:2Gi" "128Mi:512Mi" "256M:2G"; do
             shm="${combo%%:*}"; lim="${combo##*:}"
-            helm template context0 ./charts/context0 "${creds[@]}" \
+            helm template kora ./charts/kora "${creds[@]}" \
               --set postgres.shmSize="$shm" \
               --set postgres.resources.limits.memory="$lim" > /dev/null
           done
@@ -208,13 +208,13 @@ jobs:
           # A PodDisruptionBudget only makes sense above one replica: at
           # replicas=1 it would block every voluntary eviction, including node
           # drains.
-          if helm template context0 ./charts/context0 "${creds[@]}" --set api.replicas=1 \
+          if helm template kora ./charts/kora "${creds[@]}" --set api.replicas=1 \
                | grep -q "kind: PodDisruptionBudget"; then
             echo "::error::a PDB renders at replicas=1, which blocks node drains"
             exit 1
           fi
           for n in 2 3; do
-            helm template context0 ./charts/context0 "${creds[@]}" --set api.replicas=$n \
+            helm template kora ./charts/kora "${creds[@]}" --set api.replicas=$n \
               | grep -q "kind: PodDisruptionBudget" || {
                 echo "::error::no PodDisruptionBudget at replicas=$n"; exit 1; }
           done
@@ -222,14 +222,14 @@ jobs:
           # Tuning values have to actually reach the container. A renamed key
           # would leave the default in place silently, which is how a
           # performance setting stops being applied without anyone noticing.
-          helm template context0 ./charts/context0 "${creds[@]}" \
+          helm template kora ./charts/kora "${creds[@]}" \
             --set postgres.tuning.sharedBuffers=999MB \
             | grep -q -- "- shared_buffers=999MB" || {
               echo "::error::postgres.tuning.sharedBuffers does not reach the container"; exit 1; }
 
           # The consolidation job deletes memories, so its thresholds reaching
           # the CronJob is not cosmetic.
-          helm template context0 ./charts/context0 "${creds[@]}" \
+          helm template kora ./charts/kora "${creds[@]}" \
             --set consolidation.pruneAgeDays=77 \
             | grep -A1 "CONSOLIDATION_PRUNE_AGE_DAYS" | grep -q '"77"' || {
               echo "::error::consolidation.pruneAgeDays does not reach the CronJob"; exit 1; }
@@ -256,14 +256,14 @@ jobs:
       - name: Create kind cluster
         uses: helm/kind-action@v1
         with:
-          cluster_name: context0-e2e
+          cluster_name: kora-e2e
 
       - name: Build and load images
         run: |
-          docker build -t context0/context0:ci .
-          docker build -t context0/postgres-age-vector:ci ./docker/postgres-age-vector/
-          kind load docker-image context0/context0:ci --name context0-e2e
-          kind load docker-image context0/postgres-age-vector:ci --name context0-e2e
+          docker build -t kora/kora:ci .
+          docker build -t kora/postgres-age-vector:ci ./docker/postgres-age-vector/
+          kind load docker-image kora/kora:ci --name kora-e2e
+          kind load docker-image kora/postgres-age-vector:ci --name kora-e2e
 
       # Runs the install paths the README and Makefile document, from scratch,
       # rather than the bespoke one below. Removing the chart's default
@@ -273,9 +273,9 @@ jobs:
       - name: Verify documented install paths
         env:
           # CI tags images :ci; the script defaults to the local dev tags.
-          API_IMAGE_REPO: context0/context0
+          API_IMAGE_REPO: kora/kora
           API_IMAGE_TAG: ci
-          PG_IMAGE_REPO: context0/postgres-age-vector
+          PG_IMAGE_REPO: kora/postgres-age-vector
           PG_IMAGE_TAG: ci
         run: scripts/verify_install.sh
 
@@ -288,20 +288,20 @@ jobs:
           echo "E2E_PG_PASSWORD=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
           source "$GITHUB_ENV"
 
-          helm install context0 ./charts/context0 -n context0 --create-namespace \
+          helm install kora ./charts/kora -n kora --create-namespace \
             --set api.image.tag=ci \
-            --set api.image.repository=context0/context0 \
+            --set api.image.repository=kora/kora \
             --set postgres.image.tag=ci \
             --set web.enabled=false \
             --set postgres.password="$E2E_PG_PASSWORD" \
             --set auth.apiKeys="$E2E_API_KEY"
 
-          kubectl -n context0 wait --for=condition=ready pod -l app=postgres-age --timeout=120s
-          kubectl -n context0 wait --for=condition=ready pod -l app=context0-api --timeout=120s
+          kubectl -n kora wait --for=condition=ready pod -l app=postgres-age --timeout=120s
+          kubectl -n kora wait --for=condition=ready pod -l app=kora-api --timeout=120s
 
       - name: Port forward
         run: |
-          kubectl -n context0 port-forward svc/context0-api 8080:8080 &
+          kubectl -n kora port-forward svc/kora-api 8080:8080 &
           sleep 5
           curl -sf http://localhost:8080/v1/health
 
@@ -311,19 +311,19 @@ jobs:
       # is exactly the kind of check that looks like coverage and is not.
       - name: Seed data for performance measurement
         env:
-          CONTEXT0_API_KEY: ${{ env.E2E_API_KEY }}
+          KORA_API_KEY: ${{ env.E2E_API_KEY }}
         run: |
-          kubectl -n context0 port-forward svc/context0-api 8080:8080 &
+          kubectl -n kora port-forward svc/kora-api 8080:8080 &
           sleep 5
           python3 scripts/soak.py --url http://localhost:8080 \
-            --key "$CONTEXT0_API_KEY" --workers 4 --minutes 2 || true
+            --key "$KORA_API_KEY" --workers 4 --minutes 2 || true
 
       # Structural guarantees (index capability, rate limit, buckets, pool
       # metrics) plus the latency thresholds, which enforce once the seeding
       # above has put enough rows in the database.
       - name: Verify performance invariants
         env:
-          CONTEXT0_API_KEY: ${{ env.E2E_API_KEY }}
+          KORA_API_KEY: ${{ env.E2E_API_KEY }}
           # The seed run is bounded by CI time, so it will not reach the volume
           # a real deployment has. Lowered to match what two minutes produces,
           # while still being far more than "a handful of rows".
@@ -336,12 +336,12 @@ jobs:
       # view each call already failed. These run against the live engine.
       - name: Run CLI tests against the live engine
         env:
-          CONTEXT0_CLI_ENDPOINT: localhost:50051
-          CONTEXT0_API_KEY: ${{ env.E2E_API_KEY }}
+          KORA_CLI_ENDPOINT: localhost:50051
+          KORA_API_KEY: ${{ env.E2E_API_KEY }}
         run: |
           # The CLI speaks gRPC, and the other steps only forward the HTTP
           # port, so this needs its own forward.
-          kubectl -n context0 port-forward svc/context0-api 50051:50051 &
+          kubectl -n kora port-forward svc/kora-api 50051:50051 &
           sleep 5
           go test ./cmd/cli/ -run Live -count=1 -v
 
@@ -351,12 +351,12 @@ jobs:
       # nothing to catch it.
       - name: Run Python SDK E2E tests
         env:
-          CONTEXT0_ENDPOINT: localhost:8080
-          CONTEXT0_API_KEY: ${{ env.E2E_API_KEY }}
+          KORA_ENDPOINT: localhost:8080
+          KORA_API_KEY: ${{ env.E2E_API_KEY }}
         run: python3 sdk/python/tests/test_e2e.py
 
       - name: Run E2E tests
         env:
-          CONTEXT0_E2E_HTTP: http://localhost:8080
-          CONTEXT0_E2E_API_KEY: ${{ env.E2E_API_KEY }}
+          KORA_E2E_HTTP: http://localhost:8080
+          KORA_E2E_API_KEY: ${{ env.E2E_API_KEY }}
         run: go test ./test/e2e/... -v -tags=e2e -count=1 -timeout=120s

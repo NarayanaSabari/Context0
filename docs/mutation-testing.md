@@ -33,7 +33,7 @@ scripts/mutate.py internal/service   # one package
 scripts/mutate.py --list             # the mutation operators
 ```
 
-Packages with database-backed tests need `CONTEXT0_TEST_DATABASE_URL`. Without
+Packages with database-backed tests need `KORA_TEST_DATABASE_URL`. Without
 it those tests skip, and a skipped test kills no mutants -- `internal/service`
 currently reports 12 of 24 killed with no database and 24 of 24 with one. The script
 skips any package whose tests are already failing, since a red suite says
@@ -64,7 +64,7 @@ confirmed to fail against the unfixed code:
 
 | Defect | Consequence |
 |---|---|
-| Ending a session twice succeeded | `context0_active_sessions` reached -2 on the live API; anything alerting on it was reading an impossible number |
+| Ending a session twice succeeded | `kora_active_sessions` reached -2 on the live API; anything alerting on it was reading an impossible number |
 | An elaborated fact was reported as a contradiction | "The cache uses Redis for sessions" superseded "The cache uses Redis" at 0.85 confidence, retiring a fact it only expanded on |
 | Half of genuine negation contradictions were missed | The negation's own words counted against Jaccard similarity, so the clearest contradictions scored lowest and both facts stayed live |
 | The Google API key was logged | It travels as a query parameter, and Go's transport errors embed the URL, which `StoreMemory` logs at Error on every embedding failure |

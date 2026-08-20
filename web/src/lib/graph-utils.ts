@@ -1,6 +1,6 @@
 /**
  * @file graph-utils.ts
- * Utility functions for transforming Context0 memory data into React Flow
+ * Utility functions for transforming Kora memory data into React Flow
  * graph elements (nodes and edges). Handles layout positioning, color theming
  * by memory type, and edge styling by relationship type.
  */
@@ -107,7 +107,7 @@ function relEdge(id: string, source: string, target: string, rel: string, weight
 }
 
 /**
- * Converts Context0 graph edges into React Flow edge objects with
+ * Converts Kora graph edges into React Flow edge objects with
  * relationship-based styling (color, width, animation).
  *
  * @param edges - The raw edges from the API.

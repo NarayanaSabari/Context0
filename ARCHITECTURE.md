@@ -1,15 +1,15 @@
-# Context0 — Architecture
+# Kora — Architecture
 
-Detailed architecture diagrams for the Context0 memory engine.
+Detailed architecture diagrams for the Kora memory engine.
 
 ---
 
 ## 1. System Overview — The Big Picture
 
-How Context0 fits into an AI agent ecosystem.
+How Kora fits into an AI agent ecosystem.
 
 > **Partly aspirational.** The engine, PostgreSQL + AGE, the consolidation
-> CronJob, and the Prometheus `/metrics` endpoint all ship today. The Context0
+> CronJob, and the Prometheus `/metrics` endpoint all ship today. The Kora
 > Operator, the agent-pod sidecar cache, and the Prometheus ServiceMonitor in
 > the diagram below do not exist yet — see §7 and §9.
 
@@ -41,7 +41,7 @@ How Context0 fits into an AI agent ecosystem.
 │                             │                                                │
 │    ┌────────────┐     ┌─────▼──────────────────────────────────────────┐     │
 │    │ Agent Pod  │     │                                                │     │
-│    │ (in-cluster│────▶│             CONTEXT0 ENGINE                    │     │
+│    │ (in-cluster│────▶│             KORA ENGINE                    │     │
 │    │  via gRPC) │     │                                                │     │
 │    └────────────┘     │   ┌─────────┐  ┌──────────┐  ┌────────────┐    │     │
 │                       │   │  API    │  │  Query   │  │  Ingest    │    │     │
@@ -59,7 +59,7 @@ How Context0 fits into an AI agent ecosystem.
 │                       └────────────────────────────────────────────────┘     │
 │                                                                              │
 │    ┌──────────────────┐    ┌────────────────┐    ┌─────────────────┐         │
-│    │ Context0 Operator│    │  Consolidation │    │  Prometheus     │         │
+│    │ Kora Operator│    │  Consolidation │    │  Prometheus     │         │
 │    │ (manages CRDs,   │    │  CronJob       │    │  ServiceMonitor │         │
 │    │  lifecycle)      │    │  (sleep cycle) │    │  + Grafana      │         │
 │    └──────────────────┘    └────────────────┘    └─────────────────┘         │
@@ -75,7 +75,7 @@ Every component, what it does, and how they connect.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                        CONTEXT0 ENGINE                                   │
+│                        KORA ENGINE                                   │
 │                                                                          │
 │  ┌────────────────────────────────────────────────────────────────────┐  │
 │  │                      API LAYER                                     │  │
@@ -545,16 +545,16 @@ Background process that keeps the memory graph clean and efficient.
 
 > **Status: design sketch, not implemented.**
 > No CRDs and no operator exist in this repo today.
-> Deployment is via the Helm chart in `charts/context0/`.
+> Deployment is via the Helm chart in `charts/kora/`.
 > Everything below describes intended future shape, not current behaviour.
 
-How Context0 is managed as Kubernetes-native resources.
+How Kora is managed as Kubernetes-native resources.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                   CUSTOM RESOURCE DEFINITIONS                            │
 │                                                                          │
-│  apiVersion: context0.io/v1alpha1                                        │
+│  apiVersion: kora.io/v1alpha1                                        │
 │                                                                          │
 │  ┌───────────────────────────────────────────────────────────────────┐  │
 │  │  Kind: MemoryStore                                                 │  │
@@ -634,7 +634,7 @@ How Context0 is managed as Kubernetes-native resources.
 
 
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                   CONTEXT0 OPERATOR — Reconciliation Loop                │
+│                   KORA OPERATOR — Reconciliation Loop                │
 │                                                                          │
 │      ┌──────────────┐                                                    │
 │      │  Watch CRDs  │◀─────────────────────────────────────┐            │
@@ -738,9 +738,9 @@ How multiple agents share and isolate memory within the graph.
 │                                                                           │
 │  ┌─── K8s Cluster ─────────────────────────────────────────────────────┐ │
 │  │                                                                      │ │
-│  │  Namespace: context0-system                                          │ │
+│  │  Namespace: kora-system                                          │ │
 │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │ │
-│  │  │ context0-operator│  │ context0-api-0   │  │ context0-api-1   │  │ │
+│  │  │ kora-operator│  │ kora-api-0   │  │ kora-api-1   │  │ │
 │  │  │ (Deployment 1/1) │  │ (Deployment 2/2) │  │ (HPA: 2-10)     │  │ │
 │  │  │                  │  │                  │  │                  │  │ │
 │  │  │ Watches CRDs,    │  │ gRPC + REST      │  │ gRPC + REST      │  │ │
@@ -785,7 +785,7 @@ How multiple agents share and isolate memory within the graph.
 │  │  │ │ agent        │ │  │ │ agent        │ │  │  agent           │  │ │
 │  │  │ │ container    │ │  │ │ container    │ │  │  (no sidecar,    │  │ │
 │  │  │ ├──────────────┤ │  │ ├──────────────┤ │  │   uses ClusterIP │  │ │
-│  │  │ │ context0     │ │  │ │ context0     │ │  │   service        │  │ │
+│  │  │ │ kora     │ │  │ │ kora     │ │  │   service        │  │ │
 │  │  │ │ sidecar      │ │  │ │ sidecar      │ │  │   directly)      │  │ │
 │  │  │ │ (local cache)│ │  │ │ (local cache)│ │  │                  │  │ │
 │  │  │ └──────────────┘ │  │ └──────────────┘ │  │                  │  │ │
@@ -794,7 +794,7 @@ How multiple agents share and isolate memory within the graph.
 │  └──────────────────────────────────────────────────────────────────────┘ │
 │                                                                           │
 │  ┌─── External Services ─────────────────────────────────────────────┐   │
-│  │  • S3/MinIO: context0-backups (volume snapshots, graph exports)     │   │
+│  │  • S3/MinIO: kora-backups (volume snapshots, graph exports)     │   │
 │  │  • LLM API: Anthropic or self-hosted Ollama (for consolidation)    │   │
 │  │  • Embedding: self-hosted via Ollama or sentence-transformers      │   │
 │  └────────────────────────────────────────────────────────────────────┘   │
@@ -811,8 +811,8 @@ How multiple agents share and isolate memory within the graph.
 │                     AGENT SDK (any language)                              │
 │                                                                          │
 │  // Initialize                                                           │
-│  client = Context0Client(                                                │
-│      endpoint = "context0.context0-system.svc.cluster.local:50051"       │
+│  client = KoraClient(                                                │
+│      endpoint = "kora.kora-system.svc.cluster.local:50051"       │
 │      project  = "backend-api"                                            │
 │      agent_id = "claude-code-01"                                         │
 │  )                                                                       │
@@ -928,6 +928,6 @@ How multiple agents share and isolate memory within the graph.
                     │   decay → prune                  │
                     └──────────────────────────────────┘
 
-      All managed by: CONTEXT0 OPERATOR (watches CRDs, reconciles state)
+      All managed by: KORA OPERATOR (watches CRDs, reconciles state)
       All observed by: OTEL + PROMETHEUS + GRAFANA
 ```

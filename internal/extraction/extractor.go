@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/context0/context0/pkg/model"
+	"github.com/NarayanaSabari/Kora/pkg/model"
 	"github.com/google/uuid"
 )
 

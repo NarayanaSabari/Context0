@@ -1,9 +1,9 @@
-// Package e2e contains end-to-end tests for Context0.
-// These tests require a running Context0 server with PostgreSQL + AGE.
+// Package e2e contains end-to-end tests for Kora.
+// These tests require a running Kora server with PostgreSQL + AGE.
 //
 // Run with: go test ./test/e2e/... -v -tags=e2e
 //
-// Set CONTEXT0_E2E_ENDPOINT and CONTEXT0_E2E_HTTP to override defaults.
+// Set KORA_E2E_ENDPOINT and KORA_E2E_HTTP to override defaults.
 //
 //go:build e2e
 
@@ -30,19 +30,19 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	httpBase = cmp.Or(os.Getenv("CONTEXT0_E2E_HTTP"), "http://localhost:8080")
+	httpBase = cmp.Or(os.Getenv("KORA_E2E_HTTP"), "http://localhost:8080")
 	// No default key. The chart ships none, so a fallback here would only ever
 	// paper over a misconfigured run with a confusing 401 instead of saying
 	// what is actually missing.
-	apiKey = os.Getenv("CONTEXT0_E2E_API_KEY")
+	apiKey = os.Getenv("KORA_E2E_API_KEY")
 	if apiKey == "" {
-		fmt.Fprintln(os.Stderr, "CONTEXT0_E2E_API_KEY is required: generate one with `context0 keys generate` and deploy with it")
+		fmt.Fprintln(os.Stderr, "KORA_E2E_API_KEY is required: generate one with `kora keys generate` and deploy with it")
 		os.Exit(1)
 	}
 
 	// Wait for server to be ready.
 	if !waitForHealth(httpBase, 30*time.Second) {
-		fmt.Fprintf(os.Stderr, "context0 server not ready at %s\n", httpBase)
+		fmt.Fprintf(os.Stderr, "kora server not ready at %s\n", httpBase)
 		os.Exit(1)
 	}
 

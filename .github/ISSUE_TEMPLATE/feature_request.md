@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest a new feature for Context0
+about: Suggest a new feature for Kora
 title: "[Feature] "
 labels: enhancement
 ---

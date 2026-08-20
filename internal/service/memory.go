@@ -1,4 +1,4 @@
-// Package service implements the gRPC service layer for Context0, the memory graph
+// Package service implements the gRPC service layer for Kora, the memory graph
 // system. It orchestrates the core memory lifecycle: Store, Query, Extract, and
 // GetProfile. Each operation coordinates between the graph repository (for
 // persistent storage and traversal), the embedding layer (for vector search), and
@@ -21,18 +21,18 @@ import (
 
 	"context"
 	"fmt"
-	"github.com/context0/context0/internal/logging"
+	"github.com/NarayanaSabari/Kora/internal/logging"
 	"sort"
 	"strings"
 	"time"
 
-	pb "github.com/context0/context0/api/gen/context0/v1"
-	"github.com/context0/context0/internal/embedding"
-	"github.com/context0/context0/internal/extraction"
-	"github.com/context0/context0/internal/graph"
-	"github.com/context0/context0/internal/metrics"
-	"github.com/context0/context0/internal/ranking"
-	"github.com/context0/context0/pkg/model"
+	pb "github.com/NarayanaSabari/Kora/api/gen/kora/v1"
+	"github.com/NarayanaSabari/Kora/internal/embedding"
+	"github.com/NarayanaSabari/Kora/internal/extraction"
+	"github.com/NarayanaSabari/Kora/internal/graph"
+	"github.com/NarayanaSabari/Kora/internal/metrics"
+	"github.com/NarayanaSabari/Kora/internal/ranking"
+	"github.com/NarayanaSabari/Kora/pkg/model"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc/codes"
@@ -40,11 +40,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// MemoryService implements the Context0 gRPC service. It holds a graph repository
+// MemoryService implements the Kora gRPC service. It holds a graph repository
 // for persistent memory storage and traversal, and an optional embedder for
 // generating vector representations used in hybrid search.
 type MemoryService struct {
-	pb.UnimplementedContext0Server
+	pb.UnimplementedKoraServer
 	repo     *graph.AGERepository
 	embedder embedding.Embedder
 }

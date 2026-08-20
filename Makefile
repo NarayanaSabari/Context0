@@ -1,12 +1,12 @@
 .PHONY: build test test-integration lint clean docker-build proto-gen run kind-up kind-down deploy
 
 # Variables
-BINARY_SERVER = bin/context0-server
-BINARY_CONSOLIDATE = bin/context0-consolidate
-BINARY_CLI = bin/context0
-DOCKER_IMAGE = context0/context0
+BINARY_SERVER = bin/kora-server
+BINARY_CONSOLIDATE = bin/kora-consolidate
+BINARY_CLI = bin/kora
+DOCKER_IMAGE = kora/kora
 DOCKER_TAG = dev
-KIND_CLUSTER = context0-dev
+KIND_CLUSTER = kora-dev
 
 # Build
 build:
@@ -24,8 +24,8 @@ test:
 # hermetic.
 test-integration:
 	docker compose up -d postgres
-	@until docker compose exec -T postgres pg_isready -U context0 >/dev/null 2>&1; do sleep 1; done
-	CONTEXT0_TEST_DATABASE_URL="postgres://context0:context0@localhost:5432/context0?sslmode=disable" \
+	@until docker compose exec -T postgres pg_isready -U kora >/dev/null 2>&1; do sleep 1; done
+	KORA_TEST_DATABASE_URL="postgres://kora:kora@localhost:5432/kora?sslmode=disable" \
 		go test ./internal/graph/... -count=1 -race -v
 
 test-coverage:
@@ -38,15 +38,15 @@ lint:
 
 # Proto generation
 proto-gen:
-	@mkdir -p api/gen/context0/v1
+	@mkdir -p api/gen/kora/v1
 	PATH="$(HOME)/go/bin:$(PATH)" protoc \
 		--go_out=api/gen --go_opt=paths=source_relative \
 		--go-grpc_out=api/gen --go-grpc_opt=paths=source_relative \
 		--grpc-gateway_out=api/gen --grpc-gateway_opt=paths=source_relative \
 		-I api/proto \
-		api/proto/context0/v1/memory.proto \
-		api/proto/context0/v1/session.proto \
-		api/proto/context0/v1/health.proto
+		api/proto/kora/v1/memory.proto \
+		api/proto/kora/v1/session.proto \
+		api/proto/kora/v1/health.proto
 
 # Docker
 docker-build:
@@ -91,14 +91,14 @@ dev-credentials: $(DEV_CREDS)
 # Deploy to kind cluster
 deploy: kind-load $(DEV_CREDS)
 	@. ./$(DEV_CREDS) && \
-	helm upgrade --install context0 ./charts/context0 -n context0 --create-namespace \
+	helm upgrade --install kora ./charts/kora -n kora --create-namespace \
 	  --set postgres.password="$$DEV_PG_PASSWORD" \
 	  --set auth.apiKeys="$$DEV_API_KEY"
-	@echo "Context0 deployed to kind cluster"
+	@echo "Kora deployed to kind cluster"
 	@echo "API key: $$(. ./$(DEV_CREDS) && echo $$DEV_API_KEY)"
 
 undeploy:
-	helm uninstall context0 -n context0
+	helm uninstall kora -n kora
 
 # Clean
 clean:

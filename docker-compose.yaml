@@ -1,4 +1,4 @@
-# Context0 — Local Development with Docker Compose
+# Kora — Local Development with Docker Compose
 #
 # Start everything:   docker compose up
 # Start in background: docker compose up -d
@@ -7,7 +7,7 @@
 #
 # Services:
 #   - postgres:  PostgreSQL 18 + Apache AGE + pgvector (port 5432)
-#   - api:       Context0 gRPC + REST API (ports 50051, 8080)
+#   - api:       Kora gRPC + REST API (ports 50051, 8080)
 #   - web:       React web UI (port 3000)
 #
 # Access:
@@ -20,53 +20,53 @@ services:
   postgres:
     build:
       context: ./docker/postgres-age-vector
-    container_name: context0-postgres
+    container_name: kora-postgres
     environment:
-      POSTGRES_DB: context0
-      POSTGRES_USER: context0
+      POSTGRES_DB: kora
+      POSTGRES_USER: kora
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U context0"]
+      test: ["CMD-SHELL", "pg_isready -U kora"]
       interval: 5s
       timeout: 3s
       retries: 10
     restart: unless-stopped
 
-  # ── Context0 API Server ─────────────────────────────────
+  # ── Kora API Server ─────────────────────────────────
   api:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: context0-api
+    container_name: kora-api
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      CONTEXT0_DATABASE_URL: "postgres://context0:${POSTGRES_PASSWORD}@postgres:5432/context0?sslmode=disable"
-      CONTEXT0_GRPC_PORT: "50051"
-      CONTEXT0_HTTP_PORT: "8080"
+      KORA_DATABASE_URL: "postgres://kora:${POSTGRES_PASSWORD}@postgres:5432/kora?sslmode=disable"
+      KORA_GRPC_PORT: "50051"
+      KORA_HTTP_PORT: "8080"
       # No default key. `ctx0_dev_key_1` used to live here, and the chart
       # shipped the same value -- a credential published in a public repo is a
       # credential every unchanged install shares. Removed from the chart in
       # a83af5a; this file was missed.
       #
       # Generate one and put it in .env (gitignored) beside this file:
-      #   echo "CONTEXT0_API_KEYS=$(go run ./cmd/cli keys generate)" >> .env
+      #   echo "KORA_API_KEYS=$(go run ./cmd/cli keys generate)" >> .env
       #   echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> .env
-      CONTEXT0_API_KEYS: "${CONTEXT0_API_KEYS:?set CONTEXT0_API_KEYS in .env - see the comment above}"
+      KORA_API_KEYS: "${KORA_API_KEYS:?set KORA_API_KEYS in .env - see the comment above}"
       # Local development: generous so benchmarks and the e2e suite are not
       # throttled. The shipped default is 6000/min (100/s), sized against a
       # ~4ms store; see internal/auth for the measurements.
-      CONTEXT0_RATE_LIMIT_PER_MINUTE: "100000"
-      CONTEXT0_EMBEDDING_PROVIDER: "bag-of-words"
+      KORA_RATE_LIMIT_PER_MINUTE: "100000"
+      KORA_EMBEDDING_PROVIDER: "bag-of-words"
       # To use Ollama (if running on host):
-      # CONTEXT0_EMBEDDING_PROVIDER: ollama
-      # CONTEXT0_EMBEDDING_BASE_URL: http://host.docker.internal:11434
-      # CONTEXT0_EMBEDDING_MODEL: nomic-embed-text
+      # KORA_EMBEDDING_PROVIDER: ollama
+      # KORA_EMBEDDING_BASE_URL: http://host.docker.internal:11434
+      # KORA_EMBEDDING_MODEL: nomic-embed-text
     ports:
       # Host ports are overridable: a kind cluster or another local service may
       # already hold 8080, and a hardcoded mapping turns that into a confusing
@@ -86,7 +86,7 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
-    container_name: context0-web
+    container_name: kora-web
     depends_on:
       api:
         condition: service_healthy
@@ -104,13 +104,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: context0-consolidation
-    entrypoint: ["context0-consolidate"]
+    container_name: kora-consolidation
+    entrypoint: ["kora-consolidate"]
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      CONTEXT0_DATABASE_URL: "postgres://context0:${POSTGRES_PASSWORD}@postgres:5432/context0?sslmode=disable"
+      KORA_DATABASE_URL: "postgres://kora:${POSTGRES_PASSWORD}@postgres:5432/kora?sslmode=disable"
       CONSOLIDATION_DECAY_HALF_LIFE_DAYS: "30"
       CONSOLIDATION_STALE_THRESHOLD: "0.1"
       CONSOLIDATION_PRUNE_AGE_DAYS: "30"

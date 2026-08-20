@@ -24,7 +24,7 @@ import (
 // cliBinary builds the CLI once per test binary.
 func cliBinary(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "context0")
+	bin := filepath.Join(t.TempDir(), "kora")
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build cli: %v\n%s", err, out)
@@ -39,8 +39,8 @@ func run(t *testing.T, bin string, env []string, args ...string) (stdout, stderr
 	t.Helper()
 	cmd := exec.Command(bin, args...)
 	cmd.Env = append(os.Environ(),
-		"CONTEXT0_ENDPOINT=127.0.0.1:1", // nothing listens on port 1
-		"CONTEXT0_PROJECT=cli-test",
+		"KORA_ENDPOINT=127.0.0.1:1", // nothing listens on port 1
+		"KORA_PROJECT=cli-test",
 	)
 	cmd.Env = append(cmd.Env, env...)
 
@@ -151,11 +151,11 @@ func TestMissingArgumentsExitNonZero(t *testing.T) {
 	for _, args := range cases {
 		_, stderr, code := run(t, bin, nil, args...)
 		if code == 0 {
-			t.Errorf("`context0 %s` exited 0 with missing or invalid arguments",
+			t.Errorf("`kora %s` exited 0 with missing or invalid arguments",
 				strings.Join(args, " "))
 		}
 		if stderr == "" {
-			t.Errorf("`context0 %s` failed silently on stderr",
+			t.Errorf("`kora %s` failed silently on stderr",
 				strings.Join(args, " "))
 		}
 	}
@@ -188,13 +188,13 @@ func TestUnreachableEngineIsReported(t *testing.T) {
 		{"query", "anything"},
 		{"store", "anything"},
 	} {
-		_, stderr, code := run(t, bin, []string{"CONTEXT0_API_KEY=some-key"}, args...)
+		_, stderr, code := run(t, bin, []string{"KORA_API_KEY=some-key"}, args...)
 		if code == 0 {
-			t.Errorf("`context0 %s` exited 0 against an unreachable engine",
+			t.Errorf("`kora %s` exited 0 against an unreachable engine",
 				strings.Join(args, " "))
 		}
 		if stderr == "" {
-			t.Errorf("`context0 %s` reported nothing on stderr", strings.Join(args, " "))
+			t.Errorf("`kora %s` reported nothing on stderr", strings.Join(args, " "))
 		}
 	}
 }
@@ -204,16 +204,16 @@ func TestUnreachableEngineIsReported(t *testing.T) {
 // mutation testing forced every RPC error branch to fire and the suite did not
 // notice, because from its view every call already failed.
 //
-// These run against a real engine. CONTEXT0_CLI_ENDPOINT is separate from the
+// These run against a real engine. KORA_CLI_ENDPOINT is separate from the
 // unreachable default so the two groups cannot be confused, and the tests skip
 // when it is absent rather than silently proving nothing.
 
 func liveEndpoint(t *testing.T) (endpoint, key string) {
 	t.Helper()
-	endpoint = os.Getenv("CONTEXT0_CLI_ENDPOINT")
-	key = os.Getenv("CONTEXT0_API_KEY")
+	endpoint = os.Getenv("KORA_CLI_ENDPOINT")
+	key = os.Getenv("KORA_API_KEY")
 	if endpoint == "" || key == "" {
-		t.Skip("CONTEXT0_CLI_ENDPOINT and CONTEXT0_API_KEY not set")
+		t.Skip("KORA_CLI_ENDPOINT and KORA_API_KEY not set")
 	}
 	return endpoint, key
 }
@@ -225,9 +225,9 @@ func runLive(t *testing.T, bin, project string, args ...string) (stdout string, 
 
 	cmd := exec.Command(bin, args...)
 	cmd.Env = append(os.Environ(),
-		"CONTEXT0_ENDPOINT="+endpoint,
-		"CONTEXT0_API_KEY="+key,
-		"CONTEXT0_PROJECT="+project,
+		"KORA_ENDPOINT="+endpoint,
+		"KORA_API_KEY="+key,
+		"KORA_PROJECT="+project,
 	)
 	var out, errBuf strings.Builder
 	cmd.Stdout = &out
@@ -316,7 +316,7 @@ func TestLiveRoundTrip(t *testing.T) {
 	}
 }
 
-// TestLiveStatsReportsRealNumbers: `context0 stats` is how an operator checks a
+// TestLiveStatsReportsRealNumbers: `kora stats` is how an operator checks a
 // deployment, so it has to report the engine's actual state rather than the
 // zeros an unauthenticated caller receives.
 func TestLiveStatsReportsRealNumbers(t *testing.T) {

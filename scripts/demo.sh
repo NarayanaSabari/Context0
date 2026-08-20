@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Context0 Demo Script
-# Spins up a kind cluster, deploys Context0 + PostgreSQL/AGE, and runs E2E tests.
+# Kora Demo Script
+# Spins up a kind cluster, deploys Kora + PostgreSQL/AGE, and runs E2E tests.
 
-CLUSTER_NAME="context0-dev"
-NAMESPACE="context0"
-IMAGE="context0/context0:dev"
+CLUSTER_NAME="kora-dev"
+NAMESPACE="kora"
+IMAGE="kora/kora:dev"
 
-echo "=== Context0 Demo ==="
+echo "=== Kora Demo ==="
 echo ""
 
 # --- Prerequisites ---
@@ -43,16 +43,16 @@ kubectl apply -f deploy/postgres-age.yaml
 echo "  Waiting for PostgreSQL to be ready..."
 kubectl -n "$NAMESPACE" wait --for=condition=ready pod -l app=postgres-age --timeout=120s
 
-# --- Step 5: Deploy Context0 API ---
-echo "[5/7] Deploying Context0 API..."
-kubectl apply -f deploy/context0.yaml
+# --- Step 5: Deploy Kora API ---
+echo "[5/7] Deploying Kora API..."
+kubectl apply -f deploy/kora.yaml
 
-echo "  Waiting for Context0 API to be ready..."
-kubectl -n "$NAMESPACE" wait --for=condition=ready pod -l app=context0-api --timeout=120s
+echo "  Waiting for Kora API to be ready..."
+kubectl -n "$NAMESPACE" wait --for=condition=ready pod -l app=kora-api --timeout=120s
 
 # --- Step 6: Port-forward for local testing ---
 echo "[6/7] Setting up port-forward..."
-kubectl -n "$NAMESPACE" port-forward svc/context0-api 8080:8080 50051:50051 &
+kubectl -n "$NAMESPACE" port-forward svc/kora-api 8080:8080 50051:50051 &
 PF_PID=$!
 sleep 3
 
@@ -65,14 +65,14 @@ echo "  $HEALTH"
 echo "[7/7] Running E2E tests..."
 echo ""
 
-CONTEXT0_E2E_HTTP="http://localhost:8080" \
-CONTEXT0_E2E_API_KEY="ctx0_dev_key_1" \
+KORA_E2E_HTTP="http://localhost:8080" \
+KORA_E2E_API_KEY="ctx0_dev_key_1" \
 go test ./test/e2e/... -v -tags=e2e -count=1
 
 echo ""
 echo "=== Demo Complete ==="
 echo ""
-echo "Context0 is running. Try:"
+echo "Kora is running. Try:"
 echo ""
 echo "  # Store a memory"
 echo "  curl -X POST http://localhost:8080/v1/memories \\"

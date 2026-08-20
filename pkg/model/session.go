@@ -1,4 +1,4 @@
-// Package model defines the core domain types for the Context0 memory engine,
+// Package model defines the core domain types for the Kora memory engine,
 // including memories, edges, sessions, and projects.
 package model
 
@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Session represents an agent interaction session in the Context0 system.
+// Session represents an agent interaction session in the Kora system.
 // Sessions group related memories created during a single agent conversation,
 // enabling temporal context and conversation-scoped retrieval.
 type Session struct {

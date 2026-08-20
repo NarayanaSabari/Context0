@@ -1,5 +1,5 @@
-// CLI is the command-line interface for the Context0 memory engine. It
-// communicates with a running Context0 server over gRPC.
+// CLI is the command-line interface for the Kora memory engine. It
+// communicates with a running Kora server over gRPC.
 //
 // # Commands
 //
@@ -14,9 +14,9 @@
 //
 // # Environment Variables
 //
-//	CONTEXT0_ENDPOINT  gRPC server address (default: localhost:50051)
-//	CONTEXT0_API_KEY   API key sent as gRPC metadata for authentication
-//	CONTEXT0_PROJECT   Project ID used by store/query/session commands (default: default)
+//	KORA_ENDPOINT  gRPC server address (default: localhost:50051)
+//	KORA_API_KEY   API key sent as gRPC metadata for authentication
+//	KORA_PROJECT   Project ID used by store/query/session commands (default: default)
 package main
 
 import (
@@ -30,8 +30,8 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/context0/context0/api/gen/context0/v1"
-	"github.com/context0/context0/internal/auth"
+	pb "github.com/NarayanaSabari/Kora/api/gen/kora/v1"
+	"github.com/NarayanaSabari/Kora/internal/auth"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
@@ -52,9 +52,9 @@ func main() {
 	}
 
 	// Read connection settings from environment, falling back to defaults.
-	endpoint := cmp.Or(os.Getenv("CONTEXT0_ENDPOINT"), "localhost:50051")
-	apiKey := os.Getenv("CONTEXT0_API_KEY")
-	projectID := cmp.Or(os.Getenv("CONTEXT0_PROJECT"), "default")
+	endpoint := cmp.Or(os.Getenv("KORA_ENDPOINT"), "localhost:50051")
+	apiKey := os.Getenv("KORA_API_KEY")
+	projectID := cmp.Or(os.Getenv("KORA_PROJECT"), "default")
 
 	// Establish an insecure gRPC connection to the server.
 	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -64,7 +64,7 @@ func main() {
 	defer conn.Close()
 
 	// Create typed service clients for each gRPC service.
-	client := pb.NewContext0Client(conn)
+	client := pb.NewKoraClient(conn)
 	sessionClient := pb.NewSessionServiceClient(conn)
 	healthClient := pb.NewHealthServiceClient(conn)
 
@@ -105,8 +105,8 @@ func main() {
 // cmdStore stores a new memory. The first positional argument is the content
 // text. Optional flags: --type (semantic|episodic|procedural), --tags
 // (comma-separated), --session (session ID to associate with).
-func cmdStore(ctx context.Context, client pb.Context0Client, projectID string, args []string) {
-	const usage = "usage: context0 store <content> [--type semantic] [--tags db,postgres] [--session <id>]"
+func cmdStore(ctx context.Context, client pb.KoraClient, projectID string, args []string) {
+	const usage = "usage: kora store <content> [--type semantic] [--tags db,postgres] [--session <id>]"
 	if len(args) < 1 {
 		fatalf(usage)
 	}
@@ -143,8 +143,8 @@ func cmdStore(ctx context.Context, client pb.Context0Client, projectID string, a
 // cmdQuery searches memories by a natural-language query. The first positional
 // argument is the query text. Optional flags: --top-k (max results, default 5),
 // --type (filter by memory type, may be repeated).
-func cmdQuery(ctx context.Context, client pb.Context0Client, projectID string, args []string) {
-	const usage = "usage: context0 query <question> [--top-k 5] [--type semantic]"
+func cmdQuery(ctx context.Context, client pb.KoraClient, projectID string, args []string) {
+	const usage = "usage: kora query <question> [--top-k 5] [--type semantic]"
 	if len(args) < 1 {
 		fatalf(usage)
 	}
@@ -197,8 +197,8 @@ func cmdQuery(ctx context.Context, client pb.Context0Client, projectID string, a
 // cmdConnect creates a directed edge between two memories. Requires three
 // positional arguments: source ID, target ID, and relationship type
 // (relates_to, supersedes, caused_by). Optional: --weight (float, default 1.0).
-func cmdConnect(ctx context.Context, client pb.Context0Client, args []string) {
-	const usage = "usage: context0 connect <from-id> <to-id> <relationship> [--weight 1.0]"
+func cmdConnect(ctx context.Context, client pb.KoraClient, args []string) {
+	const usage = "usage: kora connect <from-id> <to-id> <relationship> [--weight 1.0]"
 	if len(args) < 3 {
 		fatalf(usage)
 	}
@@ -227,9 +227,9 @@ func cmdConnect(ctx context.Context, client pb.Context0Client, args []string) {
 }
 
 // cmdDelete removes a single memory by its ID.
-func cmdDelete(ctx context.Context, client pb.Context0Client, args []string) {
+func cmdDelete(ctx context.Context, client pb.KoraClient, args []string) {
 	if len(args) < 1 {
-		fatalf("usage: context0 delete <memory-id>")
+		fatalf("usage: kora delete <memory-id>")
 	}
 
 	_, err := client.Delete(ctx, &pb.DeleteRequest{Id: args[0]})
@@ -244,8 +244,8 @@ func cmdDelete(ctx context.Context, client pb.Context0Client, args []string) {
 // argument is the center memory ID. Optional: --depth (traversal depth,
 // default 2). Output shows all reachable nodes and edges with truncated
 // content for readability.
-func cmdGraph(ctx context.Context, client pb.Context0Client, args []string) {
-	const usage = "usage: context0 graph <memory-id> [--depth 2]"
+func cmdGraph(ctx context.Context, client pb.KoraClient, args []string) {
+	const usage = "usage: kora graph <memory-id> [--depth 2]"
 	if len(args) < 1 {
 		fatalf(usage)
 	}
@@ -290,7 +290,7 @@ func cmdStats(ctx context.Context, client pb.HealthServiceClient, apiKey string)
 	// authenticate. A rejected key therefore comes back as a successful
 	// response full of zeros rather than as an error.
 	//
-	// Printing that verbatim told a user with a typo in CONTEXT0_API_KEY that
+	// Printing that verbatim told a user with a typo in KORA_API_KEY that
 	// their engine was healthy and empty -- indistinguishable from real data
 	// loss, and exiting 0 so no script would catch it. If a key was presented
 	// and the server still treated us as anonymous, that is an auth failure.
@@ -298,16 +298,16 @@ func cmdStats(ctx context.Context, client pb.HealthServiceClient, apiKey string)
 		fatalf("stats failed: the API key was rejected\n" +
 			"The engine answered, but as an unauthenticated caller: it withholds\n" +
 			"the version and graph counts from callers it cannot authenticate.\n" +
-			"Check CONTEXT0_API_KEY.")
+			"Check KORA_API_KEY.")
 	}
 
 	if apiKey == "" {
 		fmt.Fprintln(os.Stderr,
-			"note: no CONTEXT0_API_KEY set; the engine withholds statistics from\n"+
+			"note: no KORA_API_KEY set; the engine withholds statistics from\n"+
 				"unauthenticated callers, so the counts below are not real totals.")
 	}
 
-	fmt.Printf("Context0 Engine v%s\n", resp.Version)
+	fmt.Printf("Kora Engine v%s\n", resp.Version)
 	fmt.Printf("  Status:     %s\n", resp.Status)
 	fmt.Printf("  Nodes:      %d\n", resp.NodeCount)
 	fmt.Printf("  Edges:      %d\n", resp.EdgeCount)
@@ -335,7 +335,7 @@ func cmdSessionStart(ctx context.Context, client pb.SessionServiceClient, projec
 // cmdSessionEnd closes an open session by its ID and prints the duration.
 func cmdSessionEnd(ctx context.Context, client pb.SessionServiceClient, args []string) {
 	if len(args) < 1 {
-		fatalf("usage: context0 session-end <session-id>")
+		fatalf("usage: kora session-end <session-id>")
 	}
 
 	resp, err := client.EndSession(ctx, &pb.EndSessionRequest{Id: args[0]})
@@ -366,9 +366,9 @@ func (s *stringSliceFlag) Set(v string) error {
 
 // printUsage prints the CLI usage summary to stdout.
 func printUsage() {
-	fmt.Println(`context0 - Memory engine CLI
+	fmt.Println(`kora - Memory engine CLI
 
-Usage: context0 <command> [args]
+Usage: kora <command> [args]
 
 Commands:
   store          Store a new memory
@@ -382,9 +382,9 @@ Commands:
   keys generate  Generate a new API key (no server required)
 
 Environment:
-  CONTEXT0_ENDPOINT  gRPC endpoint (default: localhost:50051)
-  CONTEXT0_API_KEY   API key for authentication
-  CONTEXT0_PROJECT   Project ID (default: default)`)
+  KORA_ENDPOINT  gRPC endpoint (default: localhost:50051)
+  KORA_API_KEY   API key for authentication
+  KORA_PROJECT   Project ID (default: default)`)
 }
 
 // printJSON pretty-prints v as indented JSON to stdout.
@@ -460,13 +460,13 @@ func truncate(s string, maxLen int) string {
 // generated would have been exposed in transit for no reason.
 func runKeys(args []string) {
 	if len(args) == 0 || args[0] != "generate" {
-		fmt.Println(`Usage: context0 keys generate
+		fmt.Println(`Usage: kora keys generate
 
 Generates an API key for this deployment. The key is shown once and is not
 recoverable: the server stores only its hash, so a lost key must be replaced
 rather than looked up.
 
-Pass it to the server as CONTEXT0_API_KEYS (comma-separated for several), or to
+Pass it to the server as KORA_API_KEYS (comma-separated for several), or to
 the chart as --set auth.apiKeys=...`)
 		os.Exit(1)
 	}

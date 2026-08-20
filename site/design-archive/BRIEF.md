@@ -1,4 +1,4 @@
-# Context0 landing page - shared design brief
+# Kora landing page - shared design brief
 
 You are one of several independent designers. Everyone gets this identical brief.
 Your concept will be judged against the others on **design quality alone**, so the
@@ -8,26 +8,26 @@ information hierarchy.
 
 ---
 
-## 1. What Context0 is (ground truth - read this carefully)
+## 1. What Kora is (ground truth - read this carefully)
 
-Context0 is an **open-source memory engine for AI agents**. Self-hosted,
+Kora is an **open-source memory engine for AI agents**. Self-hosted,
 graph-first, Kubernetes-native. Apache 2.0.
 
-The one-sentence pitch: *AI agents forget everything between sessions. Context0
+The one-sentence pitch: *AI agents forget everything between sessions. Kora
 gives them a persistent memory graph they can query by meaning and by
 relationship, running on your own infrastructure.*
 
 **The core technical differentiator, which the page must make land:**
 
 Ordinary approaches store memories as flat text chunks in a vector database and
-retrieve by "find similar text". Context0 stores memories as a **connected graph**
+retrieve by "find similar text". Kora stores memories as a **connected graph**
 and retrieves by "find what is *related*" - following typed edges - combined with
 vector similarity. Concretely:
 
 - A vector DB asked "what database does this project use?" returns every chunk
   that mentions a database, including the outdated ones, ranked by cosine
   similarity. It cannot tell you which fact is current.
-- Context0 returns `PostgreSQL`, plus the edge showing it **supersedes** the older
+- Kora returns `PostgreSQL`, plus the edge showing it **supersedes** the older
   `MySQL` fact, plus the edge showing **why** the switch happened. Contradiction
   detection marks stale facts as superseded instead of letting them pile up
   alongside the new ones.
@@ -61,7 +61,7 @@ headings and micro-copy of your own. Do not add new factual claims.
 - Headline options (pick one or write a sharper one from the same idea):
   - `Your agent forgets everything. Give it a memory that connects.`
   - `Memory for AI agents that remembers how things relate.`
-- Sub: `Context0 is a graph-first memory engine. Store conversations, auto-extract
+- Sub: `Kora is a graph-first memory engine. Store conversations, auto-extract
   facts, query by meaning and relationship - in your own cluster, on your own data.`
 - Primary CTA: `Get started` · Secondary CTA: `View on GitHub`
 
@@ -85,8 +85,8 @@ headings and micro-copy of your own. Do not add new factual claims.
 3. `Build user profiles` - A static profile (role, expertise, preferences) plus a
    dynamic one (last 7 days of events), maintained automatically per project.
 
-**Comparison table** (traditional vs Context0)
-| | Traditional | Context0 |
+**Comparison table** (traditional vs Kora)
+| | Traditional | Kora |
 |---|---|---|
 | Memory structure | Flat text chunks | Connected knowledge graph |
 | Retrieval | Find similar text | Follow relationships, not just similarity |
@@ -104,9 +104,9 @@ curl -X POST http://localhost:8080/v1/memories/extract \
 ```
 
 ```python
-from context0 import Context0Client
+from kora import KoraClient
 
-client = Context0Client(endpoint="localhost:50051", api_key=..., project="my-project")
+client = KoraClient(endpoint="localhost:50051", api_key=..., project="my-project")
 
 client.extract("user: We switched to PostgreSQL\nuser: I prefer vim")
 results = client.query("what database does this project use?", top_k=3)
@@ -124,20 +124,20 @@ Real REST surface (pick a subset if you show an API section):
 # Docker Compose
 cat > .env <<EOF
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
-CONTEXT0_API_KEYS=$(go run ./cmd/cli keys generate)
+KORA_API_KEYS=$(go run ./cmd/cli keys generate)
 EOF
 docker compose up
 ```
 
 ```bash
 # Helm
-helm install context0 ./charts/context0 -n context0 --create-namespace \
+helm install kora ./charts/kora -n kora --create-namespace \
   --set postgres.existingSecret=my-postgres-secret \
   --set auth.existingSecret=my-api-keys
 ```
 
-Also available: Python SDK (`pip install context0`) and a Go CLI
-(`context0 store`, `context0 query`, `context0 graph <id> --depth 2`).
+Also available: Python SDK (`pip install kora`) and a Go CLI
+(`kora store`, `kora query`, `kora graph <id> --depth 2`).
 
 **Stack** (every dependency OSI-approved, no SSPL/BSL/proprietary)
 Go · PostgreSQL 18 · Apache AGE (graph) · pgvector (vectors) · gRPC + REST ·
@@ -159,7 +159,7 @@ Content ingestion (PDF, URLs, code) · Framework SDKs (LangChain, CrewAI, MCP) �
 Connectors (GitHub, Drive, Notion) · Kubernetes Operator with CRDs · MemoryBench results
 
 **Footer**
-GitHub `github.com/context0/Context0` · Apache 2.0 · Docs · Contributing · Security
+GitHub `github.com/kora/Kora` · Apache 2.0 · Docs · Contributing · Security
 
 ### Absolutely do not claim
 No user counts, no "trusted by" logos, no funding, no benchmark numbers, no

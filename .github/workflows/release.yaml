@@ -11,7 +11,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/context0
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/kora
 
 jobs:
   # ── Validate ──────────────────────────────────────────
@@ -39,13 +39,13 @@ jobs:
     strategy:
       matrix:
         include:
-          - image: context0-server
+          - image: kora-server
             dockerfile: Dockerfile
             context: .
-          - image: context0-postgres
+          - image: kora-postgres
             dockerfile: docker/postgres-age-vector/Dockerfile
             context: docker/postgres-age-vector
-          - image: context0-web
+          - image: kora-web
             dockerfile: web/Dockerfile
             context: web
     steps:
@@ -116,14 +116,14 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          go build -ldflags "-s -w -X github.com/context0/context0/internal/config.DefaultVersion=$VERSION" \
-            -o context0-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./cmd/cli
+          go build -ldflags "-s -w -X github.com/NarayanaSabari/Kora/internal/config.DefaultVersion=$VERSION" \
+            -o kora-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./cmd/cli
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: context0-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: context0-*
+          name: kora-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: kora-*
 
   # ── Helm Chart ────────────────────────────────────────
   helm:
@@ -145,12 +145,12 @@ jobs:
       - name: Package chart
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          helm package ./charts/context0 --version $VERSION --app-version $VERSION
+          helm package ./charts/kora --version $VERSION --app-version $VERSION
 
       - name: Push chart
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          helm push context0-${VERSION}.tgz oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+          helm push kora-${VERSION}.tgz oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
 
   # ── Python SDK ────────────────────────────────────────
   python-sdk:
@@ -197,7 +197,7 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: context0-*
+          pattern: kora-*
           path: release-assets/
           merge-multiple: true
 
@@ -239,12 +239,12 @@ jobs:
 
             **Helm:**
             ```bash
-            helm install context0 oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/context0 --version ${{ github.ref_name }}
+            helm install kora oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/kora --version ${{ github.ref_name }}
             ```
 
             **Docker:**
             ```bash
-            docker pull ${{ env.REGISTRY }}/${{ github.repository_owner }}/context0-server:${{ github.ref_name }}
+            docker pull ${{ env.REGISTRY }}/${{ github.repository_owner }}/kora-server:${{ github.ref_name }}
             ```
 
             **CLI:**
@@ -252,5 +252,5 @@ jobs:
 
             **Python SDK:**
             ```bash
-            pip install context0==${{ github.ref_name }}
+            pip install kora==${{ github.ref_name }}
             ```

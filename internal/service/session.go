@@ -1,6 +1,6 @@
 // session.go implements the SessionService gRPC handlers for managing agent
 // sessions. A session represents a bounded interaction window between an agent
-// and the Context0 memory system. Memories created during a session are linked
+// and the Kora memory system. Memories created during a session are linked
 // back to it, enabling session-scoped queries and context replay.
 
 package service
@@ -10,10 +10,10 @@ import (
 	"errors"
 	"time"
 
-	pb "github.com/context0/context0/api/gen/context0/v1"
-	"github.com/context0/context0/internal/graph"
-	"github.com/context0/context0/internal/metrics"
-	"github.com/context0/context0/pkg/model"
+	pb "github.com/NarayanaSabari/Kora/api/gen/kora/v1"
+	"github.com/NarayanaSabari/Kora/internal/graph"
+	"github.com/NarayanaSabari/Kora/internal/metrics"
+	"github.com/NarayanaSabari/Kora/pkg/model"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -78,7 +78,7 @@ func (s *SessionService) EndSession(ctx context.Context, req *pb.EndSessionReque
 	if err != nil {
 		// Only a session that this call actually transitioned to ended may
 		// decrement the gauge. Ending an already-ended session used to succeed
-		// and decrement again, which drove context0_active_sessions negative
+		// and decrement again, which drove kora_active_sessions negative
 		// and broke anything alerting on it.
 		switch {
 		case errors.Is(err, graph.ErrSessionAlreadyEnded):

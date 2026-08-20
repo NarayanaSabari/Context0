@@ -24,7 +24,7 @@ func records(t *testing.T, level slog.Level, handlerErr error) []map[string]any 
 	_, err := interceptor(
 		context.Background(),
 		"request",
-		&grpc.UnaryServerInfo{FullMethod: "/context0.v1.MemoryService/Store"},
+		&grpc.UnaryServerInfo{FullMethod: "/kora.v1.MemoryService/Store"},
 		func(context.Context, any) (any, error) { return "response", handlerErr },
 	)
 	if (err != nil) != (handlerErr != nil) {
@@ -57,7 +57,7 @@ func TestInterceptorLogsFailures(t *testing.T) {
 	if rec["level"] != "ERROR" {
 		t.Errorf("level = %v, want ERROR for an Internal error", rec["level"])
 	}
-	if rec["method"] != "/context0.v1.MemoryService/Store" {
+	if rec["method"] != "/kora.v1.MemoryService/Store" {
 		t.Errorf("method = %v, want the full RPC method", rec["method"])
 	}
 	if rec["code"] != "Internal" {
@@ -107,7 +107,7 @@ func TestInterceptorDoesNotLogRequestContent(t *testing.T) {
 	_, _ = interceptor(
 		context.Background(),
 		secret,
-		&grpc.UnaryServerInfo{FullMethod: "/context0.v1.MemoryService/Store"},
+		&grpc.UnaryServerInfo{FullMethod: "/kora.v1.MemoryService/Store"},
 		func(context.Context, any) (any, error) {
 			return nil, status.Error(codes.Internal, "boom")
 		},
@@ -153,7 +153,7 @@ func TestInterceptorHandlesNilLogger(t *testing.T) {
 	_, err := interceptor(
 		context.Background(),
 		"request",
-		&grpc.UnaryServerInfo{FullMethod: "/context0.v1.MemoryService/Store"},
+		&grpc.UnaryServerInfo{FullMethod: "/kora.v1.MemoryService/Store"},
 		func(ctx context.Context, req any) (any, error) {
 			return nil, status.Error(codes.Internal, "boom")
 		},
@@ -166,7 +166,7 @@ func TestInterceptorHandlesNilLogger(t *testing.T) {
 	if _, err := interceptor(
 		context.Background(),
 		"request",
-		&grpc.UnaryServerInfo{FullMethod: "/context0.v1.MemoryService/Query"},
+		&grpc.UnaryServerInfo{FullMethod: "/kora.v1.MemoryService/Query"},
 		func(ctx context.Context, req any) (any, error) { return "ok", nil },
 	); err != nil {
 		t.Fatalf("success path returned an error: %v", err)
@@ -177,7 +177,7 @@ func TestInterceptorHandlesNilLogger(t *testing.T) {
 	if _, err := interceptor(
 		context.Background(),
 		"request",
-		&grpc.UnaryServerInfo{FullMethod: "/context0.v1.MemoryService/Store"},
+		&grpc.UnaryServerInfo{FullMethod: "/kora.v1.MemoryService/Store"},
 		func(ctx context.Context, req any) (any, error) {
 			l := FromContext(ctx)
 			if l == nil {

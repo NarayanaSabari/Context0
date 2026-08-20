@@ -1,4 +1,4 @@
-// Package model defines the core domain types for the Context0 memory engine,
+// Package model defines the core domain types for the Kora memory engine,
 // including memories, edges, sessions, and projects.
 package model
 
@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// MemoryType represents the category of a memory node in the Context0 graph.
+// MemoryType represents the category of a memory node in the Kora graph.
 // Each type maps to a distinct cognitive category used for retrieval and profiling.
 type MemoryType string
 
@@ -26,7 +26,7 @@ const (
 	MemoryTypeProcedural MemoryType = "procedural"
 )
 
-// Memory represents a single memory node in the Context0 knowledge graph.
+// Memory represents a single memory node in the Kora knowledge graph.
 // Memories are the fundamental unit of stored knowledge, created either
 // explicitly via the Store RPC or automatically via the Extract RPC.
 type Memory struct {

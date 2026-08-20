@@ -156,10 +156,10 @@ func (a *APIKeyAuth) UnaryInterceptor() grpc.UnaryServerInterceptor {
 		// Health answers without a credential so probes always succeed, but it
 		// is not exempt from being *identified*: an anonymous caller reaches
 		// the handler with IsAuthenticated false, and the handler withholds the
-		// graph statistics. Before this, `context0 stats` with no key at all
+		// graph statistics. Before this, `kora stats` with no key at all
 		// returned the version, node count and edge count to anyone who could
 		// reach the port.
-		if info.FullMethod == "/context0.v1.HealthService/Health" {
+		if info.FullMethod == "/kora.v1.HealthService/Health" {
 			if keyID, ok := a.verify(apiKeyFromMetadata(ctx)); ok {
 				if alreadyRateLimited(ctx) || a.allowRequest(keyID) {
 					return handler(WithAuthenticated(ctx), req)
@@ -215,7 +215,7 @@ func (a *APIKeyAuth) UnaryInterceptor() grpc.UnaryServerInterceptor {
 // arrives on the listener without it and is limited normally.
 // RateLimitedHeader is exported so the gateway can be told to forward it;
 // grpc-gateway's default matcher drops non-permanent headers.
-const RateLimitedHeader = "x-context0-rate-limited"
+const RateLimitedHeader = "x-kora-rate-limited"
 
 // rateLimitToken is the value the marker must carry to be believed.
 //

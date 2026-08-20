@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	// KeyPrefix marks a Context0 API key. A fixed, searchable prefix lets
+	// KeyPrefix marks a Kora API key. A fixed, searchable prefix lets
 	// secret scanners (GitHub, gitleaks) recognise a leaked key on sight, which
 	// is the entire reason providers like Stripe and GitHub adopted the
 	// convention.

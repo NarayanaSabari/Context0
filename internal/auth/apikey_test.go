@@ -81,7 +81,7 @@ func TestAPIKeyAuth_SkipHealth(t *testing.T) {
 		return "ok", nil
 	}
 
-	resp, err := auth.UnaryInterceptor()(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/context0.v1.HealthService/Health"}, handler)
+	resp, err := auth.UnaryInterceptor()(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/kora.v1.HealthService/Health"}, handler)
 	if err != nil {
 		t.Fatalf("health check should skip auth, got %v", err)
 	}
@@ -597,7 +597,7 @@ func TestRestRequestSpendsOneToken(t *testing.T) {
 		ctx := metadata.NewIncomingContext(r.Context(), md)
 
 		_, err := a.UnaryInterceptor()(ctx, nil,
-			&grpc.UnaryServerInfo{FullMethod: "/context0.v1.Context0/Query"},
+			&grpc.UnaryServerInfo{FullMethod: "/kora.v1.Kora/Query"},
 			func(context.Context, any) (any, error) { return nil, nil })
 		if err != nil {
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -676,7 +676,7 @@ func TestDirectGRPCCallerIsStillLimited(t *testing.T) {
 		md := metadata.New(map[string]string{"x-api-key": "test-key"})
 		ctx := metadata.NewIncomingContext(context.Background(), md)
 		if _, err := interceptor(ctx, nil,
-			&grpc.UnaryServerInfo{FullMethod: "/context0.v1.Context0/Query"},
+			&grpc.UnaryServerInfo{FullMethod: "/kora.v1.Kora/Query"},
 			func(context.Context, any) (any, error) { return nil, nil }); err == nil {
 			accepted++
 		}
@@ -704,7 +704,7 @@ func TestDirectGRPCCallerIsStillLimited(t *testing.T) {
 		})
 		ctx := metadata.NewIncomingContext(context.Background(), md)
 		if _, err := bInterceptor(ctx, nil,
-			&grpc.UnaryServerInfo{FullMethod: "/context0.v1.Context0/Query"},
+			&grpc.UnaryServerInfo{FullMethod: "/kora.v1.Kora/Query"},
 			func(context.Context, any) (any, error) { return nil, nil }); err == nil {
 			forged++
 		}
@@ -726,7 +726,7 @@ func TestRateLimitTokenIsUnguessable(t *testing.T) {
 		t.Errorf("the rate-limit token is only %d characters; it must not be "+
 			"feasible to guess", len(rateLimitToken))
 	}
-	for _, obvious := range []string{"1", "true", "yes", "context0"} {
+	for _, obvious := range []string{"1", "true", "yes", "kora"} {
 		if rateLimitToken == obvious {
 			t.Errorf("the rate-limit token is the guessable constant %q", obvious)
 		}

@@ -1,4 +1,4 @@
-# Enterprise-Grade Security Research: Context0 (Go + PostgreSQL on Kubernetes)
+# Enterprise-Grade Security Research: Kora (Go + PostgreSQL on Kubernetes)
 
 Research-only report. No code was modified.
 Date: 2026-08-18. Every substantive claim is cited. "Inference" marks my judgment, not a sourced fact.
@@ -13,16 +13,16 @@ Date: 2026-08-18. Every substantive claim is cited. "Inference" marks my judgmen
 | Empty key set silently disables auth entirely | `internal/auth/apikey.go:83,131` |
 | Any path not under `/v1/` bypasses auth | `internal/auth/apikey.go:125` |
 | Token buckets keyed by raw API key, unbounded map, never evicted | `internal/auth/apikey.go:48,160-171` |
-| Hardcoded default keys `ctx0_dev_key_1,ctx0_dev_key_2` | `charts/context0/values.yaml:105` |
-| Hardcoded Postgres password `context0-dev-password` | `charts/context0/values.yaml:54` |
-| **Postgres password is inlined into a plain env var in the Deployment, not read from the Secret** | `charts/context0/templates/api.yaml:68` |
-| `sslmode=disable` to Postgres | `charts/context0/templates/api.yaml:68` |
-| Pod already: `runAsNonRoot`, `runAsUser: 1000`, `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, `drop: ["ALL"]` | `charts/context0/templates/api.yaml:46-60` |
+| Hardcoded default keys `ctx0_dev_key_1,ctx0_dev_key_2` | `charts/kora/values.yaml:105` |
+| Hardcoded Postgres password `kora-dev-password` | `charts/kora/values.yaml:54` |
+| **Postgres password is inlined into a plain env var in the Deployment, not read from the Secret** | `charts/kora/templates/api.yaml:68` |
+| `sslmode=disable` to Postgres | `charts/kora/templates/api.yaml:68` |
+| Pod already: `runAsNonRoot`, `runAsUser: 1000`, `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, `drop: ["ALL"]` | `charts/kora/templates/api.yaml:46-60` |
 | CI already runs gosec + Trivy image scan + dependency-review; **no SBOM, no signing, no provenance** | `.github/workflows/security.yaml` |
 
 Two things worth flagging that were not in the brief:
 
-1. **The Secret `postgres-age-secret` is created but the API never uses it.** The chart templates the password directly into `CONTEXT0_DATABASE_URL` as a literal env value. So the credential is visible in `kubectl get deploy -o yaml`, in `helm get manifest`, in any GitOps repo, and to anyone with `get pods` in the namespace. This is strictly worse than the Secret path and is a one-line-class bug, not a design tradeoff.
+1. **The Secret `postgres-age-secret` is created but the API never uses it.** The chart templates the password directly into `KORA_DATABASE_URL` as a literal env value. So the credential is visible in `kubectl get deploy -o yaml`, in `helm get manifest`, in any GitOps repo, and to anyone with `get pods` in the namespace. This is strictly worse than the Secret path and is a one-line-class bug, not a design tradeoff.
 2. **Unbounded rate-limiter map keyed by attacker-controlled input.** `allowRequest` is only reached after key validation, so it is not directly a memory-exhaustion vector today - but if key validation is ever moved or the "no keys configured" branch is hit, every distinct key string allocates a bucket forever. Inference: worth a bounded LRU regardless.
 
 ---
@@ -64,7 +64,7 @@ Store: `id` (indexed, plaintext) plus `SHA-256(secret)` or `HMAC-SHA256(pepper, 
 
 **Why the searchable prefix.** GitHub's engineering post on their token formats is the primary source: prefixes make tokens "identifiable" for secret scanning, they chose `_` as separator because it "is not a Base64 character which helps ensure that our tokens cannot be accidentally duplicated by randomly generated strings like SHAs," and they added a CRC32 checksum in the last 6 characters because "a checksum virtually eliminates false positives for secret scanning offline. We can check the token input matches the checksum and eliminate fake tokens without having to hit our database." With the prefix alone they expected the secret-scanning false-positive rate to drop to 0.5%. (<https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/>)
 
-That post also explicitly credits Stripe and Slack as prior art for the pattern. The practical payoffs for Context0: GitHub secret scanning can be taught the `ctx0_` pattern; a leaked key in a public repo becomes detectable; and the id/secret split means the server can look up one row instead of comparing against every key.
+That post also explicitly credits Stripe and Slack as prior art for the pattern. The practical payoffs for Kora: GitHub secret scanning can be taught the `ctx0_` pattern; a leaked key in a public repo becomes detectable; and the id/secret split means the server can look up one row instead of comparing against every key.
 
 ### 1.3 bcrypt/argon2 vs HMAC-SHA256 vs plain SHA-256
 
@@ -74,11 +74,11 @@ That post also explicitly credits Stripe and Slack as prior art for the pattern.
 | HMAC-SHA256 with a server-side pepper | ~1µs | **Yes.** Best option if you can hold a pepper outside the DB. |
 | Plain SHA-256 | ~0.5µs | **Yes, acceptable** for 256-bit random secrets. |
 
-**The DoS argument, concretely.** Argon2's own reference guidance (RFC 9106, §4) recommends parameters on the order of 1 GiB of memory with 1 iteration, or 64 MiB with 3 iterations, for the recommended configurations (<https://www.rfc-editor.org/rfc/rfc9106.html#section-4>). Context0's API pod is capped at 512Mi memory and 500m CPU (`values.yaml:28-34`). Running a memory-hard KDF on *every request* would either not fit in the memory limit at all or would reduce throughput to single-digit requests per second per replica. An unauthenticated attacker sending garbage keys would then trivially saturate the CPU - the auth check runs *before* any rate limiting can help, because rate limiting is keyed on a validated key. **A slow KDF in the request path converts a cheap authentication check into an amplification vector.** This is the entire reason the industry standard for API keys is a single fast hash.
+**The DoS argument, concretely.** Argon2's own reference guidance (RFC 9106, §4) recommends parameters on the order of 1 GiB of memory with 1 iteration, or 64 MiB with 3 iterations, for the recommended configurations (<https://www.rfc-editor.org/rfc/rfc9106.html#section-4>). Kora's API pod is capped at 512Mi memory and 500m CPU (`values.yaml:28-34`). Running a memory-hard KDF on *every request* would either not fit in the memory limit at all or would reduce throughput to single-digit requests per second per replica. An unauthenticated attacker sending garbage keys would then trivially saturate the CPU - the auth check runs *before* any rate limiting can help, because rate limiting is keyed on a validated key. **A slow KDF in the request path converts a cheap authentication check into an amplification vector.** This is the entire reason the industry standard for API keys is a single fast hash.
 
 **Why a fast hash is safe here, and only here.** The security of plain SHA-256 over the token depends entirely on the token having full entropy. With 256 bits from `crypto/rand`, an offline attacker holding the hash database has nothing to brute-force - there is no dictionary, no rainbow table, no human-chosen pattern. This is the same argument that justifies storing session tokens as bare hashes. It collapses immediately if anyone ever generates keys from a low-entropy source, which is why key generation must be `crypto/rand` and must be enforced in code rather than left to the operator.
 
-**HMAC vs plain SHA-256.** HMAC with a pepper stored outside the database (env var, KMS) means a database-only compromise - SQL injection, a stolen backup, a leaked read replica - does not yield offline-verifiable material. OWASP's Password Storage guidance describes peppering as an additional defense layer applied on top of hashing, using an HMAC with a secret held separately from the hash store (<https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html>). For Context0 the pepper is one more secret to manage, and the pepper cannot be rotated without re-hashing every key. Inference: **start with SHA-256, design the schema with an `algo` column so HMAC can be introduced later without a migration.**
+**HMAC vs plain SHA-256.** HMAC with a pepper stored outside the database (env var, KMS) means a database-only compromise - SQL injection, a stolen backup, a leaked read replica - does not yield offline-verifiable material. OWASP's Password Storage guidance describes peppering as an additional defense layer applied on top of hashing, using an HMAC with a secret held separately from the hash store (<https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html>). For Kora the pepper is one more secret to manage, and the pepper cannot be rotated without re-hashing every key. Inference: **start with SHA-256, design the schema with an `algo` column so HMAC can be introduced later without a migration.**
 
 ### 1.4 Minimal correct Go shape
 
@@ -117,7 +117,7 @@ Related: `/metrics` is unauthenticated (`apikey.go:125`). Prometheus metrics fro
 
 Kubernetes documents the limitation itself, quoted in §1.1: unencrypted in etcd by default, readable by anyone with API access or the ability to create a Pod in the namespace (<https://kubernetes.io/docs/concepts/configuration/secret/>). The Good Practices page adds: "Base64 encoding is not an encryption method, it provides no additional confidentiality over plain text," and recommends configuring encryption at rest, least-privilege RBAC, restricting Secret access to specific containers, and considering external secret store providers (<https://kubernetes.io/docs/concepts/security/secrets-good-practices/>).
 
-Note that all four of those recommendations are **cluster-operator** responsibilities. Context0 ships a chart, not a cluster. That bounds what this project can actually fix - see 2.3.
+Note that all four of those recommendations are **cluster-operator** responsibilities. Kora ships a chart, not a cluster. That bounds what this project can actually fix - see 2.3.
 
 ### 2.2 The four options
 
@@ -129,7 +129,7 @@ Note that all four of those recommendations are **cluster-operator** responsibil
 
 **Secrets Store CSI Driver.** "Allows Kubernetes to mount multiple secrets, keys, and certs stored in enterprise-grade external secrets stores into their pods as a volume." Providers: AWS, Azure, GCP, Vault, Conjur, Akeyless, OpenBao. Core mount functionality is stable; **"Auto rotation of mounted contents and synced Kubernetes secret"** is listed under *Alpha Functionality* (<https://secrets-store-csi-driver.sigs.k8s.io/>). The distinctive property is that the secret can be mounted as a tmpfs volume *without ever creating a Kubernetes Secret object*, which removes etcd from the threat model entirely. The alpha rotation status is the main caveat.
 
-Inference on choosing: ESO if the user has a cloud secret manager; Sealed Secrets if pure GitOps and self-hosted; CSI driver if the requirement is "the secret must never be in etcd". Context0 should not pick for them - it should make all four possible.
+Inference on choosing: ESO if the user has a cloud secret manager; Sealed Secrets if pure GitOps and self-hosted; CSI driver if the requirement is "the secret must never be in etcd". Kora should not pick for them - it should make all four possible.
 
 ### 2.3 The minimum bar for a public chart
 
@@ -142,7 +142,7 @@ Three viable patterns, ordered by how much they cost the project:
 ```yaml
 {{- if not .Values.auth.existingSecret }}
 {{- if not .Values.auth.apiKeys }}
-{{- fail "auth.apiKeys or auth.existingSecret is required. Generate one with:\n  kubectl create secret generic context0-api-keys --from-literal=keys=$(openssl rand -hex 32)\nthen set auth.existingSecret=context0-api-keys" }}
+{{- fail "auth.apiKeys or auth.existingSecret is required. Generate one with:\n  kubectl create secret generic kora-api-keys --from-literal=keys=$(openssl rand -hex 32)\nthen set auth.existingSecret=kora-api-keys" }}
 {{- end }}
 {{- end }}
 ```
@@ -152,7 +152,7 @@ Helm's `fail` aborts template rendering with the message (<https://helm.sh/docs/
 **Pattern B - generate at install, persist across upgrades.** Helm's `randAlphaNum` plus `lookup` to avoid regenerating on every `helm upgrade`:
 
 ```yaml
-{{- $existing := lookup "v1" "Secret" .Release.Namespace "context0-api-keys" }}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace "kora-api-keys" }}
 {{- $key := "" }}
 {{- if $existing }}
 {{-   $key = index $existing.data "keys" | b64dec }}
@@ -174,7 +174,7 @@ postgres:
   existingSecret: ""     # name of a Secret with key `password`
 ```
 
-**And unconditionally: stop inlining the password into the env var.** `api.yaml:68` must become a `secretKeyRef`. Since `CONTEXT0_DATABASE_URL` is a composed DSN, either compose it in the application from separate `PGPASSWORD`-style parts, or template the whole DSN into the Secret and reference it as one key. Inference: the latter is less invasive to Go code; the former is cleaner long-term.
+**And unconditionally: stop inlining the password into the env var.** `api.yaml:68` must become a `secretKeyRef`. Since `KORA_DATABASE_URL` is a composed DSN, either compose it in the application from separate `PGPASSWORD`-style parts, or template the whole DSN into the Secret and reference it as one key. Inference: the latter is less invasive to Go code; the former is cleaner long-term.
 
 Additional hardening the chart could adopt: mount secrets as files rather than env vars. Env vars leak through `/proc/self/environ`, crash dumps, `kubectl describe`, and child processes; file mounts are readable only by the container and can be rotated in place. The Kubernetes docs recommend restricting secret access to specific containers via volume mount or env var configuration so other containers cannot see them (<https://kubernetes.io/docs/concepts/security/secrets-good-practices/>).
 
@@ -193,14 +193,14 @@ From the Kubernetes NetworkPolicy docs (<https://kubernetes.io/docs/concepts/ser
 
 Also critical for the multi-selector syntax: a single `from` entry with both `namespaceSelector` and `podSelector` means AND; two separate list entries mean OR. The docs spell this out with a worked example, and getting it wrong silently widens the policy.
 
-### 3.2 Complete policy set for the Context0 topology
+### 3.2 Complete policy set for the Kora topology
 
 ```yaml
 # 1. Default deny everything, both directions, namespace-wide.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: context0-default-deny
+  name: kora-default-deny
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector: {}
@@ -210,7 +210,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: context0-allow-dns
+  name: kora-allow-dns
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector: {}
@@ -233,18 +233,18 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: context0-api-ingress
+  name: kora-api-ingress
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
     matchLabels:
-      app: context0-api
+      app: kora-api
   policyTypes: [Ingress]
   ingress:
     - from:
         - podSelector:
             matchLabels:
-              app: context0-web
+              app: kora-web
       ports:
         - protocol: TCP
           port: 8080
@@ -266,12 +266,12 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: context0-api-egress
+  name: kora-api-egress
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
     matchLabels:
-      app: context0-api
+      app: kora-api
   policyTypes: [Egress]
   egress:
     - to:
@@ -298,10 +298,10 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app: context0-api
+              app: kora-api
         - podSelector:
             matchLabels:
-              app: context0-consolidation
+              app: kora-consolidation
       ports:
         - protocol: TCP
           port: 5432
@@ -311,7 +311,7 @@ Notes on this set:
 
 - `kubernetes.io/metadata.name` is set automatically on every namespace by the API server since Kubernetes 1.21 (NamespaceDefaultLabelName, GA in 1.22), so selecting `kube-system` and `monitoring` by that label needs no manual labelling (<https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/#automatic-labelling>).
 - Policy 3's Prometheus rule uses the AND form (both selectors in one `from` entry). This is deliberate; splitting them would allow *any* pod in the monitoring namespace **or** any Prometheus-labelled pod cluster-wide.
-- The consolidation CronJob must carry `app: context0-consolidation` for policy 5 to work. Worth verifying against `templates/consolidation.yaml`.
+- The consolidation CronJob must carry `app: kora-consolidation` for policy 5 to work. Worth verifying against `templates/consolidation.yaml`.
 - Health probes come from the kubelet on the node, and the docs state that when a pod is isolated for ingress, "the only allowed connections into the pod are those from the pod's node and those allowed by the ingress list" - so probes survive default-deny.
 - If the web UI needs to reach the API through a NodePort or ingress controller, the source IP may be rewritten. The docs warn that for ingress "the 'source IP' that the NetworkPolicy acts on may be the IP of a LoadBalancer or of the Pod's node," which can defeat pod-selector rules. Worth testing with the actual exposure method.
 
@@ -331,29 +331,29 @@ networking:
   podSubnet: "192.168.0.0/16"   # Calico's default
 ```
 
-Enforcing CNIs include Calico, Cilium, Antrea, Weave, and Kube-router. Notably **Flannel does not implement NetworkPolicy**, and neither does AWS VPC CNI on its own (EKS requires enabling the network policy feature or running Calico alongside). Inference: Context0 should ship a `NOTES.txt` warning and, ideally, a CI e2e test that *asserts a denied connection actually fails* - because a policy that renders but does not enforce is worse than no policy, since it creates false confidence.
+Enforcing CNIs include Calico, Cilium, Antrea, Weave, and Kube-router. Notably **Flannel does not implement NetworkPolicy**, and neither does AWS VPC CNI on its own (EKS requires enabling the network policy feature or running Calico alongside). Inference: Kora should ship a `NOTES.txt` warning and, ideally, a CI e2e test that *asserts a denied connection actually fails* - because a policy that renders but does not enforce is worse than no policy, since it creates false confidence.
 
 ---
 
 ## 4. RBAC and ServiceAccount
 
-Context0's API talks to Postgres. It makes **no** Kubernetes API calls. So the correct answer is: a dedicated ServiceAccount with no RoleBinding at all, and no mounted token.
+Kora's API talks to Postgres. It makes **no** Kubernetes API calls. So the correct answer is: a dedicated ServiceAccount with no RoleBinding at all, and no mounted token.
 
 **Confirmed.** The Kubernetes docs: "If you don't want the kubelet to automatically mount a ServiceAccount's API credentials, you can opt out of the default behavior. You can opt out of automounting API credentials on `/var/run/secrets/kubernetes.io/serviceaccount/token` for a service account by setting `automountServiceAccountToken: false`." It can be set on the ServiceAccount or on the Pod, and "If both the ServiceAccount and the Pod's `.spec` specify a value for `automountServiceAccountToken`, the Pod spec takes precedence." (<https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/>)
 
-Also relevant: if you specify nothing, "Kubernetes automatically assigns the ServiceAccount named `default` in that namespace." Context0's pods currently use `default` with an auto-mounted token. That token is a real credential - it can at minimum call `/api/v1/...` self-discovery endpoints, and its blast radius grows with any cluster-wide RoleBinding an operator later adds to `system:serviceaccounts`.
+Also relevant: if you specify nothing, "Kubernetes automatically assigns the ServiceAccount named `default` in that namespace." Kora's pods currently use `default` with an auto-mounted token. That token is a real credential - it can at minimum call `/api/v1/...` self-discovery endpoints, and its blast radius grows with any cluster-wide RoleBinding an operator later adds to `system:serviceaccounts`.
 
 ```yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: context0-api
+  name: kora-api
   namespace: {{ .Release.Namespace }}
 automountServiceAccountToken: false
 ---
 # in the Deployment podSpec:
 spec:
-  serviceAccountName: context0-api
+  serviceAccountName: kora-api
   automountServiceAccountToken: false   # belt and braces; pod spec wins
 ```
 
@@ -380,7 +380,7 @@ The mode hierarchy matters because two of them are security theater:
 | `verify-ca` | Encrypted | Protected against a non-CA-signed attacker | Does not check hostname |
 | `verify-full` | Encrypted | Protected | Recommended |
 
-The gap between `require` and `verify-full` is the entire point: `require` will happily complete a TLS handshake with an attacker who has hijacked the Service IP or poisoned CoreDNS. Inference: if Context0 changes only one character here, changing `disable` to `require` is a *marginal* improvement that mostly buys compliance-checkbox encryption; `verify-full` with a mounted CA is the change that actually removes the in-cluster MITM.
+The gap between `require` and `verify-full` is the entire point: `require` will happily complete a TLS handshake with an attacker who has hijacked the Service IP or poisoned CoreDNS. Inference: if Kora changes only one character here, changing `disable` to `require` is a *marginal* improvement that mostly buys compliance-checkbox encryption; `verify-full` with a mounted CA is the change that actually removes the in-cluster MITM.
 
 Why this matters in-cluster at all, given a NetworkPolicy: pod-to-pod traffic crosses the node network unencrypted. Anyone with node-level access, a compromised sidecar in the same pod network, or the ability to run a privileged pod can capture it. For a memory engine, that traffic *is* the user's data - every stored memory, every query, every embedding. NetworkPolicy limits who can *connect*; it does not stop passive capture on the wire.
 
@@ -398,14 +398,14 @@ Certificate provisioning: cert-manager with a self-signed in-cluster Issuer is t
 
 Cost: a mesh is a substantial operational dependency - control plane, sidecar or ambient dataplane, per-pod resource overhead, upgrade coordination, and a new class of failure modes. It also does not help the Postgres hop unless Postgres is meshed too, and meshing a StatefulSet database is its own project.
 
-**Application-level TLS.** Go's `crypto/tls` with `ClientAuth: tls.RequireAndVerifyClientCert` on the gRPC server, plus `sslmode=verify-full` to Postgres. Full control, no new infrastructure, works identically on kind and EKS. Cost: Context0 owns certificate distribution, rotation, and revocation - the parts meshes exist to solve.
+**Application-level TLS.** Go's `crypto/tls` with `ClientAuth: tls.RequireAndVerifyClientCert` on the gRPC server, plus `sslmode=verify-full` to Postgres. Full control, no new infrastructure, works identically on kind and EKS. Cost: Kora owns certificate distribution, rotation, and revocation - the parts meshes exist to solve.
 
-**Recommendation for this project (inference).** Context0 is an OSS component that people self-host into *someone else's* cluster. It should not have an opinion about the operator's mesh. The right posture is:
+**Recommendation for this project (inference).** Kora is an OSS component that people self-host into *someone else's* cluster. It should not have an opinion about the operator's mesh. The right posture is:
 
-1. **Do** implement application-level TLS to Postgres (`verify-full`), because Context0 owns that connection and no mesh will cover it by default.
+1. **Do** implement application-level TLS to Postgres (`verify-full`), because Kora owns that connection and no mesh will cover it by default.
 2. **Do** support serving TLS on the gRPC/HTTP listeners when certs are supplied, so a non-mesh operator can secure the north-south hop.
 3. **Do not** require or bundle a mesh. Instead, be *mesh-compatible*: use named ports with protocol prefixes (`grpc`, `http`) so Istio can classify traffic, avoid binding to `0.0.0.0` assumptions that break sidecar interception, and document `PeerAuthentication` STRICT as a supported deployment.
-4. **Do** document that mTLS via a mesh is the recommended production posture for the east-west hops, and that Context0 does not need to reimplement it.
+4. **Do** document that mTLS via a mesh is the recommended production posture for the east-west hops, and that Kora does not need to reimplement it.
 
 That is: own what you own, be compatible with what you do not.
 
@@ -417,7 +417,7 @@ That is: own what you own, be compatible with what you do not.
 
 From the Pod Security Standards page (<https://kubernetes.io/docs/concepts/security/pod-security-standards/>), Restricted = everything in Baseline plus:
 
-| Restricted control | Required value | Context0 `api.yaml` | Status |
+| Restricted control | Required value | Kora `api.yaml` | Status |
 |---|---|---|---|
 | Privilege escalation | `allowPrivilegeEscalation: false` | line 57 | Pass |
 | Running as non-root | `runAsNonRoot: true` | line 47 | Pass |
@@ -447,7 +447,7 @@ Three caveats:
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: context0
+  name: kora
   labels:
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: v1.33
@@ -461,13 +461,13 @@ Pin the version. The docs' own example pins it, and the reason is that an unpinn
 
 To evaluate safely before enforcing, the docs give the dry-run path: `kubectl label --dry-run=server --overwrite ns --all pod-security.kubernetes.io/enforce=baseline` - "The Pod Security Standard checks will still be run in dry run mode, giving you information about how the new policy would treat existing pods, without actually updating a policy." (<https://kubernetes.io/docs/tasks/configure-pod-container/enforce-standards-namespace-labels/>)
 
-Pod Security Admission is GA from Kubernetes 1.25 (same source). Inference: Helm creates namespaces without labels when using `--create-namespace`, so Context0 should either template a Namespace object (guarded by a value) or document the `kubectl label` command in `NOTES.txt`.
+Pod Security Admission is GA from Kubernetes 1.25 (same source). Inference: Helm creates namespaces without labels when using `--create-namespace`, so Kora should either template a Namespace object (guarded by a value) or document the `kubectl label` command in `NOTES.txt`.
 
 ---
 
 ## 7. Supply chain
 
-### 7.1 What Context0 already has
+### 7.1 What Kora already has
 
 `.github/workflows/security.yaml` runs gosec with SARIF upload, Trivy against both images (CRITICAL/HIGH) with SARIF upload, and `dependency-review-action` with `fail-on-severity: high`, on PRs and weekly. That is already above the median OSS project. Two weaknesses: the actions are pinned to `@master` (`securego/gosec@master`, `aquasecurity/trivy-action@master`), which is itself a supply-chain risk - a compromised upstream tag executes in a workflow with `security-events: write`. Pin to a commit SHA. And the scan builds throwaway `:scan` tags rather than scanning the artifact that is actually released.
 
@@ -495,15 +495,15 @@ permissions:
 - uses: sigstore/cosign-installer@v3
 - uses: anchore/sbom-action@v0
   with:
-    image: ghcr.io/context0/context0:${{ github.ref_name }}
+    image: ghcr.io/kora/kora:${{ github.ref_name }}
     format: spdx-json
     upload-artifact: true
-- run: cosign sign --yes ghcr.io/context0/context0@${{ steps.build.outputs.digest }}
+- run: cosign sign --yes ghcr.io/kora/kora@${{ steps.build.outputs.digest }}
 - run: cosign attest --yes --predicate sbom.spdx.json --type spdxjson \
-         ghcr.io/context0/context0@${{ steps.build.outputs.digest }}
+         ghcr.io/kora/kora@${{ steps.build.outputs.digest }}
 - uses: actions/attest-build-provenance@v1
   with:
-    subject-name: ghcr.io/context0/context0
+    subject-name: ghcr.io/kora/kora
     subject-digest: ${{ steps.build.outputs.digest }}
     push-to-registry: true
 ```
@@ -536,7 +536,7 @@ For a memory engine, the events that matter:
 | Config change | what changed, by whom - never the values |
 | Cross-project access attempt | any request where project_id does not match the key's project |
 
-The last row is the one specific to Context0's threat model. `project_id` is currently just a string filter, which means tenant isolation rests entirely on the correctness of every query's WHERE clause. Logging attempted cross-project access turns a silent isolation bug into a detectable event. Inference: this is the highest-value single log line in the list.
+The last row is the one specific to Kora's threat model. `project_id` is currently just a string filter, which means tenant isolation rests entirely on the correctness of every query's WHERE clause. Logging attempted cross-project access turns a silent isolation bug into a detectable event. Inference: this is the highest-value single log line in the list.
 
 SOC 2 relevance: the Trust Services Criteria CC7.2 requires monitoring for anomalies and CC6.1 covers logical access controls (<https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022>). Auditors ask "who accessed what data, when" and "how would you know if someone exfiltrated everything." The bulk-export and cross-project rows answer both.
 
@@ -562,7 +562,7 @@ Also: audit logs should be append-only, shipped off-node (a pod's logs die with 
 
 ## 9. Top 5 priorities
 
-Ranked by (damage prevented) x (likelihood of occurring in a real self-hosted install) / (effort). The weighting reflects that Context0 is OSS software installed by people who will not read the docs.
+Ranked by (damage prevented) x (likelihood of occurring in a real self-hosted install) / (effort). The weighting reflects that Kora is OSS software installed by people who will not read the docs.
 
 ### 1. Remove all default credentials from the chart, and stop inlining the DB password
 

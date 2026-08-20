@@ -7,8 +7,8 @@
 //
 // # Environment Variables
 //
-// All CONTEXT0_* variables from the config package are supported (only
-// CONTEXT0_DATABASE_URL is required). Additionally:
+// All KORA_* variables from the config package are supported (only
+// KORA_DATABASE_URL is required). Additionally:
 //
 //	CONSOLIDATION_DECAY_HALF_LIFE_DAYS  Half-life for exponential decay (float, days)
 //	CONSOLIDATION_STALE_THRESHOLD       Weight threshold below which memories are pruned (float)
@@ -21,10 +21,10 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/context0/context0/internal/config"
-	"github.com/context0/context0/internal/graph"
-	"github.com/context0/context0/internal/logging"
-	"github.com/context0/context0/internal/service"
+	"github.com/NarayanaSabari/Kora/internal/config"
+	"github.com/NarayanaSabari/Kora/internal/graph"
+	"github.com/NarayanaSabari/Kora/internal/logging"
+	"github.com/NarayanaSabari/Kora/internal/service"
 )
 
 func main() {

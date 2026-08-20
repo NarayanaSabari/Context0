@@ -30,7 +30,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/context0/context0/pkg/model"
+	"github.com/NarayanaSabari/Kora/pkg/model"
 )
 
 // Scoring weights. Query relevance dominates: the point of a search is to

@@ -17,15 +17,15 @@
 # Usage: scripts/verify_perf.sh
 set -uo pipefail
 
-NS="${NS:-context0}"
-KEY="${CONTEXT0_API_KEY:?set CONTEXT0_API_KEY}"
+NS="${NS:-kora}"
+KEY="${KORA_API_KEY:?set KORA_API_KEY}"
 
 PASS=0
 FAIL=0
 FAILURES=()
 
 api_pod() {
-  kubectl get pod -n "$NS" -l app=context0-api \
+  kubectl get pod -n "$NS" -l app=kora-api \
     -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name} {.status.containerStatuses[0].ready}{"\n"}{end}' \
     2>/dev/null | awk '$2=="true"{print $1; exit}'
 }
@@ -69,10 +69,10 @@ report() {
 POD=$(api_pod)
 [[ -n "$POD" ]] || { echo "no ready API pod in $NS" >&2; exit 1; }
 
-VERTICES=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc \
+VERTICES=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d kora -tAc \
   "LOAD 'age'; SET search_path=ag_catalog,public;
    SELECT count(*) FROM cypher('context0', \$\$ MATCH (m:Memory) RETURN m \$\$) AS (m agtype);" 2>/dev/null | tail -1)
-EDGES=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc \
+EDGES=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d kora -tAc \
   "LOAD 'age'; SET search_path=ag_catalog,public;
    SELECT count(*) FROM cypher('context0', \$\$ MATCH ()-[e]->() RETURN e \$\$) AS (e agtype);" 2>/dev/null | tail -1)
 
@@ -97,10 +97,10 @@ rpc_mean_ms() {
   local method="$1" script="$2"
   local before after
   before=$(kubectl exec -n "$NS" "$POD" -- wget -q -O- http://localhost:8080/metrics 2>/dev/null \
-    | grep -E "context0_request_duration_seconds_(sum|count)\{method=\"$method\"" | awk '{printf "%s ", $2}')
+    | grep -E "kora_request_duration_seconds_(sum|count)\{method=\"$method\"" | awk '{printf "%s ", $2}')
   kubectl exec -n "$NS" "$POD" -- sh "$script" >/dev/null 2>&1
   after=$(kubectl exec -n "$NS" "$POD" -- wget -q -O- http://localhost:8080/metrics 2>/dev/null \
-    | grep -E "context0_request_duration_seconds_(sum|count)\{method=\"$method\"" | awk '{printf "%s ", $2}')
+    | grep -E "kora_request_duration_seconds_(sum|count)\{method=\"$method\"" | awk '{printf "%s ", $2}')
   awk -v b="$before" -v a="$after" 'BEGIN{
     split(b, bb, " "); split(a, aa, " ");
     d = aa[2] - bb[2];
@@ -197,7 +197,7 @@ section "1. Query latency does not track total graph size (a661212)"
 # setup the rest do not, and 20 requests is few enough for one cold connection
 # to dominate the mean.
 kubectl exec -n "$NS" "$POD" -- sh /tmp/vp_query.sh >/dev/null 2>&1
-q=$(rpc_mean_ms "/context0.v1.Context0/Query" /tmp/vp_query.sh)
+q=$(rpc_mean_ms "/kora.v1.Kora/Query" /tmp/vp_query.sh)
 # The threshold defends bounded-ness, not a specific number. 16.2ms was measured
 # at 64k vertices; at 256k -- four times the graph -- a seeded 50-memory project
 # measures 43-64ms across eight runs, so cost did not scale with the graph. 100
@@ -211,7 +211,7 @@ section "2. Store latency (a661212, and the maxSupersedesPerStore cap)"
 # Store is the whole pipeline: create, embed, contradiction detection, edge
 # writes, tag auto-linking. The cap on supersedes edges exists to stop this
 # growing with writes x candidates.
-s=$(rpc_mean_ms "/context0.v1.Context0/Store" /tmp/vp_store.sh)
+s=$(rpc_mean_ms "/kora.v1.Kora/Store" /tmp/vp_store.sh)
 report "tagged store, idle" \
   "~38ms at 94k vertices; the cap prevents the ~469ms uncapped case" \
   "${s}ms" "150" "below" "latency"
@@ -219,7 +219,7 @@ report "tagged store, idle" \
 section "3. /v1/health is cached (e317412)"
 # Requirement: /v1/health did two full graph scans per call on an
 # unauthenticated endpoint. 2196ms p50 under load -> 2.8ms.
-h=$(rpc_mean_ms "/context0.v1.HealthService/Health" /tmp/vp_health.sh)
+h=$(rpc_mean_ms "/kora.v1.HealthService/Health" /tmp/vp_health.sh)
 report "health, 20 serial calls" \
   "2196ms -> 2.8ms p50; counts cached for 5s, reachability never cached" \
   "${h}ms" "60" "below" "latency"
@@ -233,7 +233,7 @@ section "4. Index usage, re-checked at the current size (d5b2e72, a661212)"
 # correct choice, so a choice-based check fails on a fresh CI database while the
 # index is perfectly fine -- the same mistake bbd6eee fixed in verify_k8s.sh.
 plan_uses_index() {
-  kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -c \
+  kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d kora -c \
     "LOAD 'age'; SET search_path=ag_catalog,public; SET enable_seqscan=off;
      EXPLAIN SELECT * FROM cypher('context0', \$\$ $1 \$\$) AS (x agtype);" 2>/dev/null \
     | grep -cE "Index Scan using memory_id_idx|Bitmap Index Scan on memory_id_idx"
@@ -249,7 +249,7 @@ report "literal IN list uses the index" \
 # The regression that started this: the same query as a parameter must NOT be
 # used, which is why the code inlines. Asserted so that if a future AGE version
 # fixes it, this check tells us the workaround can be removed.
-unwind_scans=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -c \
+unwind_scans=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d kora -c \
   "LOAD 'age'; SET search_path=ag_catalog,public;
    EXPLAIN SELECT * FROM cypher('context0', \$\$ UNWIND ['a','b'] AS w MATCH (m:Memory) WHERE m.id = w RETURN m \$\$) AS (x agtype);" 2>/dev/null \
   | grep -c "Seq Scan")
@@ -267,11 +267,11 @@ fi
 section "5. Undirected traversal still degrades (getEdgesAround)"
 # 71.5ms vs 0.05ms at 50k; 734ms vs 14ms at 94k. The gap widens with the graph,
 # which is the signature of a full label scan.
-und=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc \
+und=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d kora -tAc \
   "LOAD 'age'; SET search_path=ag_catalog,public;
    EXPLAIN (ANALYZE, TIMING OFF) SELECT * FROM cypher('context0', \$\$ MATCH (c)-[e]-(o:Memory) WHERE c.id = 'nonexistent' RETURN e \$\$) AS (e agtype);" 2>/dev/null \
   | grep "Execution Time" | grep -oE "[0-9.]+")
-dir=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc \
+dir=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d kora -tAc \
   "LOAD 'age'; SET search_path=ag_catalog,public;
    EXPLAIN (ANALYZE, TIMING OFF) SELECT * FROM cypher('context0', \$\$ MATCH (c)-[e]->(o:Memory) WHERE c.id = 'nonexistent' RETURN e \$\$) AS (e agtype);" 2>/dev/null \
   | grep "Execution Time" | grep -oE "[0-9.]+")
@@ -289,9 +289,9 @@ section "5b. The literal-list workaround is still earning its place"
 #
 # This reports whether statistics are currently fresh, so a future reader knows
 # which regime any timing above was measured in.
-mod=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc \
+mod=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d kora -tAc \
   "SELECT n_mod_since_analyze FROM pg_stat_user_tables WHERE relname='Memory';" 2>/dev/null | tail -1)
-live=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc \
+live=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d kora -tAc \
   "SELECT greatest(n_live_tup,1) FROM pg_stat_user_tables WHERE relname='Memory';" 2>/dev/null | tail -1)
 printf '  observed: %s rows modified since the last ANALYZE, of %s live\n' "${mod:-?}" "${live:-?}"
 
@@ -336,7 +336,7 @@ fi
 # as a performance regression in the service.
 printf '\n\033[1m5b. Table bloat at measurement time\033[0m\n'
 for tbl in "memory_embeddings" "Memory"; do
-  read -r live dead <<<"$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc \
+  read -r live dead <<<"$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d kora -tAc \
     "SELECT greatest(n_live_tup,1), n_dead_tup FROM pg_stat_user_tables WHERE relname='$tbl';" 2>/dev/null \
     | tail -1 | tr '|' ' ')"
   pct=$(awk -v d="${dead:-0}" -v l="${live:-1}" 'BEGIN{printf "%.1f", 100*d/l}')
@@ -353,7 +353,7 @@ section "6. Rate limit permits real throughput (e317412)"
 # The default was 100/min (1.6/s), which had never run because rate limiting
 # only engages once a key is configured. Enabling auth would have throttled
 # every deployment to a crawl.
-rl=$(kubectl exec -n "$NS" "$POD" -- printenv CONTEXT0_RATE_LIMIT_PER_MINUTE 2>/dev/null)
+rl=$(kubectl exec -n "$NS" "$POD" -- printenv KORA_RATE_LIMIT_PER_MINUTE 2>/dev/null)
 report "configured rate limit" \
   "6000/min (100/s), sized against a ~4ms store; 100/min was unusable" \
   "${rl:-0}" "1000" "above"
@@ -362,14 +362,14 @@ section "7. Latency buckets resolve the operating range (46c642e)"
 # With DefBuckets, p50/p95/p99 all landed in [0.1, 0.25] alongside 79% of
 # samples, so no percentile could be distinguished from another.
 mx=$(kubectl exec -n "$NS" "$POD" -- wget -q -O- http://localhost:8080/metrics 2>/dev/null)
-b125=$(grep -c 'context0_request_duration_seconds_bucket{.*le="0.125"' <<<"$mx" || true)
+b125=$(grep -c 'kora_request_duration_seconds_bucket{.*le="0.125"' <<<"$mx" || true)
 report "sub-decade bucket boundaries present" \
   "buckets must separate p50 from p99 in this service's range" \
   "$b125" "0" "above"
 
 section "8. Connection pool is not saturated at rest"
-acq=$(grep '^context0_pool_connections{state="acquired"}' <<<"$mx" | awk '{print $2}')
-max=$(grep '^context0_pool_connections{state="max"}' <<<"$mx" | awk '{print $2}')
+acq=$(grep '^kora_pool_connections{state="acquired"}' <<<"$mx" | awk '{print $2}')
+max=$(grep '^kora_pool_connections{state="max"}' <<<"$mx" | awk '{print $2}')
 printf '  observed: %s of %s connections acquired\n' "${acq:-<absent>}" "${max:-<absent>}"
 
 # Absent metrics must fail, not pass. The gauges are sampled on a 5s ticker, so
@@ -377,7 +377,7 @@ printf '  observed: %s of %s connections acquired\n' "${acq:-<absent>}" "${max:-
 # missing value to 0 made this report a healthy pool that was not being measured
 # at all, which is the opposite of what the check is for.
 if [[ -z "$max" || -z "$acq" ]]; then
-  printf '  \033[31mFAIL\033[0m  pool metrics are not being exported\n        (context0_pool_connections absent; the sampler may not be running)\n'
+  printf '  \033[31mFAIL\033[0m  pool metrics are not being exported\n        (kora_pool_connections absent; the sampler may not be running)\n'
   FAIL=$((FAIL + 1))
   FAILURES+=("pool metrics exported")
 else

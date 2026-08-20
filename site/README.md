@@ -11,7 +11,7 @@ product.
 
 | URL | Purpose |
 |---|---|
-| `/` | Overview and waitlist signup. Deliberately not a product tour: Context0 is pre-release, so the page explains the idea and asks for an email. |
+| `/` | Overview and waitlist signup. Deliberately not a product tour: Kora is pre-release, so the page explains the idea and asks for an email. |
 | `/docs/` | The concepts that will not change, plus links into the repository. Real documentation arrives with the first release. |
 | `/blog/` | Empty until the first post. Add entries to `POSTS` in `src/pages/Blog.tsx` and the empty state disappears. |
 | `/releases/` | Empty until the first release, with the versioning policy written down. |
@@ -140,7 +140,7 @@ check here.
 ### One-time setup
 
 1. **Create the Pages project.** Cloudflare dashboard -> Workers & Pages ->
-   Create -> Pages -> **Direct Upload**, named `context0`. Direct Upload rather
+   Create -> Pages -> **Direct Upload**, named `kora`. Direct Upload rather
    than a git connection, for the reason above. The first real upload comes
    from CI.
 
@@ -158,14 +158,14 @@ check here.
    Actions:
 
    ```bash
-   gh secret set CLOUDFLARE_API_TOKEN --repo NarayanaSabari/Context0
-   gh secret set CLOUDFLARE_ACCOUNT_ID --repo NarayanaSabari/Context0
+   gh secret set CLOUDFLARE_API_TOKEN --repo NarayanaSabari/Kora
+   gh secret set CLOUDFLARE_ACCOUNT_ID --repo NarayanaSabari/Kora
    ```
 
    The account ID is on the right-hand side of any Cloudflare dashboard page.
 
 4. **Point the custom domain at the Pages project.** Workers & Pages ->
-   `context0` -> Custom domains -> Set up a custom domain ->
+   `kora` -> Custom domains -> Set up a custom domain ->
    `context0.sabarinarayana.com`.
 
    Cloudflare rewrites the DNS record itself and issues the certificate, so the
@@ -181,7 +181,7 @@ check here.
 
 ### Rollbacks
 
-Every deploy is retained. Workers & Pages -> `context0` -> Deployments ->
+Every deploy is retained. Workers & Pages -> `kora` -> Deployments ->
 pick a previous one -> Rollback. That is instant and needs no rebuild, which is
 the main practical gain over the previous setup.
 

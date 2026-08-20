@@ -6,13 +6,13 @@ import (
 	"google.golang.org/grpc/status"
 
 	"errors"
-	"github.com/context0/context0/internal/auth"
+	"github.com/NarayanaSabari/Kora/internal/auth"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	pb "github.com/context0/context0/api/gen/context0/v1"
+	pb "github.com/NarayanaSabari/Kora/api/gen/kora/v1"
 )
 
 // countingRepo records how often the expensive count queries actually run.
@@ -261,7 +261,7 @@ func (r *nodeFailingRepo) EdgeCount(context.Context) (int64, error) { return 99,
 //
 // This endpoint answers without a credential because Kubernetes probes cannot
 // present one. But it was returning the engine version, node count and edge
-// count to anyone who could reach the port: `context0 stats` with no API key
+// count to anyone who could reach the port: `kora stats` with no API key
 // at all printed them. None is a secret alone; together they say what is
 // running and how much data is in it, which a liveness probe has no need for.
 func TestHealthWithholdsStatisticsFromAnonymousCallers(t *testing.T) {

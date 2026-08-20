@@ -31,7 +31,7 @@ The default-deny NetworkPolicy means a load generator needs the
 `role: test-client` label to reach the API at all:
 
 ```sh
-kubectl create configmap soak-script -n context0 \
+kubectl create configmap soak-script -n kora \
   --from-file=soak.py=scripts/soak.py --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl apply -f - <<EOF
@@ -39,7 +39,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: soak
-  namespace: context0
+  namespace: kora
   labels: {role: test-client}    # required: default-deny blocks egress otherwise
 spec:
   restartPolicy: Never
@@ -53,7 +53,7 @@ spec:
     securityContext:
       allowPrivilegeEscalation: false
       capabilities: {drop: ["ALL"]}
-    command: ["python","/s/soak.py","--url","http://context0-api:8080",
+    command: ["python","/s/soak.py","--url","http://kora-api:8080",
               "--key","<api key>","--workers","6","--minutes","20"]
     volumeMounts: [{name: s, mountPath: /s}]
   volumes: [{name: s, configMap: {name: soak-script}}]
@@ -72,7 +72,7 @@ cumulative one that rises slowly can mean the recent windows are much worse.
 Compare the first and last windows and look at the shape between them:
 
 ```sh
-kubectl logs soak -n context0 | grep -E "^  query" \
+kubectl logs soak -n kora | grep -E "^  query" \
   | sed 's/.*n=\([0-9]*\).*p50= *\([0-9.]*\)ms.*/\1 \2/'
 ```
 
@@ -88,9 +88,9 @@ is the limiter doing its job. To measure the service rather than the limiter,
 raise it for the run:
 
 ```sh
-kubectl set env deploy/context0-api -n context0 CONTEXT0_RATE_LIMIT_PER_MINUTE=60000
+kubectl set env deploy/kora-api -n kora KORA_RATE_LIMIT_PER_MINUTE=60000
 # ... and remember to remove it afterwards
-kubectl set env deploy/context0-api -n context0 CONTEXT0_RATE_LIMIT_PER_MINUTE-
+kubectl set env deploy/kora-api -n kora KORA_RATE_LIMIT_PER_MINUTE-
 ```
 
 **Do not compare throughput across runs unless the runs are comparable.** The
@@ -127,7 +127,7 @@ any of them over twenty minutes is a leak:
 ```sh
 for i in $(seq 1 9); do
   sleep 110
-  kubectl exec -n context0 deploy/context0-api -- wget -q -O- http://localhost:8080/metrics \
+  kubectl exec -n kora deploy/kora-api -- wget -q -O- http://localhost:8080/metrics \
     | grep -E "^go_goroutines |^go_memstats_heap_inuse_bytes |^process_open_fds "
 done
 ```
@@ -142,9 +142,9 @@ got slower" from "the load generator asked for more". For that, use the RED
 histogram's sum and count around a serial loop:
 
 ```sh
-M() { kubectl exec -n context0 deploy/context0-api -- wget -q -O- http://localhost:8080/metrics \
-  | grep -E 'context0_request_duration_seconds_(sum|count)\{method=".*/Query"' | awk '{print $2}' | tr '\n' ' '; }
-B=$(M); kubectl exec -n context0 deploy/context0-api -- sh /tmp/loop.sh; A=$(M)
+M() { kubectl exec -n kora deploy/kora-api -- wget -q -O- http://localhost:8080/metrics \
+  | grep -E 'kora_request_duration_seconds_(sum|count)\{method=".*/Query"' | awk '{print $2}' | tr '\n' ' '; }
+B=$(M); kubectl exec -n kora deploy/kora-api -- sh /tmp/loop.sh; A=$(M)
 # mean = (sum_after - sum_before) / (count_after - count_before)
 ```
 

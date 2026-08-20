@@ -5,6 +5,13 @@ bin/
 *.so
 *.dylib
 
+# Binaries built into the repo root by `go build ./cmd/...` without -o, which
+# names them after their package directory. 15-27MB each and easy to commit by
+# accident, since the bin/ rule above does not cover them.
+/cli
+/server
+/consolidate
+
 # Go build artifacts
 # NOTE: api/gen/ is committed (standard Go practice for proto generated code)
 coverage.out
@@ -21,7 +28,7 @@ bench/*
 bench/src/*
 !bench/src/providers/
 bench/src/providers/*
-!bench/src/providers/context0/
+!bench/src/providers/kora/
 !bench/src/providers/index.ts
 !bench/src/types/
 bench/src/types/*

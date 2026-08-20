@@ -1,4 +1,4 @@
-# Kubernetes-native production readiness for Context0 (Go + PostgreSQL/AGE + pgvector)
+# Kubernetes-native production readiness for Kora (Go + PostgreSQL/AGE + pgvector)
 
 Research report, 2026-08-18. No code was modified.
 Legend: **[V]** = verified against a cited primary source. **[I]** = my inference / engineering judgment.
@@ -8,7 +8,7 @@ Version-sensitive claims are flagged **[VER]**.
 
 ## 0. Current-state facts about this repo (read from source, not inferred)
 
-- `charts/context0/templates/api.yaml`: liveness and readiness are the *same* HTTP probe on `/v1/health`,
+- `charts/kora/templates/api.yaml`: liveness and readiness are the *same* HTTP probe on `/v1/health`,
   no `startupProbe`, no `preStop`, no `terminationGracePeriodSeconds`, no PDB, no HPA, no topologySpread,
   no ServiceMonitor. Service is a plain ClusterIP/NodePort fronting both `grpc` and `http` ports.
 - `internal/auth/apikey.go:125`: `/v1/health` and `/metrics` bypass auth. Good - probes work; but it also means
@@ -33,7 +33,7 @@ The startup probe exists specifically so you can keep liveness aggressive withou
 "set up a startup probe with the same command, HTTP or TCP check, with a `failureThreshold * periodSeconds`
 long enough to cover the worst case startup time." **[V]** (same page)
 
-Context0's boot does `repo.InitSchema(ctx)` (AGE graph creation) before serving. That is exactly the
+Kora's boot does `repo.InitSchema(ctx)` (AGE graph creation) before serving. That is exactly the
 slow-first-start case a startupProbe is for. **[I]**
 
 ### 1.2 Native gRPC probe: GA, and what it costs you **[V] [VER]**
@@ -57,7 +57,7 @@ Go implementation is one import: `google.golang.org/grpc/health` gives `health.N
 `SetServingStatus`, plus `Shutdown()` (flip everything to NOT_SERVING and freeze) and `Resume()`.
 <https://pkg.go.dev/google.golang.org/grpc/health> **[V]**
 
-> Note for this repo: Context0 registers its *own* `HealthService` proto, not `grpc.health.v1.Health`.
+> Note for this repo: Kora registers its *own* `HealthService` proto, not `grpc.health.v1.Health`.
 > The native k8s `grpc:` probe will not work until the standard service is also registered. **[I]**
 
 ### 1.3 What readiness should check, and why liveness must NOT touch the DB
@@ -83,7 +83,7 @@ The argument against DB connectivity in **liveness** is a correlated-failure arg
   and triggers failover, not a restart loop.
   <https://cloudnative-pg.io/docs/1.25/failover> **[V]**
 
-### 1.4 Concrete recommendation for Context0 **[I]**
+### 1.4 Concrete recommendation for Kora **[I]**
 
 | Probe | Endpoint | Semantics | Suggested timings |
 |---|---|---|---|
@@ -178,7 +178,7 @@ pool.Close()
 
 **Two real bugs in `cmd/server/main.go` today** (both [I], derived from the code above):
 1. **Ordering is inverted.** `GracefulStop()` runs before `httpServer.Shutdown()`. The grpc-gateway mux dials the
-   local gRPC server (`RegisterContext0HandlerFromEndpoint(ctx, gwMux, cfg.GRPCAddr(), ...)`), so killing gRPC
+   local gRPC server (`RegisterKoraHandlerFromEndpoint(ctx, gwMux, cfg.GRPCAddr(), ...)`), so killing gRPC
    first makes every in-flight *REST* request fail with `Unavailable` during the drain. HTTP must drain first.
 2. **Unbounded drain.** `httpServer.Shutdown(ctx)` passes the long-lived root context, so there is no deadline;
    a slow client can hold shutdown until the kubelet SIGKILLs at the grace period, and `pool.Close()` /
@@ -206,7 +206,7 @@ window. Crucially: "if some of the Pod's containers do not have the relevant **r
 utilization for the Pod will not be defined and the autoscaler will not take any action."
 <https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/> **[V]**
 
-So step zero for Context0 is setting real CPU/memory **requests** in `values.yaml`. Without requests, a CPU HPA is
+So step zero for Kora is setting real CPU/memory **requests** in `values.yaml`. Without requests, a CPU HPA is
 silently inert. **[V] + [I]**
 
 The same doc's "Pod readiness and autoscaling metrics" section is directly relevant to a service that runs
@@ -216,7 +216,7 @@ documented good practice is "Configure a `startupProbe` that doesn't pass until 
 **[V]** This ties §1 and §3 together: without a startupProbe, boot CPU spikes can drive spurious scale-ups.
 
 ### 3.2 What metric actually makes sense for a query-serving API **[I]**
-CPU is a *proxy* for saturation and it is a bad proxy for Context0 specifically: a vector-similarity + AGE graph
+CPU is a *proxy* for saturation and it is a bad proxy for Kora specifically: a vector-similarity + AGE graph
 query spends most of its wall time **blocked on Postgres**, so p99 latency rises long before pod CPU does. Ranked:
 
 1. **Concurrency / in-flight requests per pod** (Little's Law: `concurrency = RPS x latency`). This is the single
@@ -251,7 +251,7 @@ readable namespaced CR that a user can copy, rather than in a cluster-scoped ada
 edit. Set `ignoreNullValues: false` so a Prometheus outage surfaces loudly instead of silently pinning replicas.
 
 ### 3.4 HPA + long-lived gRPC connections: the load-imbalance problem **[V]**
-This is the biggest autoscaling gotcha for Context0 and it is well documented:
+This is the biggest autoscaling gotcha for Kora and it is well documented:
 
 > "gRPC breaks the standard connection-level load balancing, including what's provided by Kubernetes. This is
 > because gRPC is built on HTTP/2, and HTTP/2 is designed to have a single long-lived TCP connection, across which
@@ -278,7 +278,7 @@ Remedies, in ascending order of infrastructure cost:
 2. **Client-side round-robin over a headless Service** - "Kubernetes will create multiple A records in the DNS
    entry for the service. If our gRPC client is sufficiently advanced, it can automatically maintain the load
    balancing pool from those DNS entries. But this approach restricts us to certain gRPC clients." **[V]**
-   Viable because Context0 ships its own SDK, but it forces every consumer onto that SDK. **[I]**
+   Viable because Kora ships its own SDK, but it forces every consumer onto that SDK. **[I]**
 3. **L7 proxy / service mesh** (Linkerd, Envoy, Istio, or a gRPC-aware ingress) - balances per *request* rather
    than per connection. **[V]** Correct and general, but a heavy dependency to assume in an OSS chart. **[I]**
 
@@ -417,7 +417,7 @@ Also heed CNPG's own topology warning about cross-AZ hops app -> pooler -> prima
 Together these give a single trace spanning REST -> gateway -> gRPC handler -> pgx query, which is exactly the
 span you need to answer "is p99 our code or the database?" **[I]**
 
-Privacy note **[I]**: Context0 stores user memories. Default the pgx tracer to
+Privacy note **[I]**: Kora stores user memories. Default the pgx tracer to
 `WithDisableSQLStatementInAttributes()` unless the operator opts in.
 
 ### 6.2 ServiceMonitor vs PodMonitor **[V]**
@@ -442,7 +442,7 @@ unauthenticated on the exposed Service" issue. Add a `PrometheusRule` with start
   (e.g. 5ms..2.5s for vector search); default `prometheus.DefBuckets` tops out at 10s and is too coarse at the
   low end for a query API.
 
-**USE, for the resources this service actually saturates** - and for Context0 the scarce resource is *pool
+**USE, for the resources this service actually saturates** - and for Kora the scarce resource is *pool
 connections*, not CPU:
 - `pgxpool.Stat`: `AcquiredConns`/`MaxConns` (utilization), `EmptyAcquireCount` + `EmptyAcquireWaitTime`
   (saturation), `CanceledAcquireCount` (errors), `NewConnsCount`, `MaxLifetimeDestroyCount`. All available on
@@ -464,7 +464,7 @@ variant, and is cosign-signed keyless. A `:debug` variant with a busybox shell e
 Kubernetes itself has used distroless since v1.15.
 <https://github.com/GoogleContainerTools/distroless/blob/main/README.md> **[V]**
 
-For a `CGO_ENABLED=0` Go binary - which Context0 already builds **[V, from Dockerfile]** - `static-debian13` is
+For a `CGO_ENABLED=0` Go binary - which Kora already builds **[V, from Dockerfile]** - `static-debian13` is
 the right target: you get CA certs, `/etc/passwd` with a nonroot user, and tzdata handling without a package
 manager. Pure `scratch` is ~0 MiB smaller in practice but you must hand-copy CA certs and fabricate `/etc/passwd`,
 and you lose the maintained CVE stream (distroless auto-PRs Debian updates **[V]**). **[I]**
@@ -475,7 +475,7 @@ not inside the container **[V, probes doc]**, and the `sleep` preStop handler is
 lifecycle doc]**. Nothing in the k8s path needs a shell or `wget`. Only the docker-compose `HEALTHCHECK` does -
 and that can use the Go binary itself with a `-healthcheck` flag. **[I]**
 
-Note distroless has no shell, so `ENTRYPOINT` must be **vector form** - `ENTRYPOINT ["/context0-server"]` **[V]**.
+Note distroless has no shell, so `ENTRYPOINT` must be **vector form** - `ENTRYPOINT ["/kora-server"]` **[V]**.
 
 Also add: `-ldflags="-s -w"` to strip, `-trimpath` for reproducibility, `USER nonroot:nonroot` (or the `:nonroot`
 tag), and a `securityContext` with `runAsNonRoot: true`, `readOnlyRootFilesystem: true`,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# backup.sh -- take and restore backups of the Context0 database.
+# backup.sh -- take and restore backups of the Kora database.
 #
 # This project had no backup path at all. For a memory engine that is a
 # particularly bad gap: the data is not derivable from anything else, so losing
@@ -9,9 +9,10 @@
 # Two things about this database make a naive `pg_dump` insufficient, both found
 # by actually restoring one rather than by reading documentation:
 #
-#  1. The graph lives in its own schema (`context0`) alongside AGE's
-#     `ag_catalog`. A schema-scoped dump misses the catalog and the restored
-#     graph is unusable. This dumps the whole database.
+#  1. The graph lives in its own schema (`context0`, named before the project
+#     was renamed to Kora and unchanged because renaming it is a data
+#     migration) alongside AGE's `ag_catalog`. A schema-scoped dump misses the
+#     catalog and the restored graph is unusable. This dumps the whole database.
 #
 #  2. pg_restore rebuilds the pgvector HNSW index, and that build needs more
 #     shared memory in one allocation than Kubernetes' default 64Mi /dev/shm
@@ -31,25 +32,25 @@
 #   scripts/backup.sh verify <file>      # restore, check, and drop it again
 #
 # Environment:
-#   NS         namespace (default: context0)
+#   NS         namespace (default: kora)
 #   PG_POD     postgres pod (default: postgres-age-0)
 set -euo pipefail
 
-NS="${NS:-context0}"
+NS="${NS:-kora}"
 PG_POD="${PG_POD:-postgres-age-0}"
-DB="${DB:-context0}"
+DB="${DB:-kora}"
 
 pg() { kubectl exec -n "$NS" "$PG_POD" -- "$@"; }
-psql_q() { pg psql -U context0 -d "$1" -tAc "$2"; }
+psql_q() { pg psql -U kora -d "$1" -tAc "$2"; }
 
 # The dump is streamed to the caller rather than written inside the pod: the
 # container has a read-only root filesystem apart from /tmp, and /tmp is
 # ephemeral, so a backup left there disappears with the pod that holds it.
 cmd_dump() {
-  local out="${1:-context0-$(date -u +%Y%m%dT%H%M%SZ).dump}"
+  local out="${1:-kora-$(date -u +%Y%m%dT%H%M%SZ).dump}"
   echo "Dumping $DB from $NS/$PG_POD..." >&2
   kubectl exec -n "$NS" "$PG_POD" -- \
-    pg_dump -U context0 -d "$DB" -Fc --no-owner --no-acl > "$out"
+    pg_dump -U kora -d "$DB" -Fc --no-owner --no-acl > "$out"
   local size
   size=$(wc -c < "$out" | tr -d ' ')
   if [[ "$size" -lt 1024 ]]; then
@@ -64,14 +65,14 @@ cmd_dump() {
 # can silently overwrite production is a foot-gun, and the useful operation
 # during an incident is to restore beside the live data and compare.
 cmd_restore() {
-  local file="$1" target="${2:-context0_restore}"
+  local file="$1" target="${2:-kora_restore}"
   [[ -f "$file" ]] || { echo "error: no such file: $file" >&2; exit 1; }
 
   echo "Restoring $file into database '$target'..." >&2
   psql_q postgres "DROP DATABASE IF EXISTS $target" >/dev/null
   psql_q postgres "CREATE DATABASE $target" >/dev/null
   kubectl exec -i -n "$NS" "$PG_POD" -- \
-    pg_restore -U context0 -d "$target" --no-owner --no-acl < "$file" 2>&1 \
+    pg_restore -U kora -d "$target" --no-owner --no-acl < "$file" 2>&1 \
     | grep -v '^pg_restore: warning: errors ignored' || true
   echo "$target"
 }
@@ -79,7 +80,7 @@ cmd_restore() {
 # The part that matters. pg_restore reports success while having skipped an
 # index, so "it restored" is not the same as "it is usable".
 cmd_verify() {
-  local file="$1" target="context0_verify_$$"
+  local file="$1" target="kora_verify_$$"
   local fail=0
 
   cmd_restore "$file" "$target" >/dev/null

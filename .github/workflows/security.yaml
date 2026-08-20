@@ -41,13 +41,13 @@ jobs:
 
       - name: Build images
         run: |
-          docker build -t context0/context0:scan .
-          docker build -t context0/postgres-age-vector:scan ./docker/postgres-age-vector/
+          docker build -t kora/kora:scan .
+          docker build -t kora/postgres-age-vector:scan ./docker/postgres-age-vector/
 
       - name: Scan API image
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: context0/context0:scan
+          image-ref: kora/kora:scan
           format: sarif
           output: trivy-api.sarif
           severity: CRITICAL,HIGH
@@ -55,7 +55,7 @@ jobs:
       - name: Scan Postgres image
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: context0/postgres-age-vector:scan
+          image-ref: kora/postgres-age-vector:scan
           format: sarif
           output: trivy-pg.sarif
           severity: CRITICAL,HIGH

@@ -1,4 +1,4 @@
-// Context0 server is the main entry point for the Context0 memory engine.
+// Kora server is the main entry point for the Kora memory engine.
 // It boots the following subsystems in order and then blocks until a
 // termination signal is received:
 //
@@ -30,15 +30,15 @@ import (
 	"syscall"
 	"time"
 
-	pb "github.com/context0/context0/api/gen/context0/v1"
-	"github.com/context0/context0/internal/auth"
-	"github.com/context0/context0/internal/config"
-	emb "github.com/context0/context0/internal/embedding"
-	"github.com/context0/context0/internal/graph"
-	"github.com/context0/context0/internal/logging"
-	"github.com/context0/context0/internal/metrics"
-	"github.com/context0/context0/internal/server"
-	"github.com/context0/context0/internal/service"
+	pb "github.com/NarayanaSabari/Kora/api/gen/kora/v1"
+	"github.com/NarayanaSabari/Kora/internal/auth"
+	"github.com/NarayanaSabari/Kora/internal/config"
+	emb "github.com/NarayanaSabari/Kora/internal/embedding"
+	"github.com/NarayanaSabari/Kora/internal/graph"
+	"github.com/NarayanaSabari/Kora/internal/logging"
+	"github.com/NarayanaSabari/Kora/internal/metrics"
+	"github.com/NarayanaSabari/Kora/internal/server"
+	"github.com/NarayanaSabari/Kora/internal/service"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
@@ -68,7 +68,7 @@ func main() {
 	// anything binds a port or opens a connection.
 	//
 	// A value that was set but unusable is fatal rather than quietly replaced
-	// by a default: an operator who mistyped CONTEXT0_RATE_LIMIT_PER_MINUTE
+	// by a default: an operator who mistyped KORA_RATE_LIMIT_PER_MINUTE
 	// would otherwise get the default limit with nothing anywhere saying their
 	// setting was ignored.
 	if err := cfg.Validate(); err != nil {
@@ -149,7 +149,7 @@ func main() {
 	sessionSvc := service.NewSessionService(repo)
 	healthSvc := service.NewHealthService(repo, cfg.Version)
 
-	pb.RegisterContext0Server(grpcServer, memorySvc)
+	pb.RegisterKoraServer(grpcServer, memorySvc)
 	pb.RegisterSessionServiceServer(grpcServer, sessionSvc)
 	pb.RegisterHealthServiceServer(grpcServer, healthSvc)
 
@@ -195,7 +195,7 @@ func main() {
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 
 	// Register each service's REST handler, pointing back to the local gRPC server.
-	if err := pb.RegisterContext0HandlerFromEndpoint(ctx, gwMux, cfg.GRPCAddr(), opts); err != nil {
+	if err := pb.RegisterKoraHandlerFromEndpoint(ctx, gwMux, cfg.GRPCAddr(), opts); err != nil {
 		fatal("failed to register memory gateway", err)
 	}
 	if err := pb.RegisterSessionServiceHandlerFromEndpoint(ctx, gwMux, cfg.GRPCAddr(), opts); err != nil {

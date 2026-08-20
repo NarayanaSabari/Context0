@@ -34,7 +34,7 @@ func runConsolidate(t *testing.T, bin string, env ...string) (output string, cod
 	t.Helper()
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(),
-		"CONTEXT0_DATABASE_URL=postgres://nobody@127.0.0.1:1/nothing?sslmode=disable",
+		"KORA_DATABASE_URL=postgres://nobody@127.0.0.1:1/nothing?sslmode=disable",
 	)
 	cmd.Env = append(cmd.Env, env...)
 

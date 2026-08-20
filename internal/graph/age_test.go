@@ -4,11 +4,11 @@
 // through the actual parser, which is the only way to catch a query that is
 // syntactically valid Go but malformed openCypher.
 //
-// The suite is skipped unless CONTEXT0_TEST_DATABASE_URL is set, so the default
+// The suite is skipped unless KORA_TEST_DATABASE_URL is set, so the default
 // `go test ./...` stays hermetic:
 //
 //	docker compose up -d postgres
-//	CONTEXT0_TEST_DATABASE_URL="postgres://context0:context0@localhost:5432/context0?sslmode=disable" \
+//	KORA_TEST_DATABASE_URL="postgres://kora:kora@localhost:5432/kora?sslmode=disable" \
 //	  go test ./internal/graph/...
 //
 // Every test scopes its data to a unique project id and cleans up after itself,
@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/context0/context0/pkg/model"
+	"github.com/NarayanaSabari/Kora/pkg/model"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -46,9 +46,9 @@ const testEmbeddingDim = 384
 func testRepo(t *testing.T) (*AGERepository, context.Context) {
 	t.Helper()
 
-	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("CONTEXT0_TEST_DATABASE_URL not set; skipping AGE integration tests")
+		t.Skip("KORA_TEST_DATABASE_URL not set; skipping AGE integration tests")
 	}
 
 	ctx := context.Background()

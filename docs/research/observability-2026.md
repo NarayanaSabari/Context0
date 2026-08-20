@@ -1,8 +1,8 @@
-# Enterprise observability for Context0 (Go gRPC + REST on Kubernetes)
+# Enterprise observability for Kora (Go gRPC + REST on Kubernetes)
 
 Research report, 2026-08-18. **No code was modified.** Everything below is either a
 [VERIFIED] claim backed by a primary source I fetched, or [INFERENCE] where I am reasoning
-from those sources to Context0's specific situation.
+from those sources to Kora's specific situation.
 
 Current state confirmed by reading the repo:
 `internal/metrics/metrics.go` has 6 metrics, `QueryDuration`/`StoreDuration` both use
@@ -72,7 +72,7 @@ Two important properties the docs call out explicitly:
 For the hot path, `logger.LogAttrs(ctx, slog.LevelInfo, "msg", slog.Int("count", 3))` is the
 allocation-free form; `slog.Info("msg", "count", 3)` allocates. [VERIFIED - "For the most
 efficient log output, use Logger.LogAttrs ... this allows it, too, to avoid allocation".]
-At Context0's request rates this matters mostly for per-request logs, not for startup logs.
+At Kora's request rates this matters mostly for per-request logs, not for startup logs.
 [INFERENCE]
 
 ### Attaching request-scoped context (trace IDs)
@@ -111,7 +111,7 @@ interface with `Handle(ctx, Record)` and the `Record.AddAttrs` method are verifi
 This only works if you use the `...Context` methods: `slog.InfoContext(ctx, ...)`,
 `logger.LogAttrs(ctx, ...)`. The bare `slog.Info` has no context and will silently drop the
 trace ID. The docs say *"It is recommended to pass a context to an output method if one is
-available."* [VERIFIED] For Context0 that means a lint rule (`sloglint` has a
+available."* [VERIFIED] For Kora that means a lint rule (`sloglint` has a
 `context-only` mode) is worth adding alongside the migration. [INFERENCE]
 
 There is also an official bridge, `go.opentelemetry.io/contrib/bridges/otelslog` v0.20.0,
@@ -133,7 +133,7 @@ treat the bridge as optional.
   configured with the minimum level to output ... The program's `main` function typically
   does this."* [VERIFIED]
 
-[INFERENCE for Context0 specifically] Per-request success logs at Info are wasteful once you
+[INFERENCE for Kora specifically] Per-request success logs at Info are wasteful once you
 have RED metrics - the metric already tells you the rate. Log at Info for lifecycle events
 (startup, config, migrations, consolidation phase transitions) and at Warn/Error for
 failures, and let Debug carry per-request detail.
@@ -142,7 +142,7 @@ Related, and worth doing: Prometheus's instrumentation guide says *"for every li
 code you should also have a counter that is incremented ... It is also generally useful to
 export the total number of info/error/warning lines that were logged by the application as a
 whole"* [VERIFIED, <https://prometheus.io/docs/practices/instrumentation/>]. A `slog.Handler`
-wrapper that increments `context0_log_messages_total{level=...}` gives you that for free, and
+wrapper that increments `kora_log_messages_total{level=...}` gives you that for free, and
 `level` is a bounded 4-value label. [INFERENCE on the implementation.]
 
 ### Avoiding accidental user-data logging
@@ -152,7 +152,7 @@ implements the LogValuer interface, the Value returned from its LogValue method 
 logging. You can use this to control how values of the type appear in logs. For example, you
 can redact secret information like passwords, or gather a struct's fields in a Group."*
 
-For Context0 that means:
+For Kora that means:
 
 ```go
 type MemoryContent string
@@ -227,10 +227,10 @@ v0.70.0]
 *"NewMiddleware returns a tracing and metrics instrumentation middleware."* Wrap the
 grpc-gateway mux with it.
 
-Two features that matter for Context0:
+Two features that matter for Kora:
 
 - `WithSpanNameFormatter(func(operation string, r *http.Request) string)` - **use this**. The
-  default naming can produce per-path span names; since Context0's REST routes are
+  default naming can produce per-path span names; since Kora's REST routes are
   gateway-generated they should already be templated, but confirm. [VERIFIED that the option
   exists; INFERENCE on the recommendation.]
 - `otelhttp.Labeler` / `LabelerFromContext` - lets a handler add bounded attributes to the
@@ -245,7 +245,7 @@ Two features that matter for Context0:
 [VERIFIED, <https://pkg.go.dev/github.com/exaring/otelpgx>, v0.11.1, published 2026-05-21,
 110 importers]
 
-This is the mature option for pgx v5. The README gives exactly the wiring Context0 needs:
+This is the mature option for pgx v5. The README gives exactly the wiring Kora needs:
 
 ```go
 cfg, err := pgxpool.ParseConfig(connString)
@@ -258,10 +258,10 @@ Note `otelpgx.RecordStats` **also solves §4** if you go the OTel-metrics route:
 records database statistics for provided pgxpool.Pool at a default 1 second interval unless
 otherwise specified by the WithMinimumReadDBStatsInterval StatsOption."* [VERIFIED]
 
-Critical options for Context0, all [VERIFIED from the option list]:
+Critical options for Kora, all [VERIFIED from the option list]:
 
 - **`WithDisableSQLStatementInAttributes()`** or `WithTrimSQLInSpanName()`. By default *"the
-  whole SQL statement is used as a span name"*. For Context0's AGE Cypher queries and pgvector
+  whole SQL statement is used as a span name"*. For Kora's AGE Cypher queries and pgvector
   similarity queries, raw SQL in the span name is both a cardinality problem in the tracing
   backend and a potential data-leak (embedded literals). `WithTrimSQLInSpanName` uses only the
   first word; `WithSpanNameFunc` gives full control. **This is the single most important
@@ -304,7 +304,7 @@ The reasoning, with the verified facts it rests on:
 **Pragmatic route [INFERENCE]:** keep `client_golang` as the metrics implementation and the
 `/metrics` endpoint. Add OTel purely for traces. If you later want otelgrpc's automatic RPC
 metrics, `otelprom.New(otelprom.WithRegisterer(reg))` lets the OTel MeterProvider write into
-the *same* `client_golang` registry Context0 already serves [VERIFIED - the CustomRegistry
+the *same* `client_golang` registry Kora already serves [VERIFIED - the CustomRegistry
 example does exactly this], so it is an additive migration rather than a rewrite. That is the
 escape hatch that makes "Prometheus now, OTel later" a low-risk sequence.
 
@@ -327,12 +327,12 @@ Two things worth quoting because they bear directly on §7:
 > *"The `error.type` value SHOULD be predictable and SHOULD have low cardinality."*
 
 Even the spec authors treat cardinality control as a MUST-level concern. Also note that spec's
-recommended buckets are *still wrong for Context0* - the first bucket is 5ms, above your p50.
+recommended buckets are *still wrong for Kora* - the first bucket is 5ms, above your p50.
 See §3.
 
 ---
 
-## 3. RED and USE for Context0
+## 3. RED and USE for Kora
 
 ### The methods
 
@@ -358,7 +358,7 @@ And for the pgxpool specifically, USE maps cleanly because Gregg notes: *"It can
 consider some software resources as well, or software imposed limits (resource controls)"* -
 a connection pool is exactly such a resource. [VERIFIED]
 
-### Concrete metric set for Context0
+### Concrete metric set for Kora
 
 [INFERENCE for the specific names/labels; the shape follows the verified guidance above.]
 
@@ -369,11 +369,11 @@ series behaves exactly like a counter for the HTTP requests (which you would cal
 
 | Metric | Type | Labels | Notes |
 |---|---|---|---|
-| `context0_rpc_duration_seconds` | Histogram | `service`, `method`, `code` | Replaces `QueryDuration`/`StoreDuration`. `_count` gives Rate; `code!="OK"` gives Errors. |
-| `context0_rpc_requests_in_flight` | Gauge | `service` | Saturation of the request path. |
-| `context0_rpc_request_bytes` / `_response_bytes` | Histogram | `method` | Optional; catches "slow because huge". |
-| `context0_errors_total` | Counter | `component`, `code` | Errors that never reach an RPC boundary (consolidation, background jobs). |
-| `context0_log_messages_total` | Counter | `level` | Per Prometheus's logging guidance, quoted in §1. |
+| `kora_rpc_duration_seconds` | Histogram | `service`, `method`, `code` | Replaces `QueryDuration`/`StoreDuration`. `_count` gives Rate; `code!="OK"` gives Errors. |
+| `kora_rpc_requests_in_flight` | Gauge | `service` | Saturation of the request path. |
+| `kora_rpc_request_bytes` / `_response_bytes` | Histogram | `method` | Optional; catches "slow because huge". |
+| `kora_errors_total` | Counter | `component`, `code` | Errors that never reach an RPC boundary (consolidation, background jobs). |
+| `kora_log_messages_total` | Counter | `level` | Per Prometheus's logging guidance, quoted in §1. |
 
 Label cardinality: `service` ~3, `method` ~15, `code` ~17 (gRPC canonical codes). Worst case
 3×15×17 = 765 series per bucket set - acceptable but not trivial. **Drop `service`** (it is
@@ -399,16 +399,16 @@ recommend the single-metric-with-labels shape explicitly: *"rather than
 
 For the consolidation path, the Prometheus guide's offline-processing advice applies directly:
 *"For each stage, track the items coming in, how many are in progress, the last time you
-processed something, and how many items were sent out."* [VERIFIED] Context0's
+processed something, and how many items were sent out."* [VERIFIED] Kora's
 `internal/service/consolidate.go` logs phase transitions but exports nothing - a
-`context0_consolidation_last_success_timestamp_seconds` gauge would let you alert on a stalled
+`kora_consolidation_last_success_timestamp_seconds` gauge would let you alert on a stalled
 consolidator, which is currently undetectable.
 
 Also note Go runtime metrics are **already free**: `client_golang`'s `DefaultRegisterer` comes
 pre-registered with the Go and process collectors *"Also note that the DefaultRegisterer comes
 registered with a Collector for Go runtime metrics (via NewGoCollector) and a Collector for
 process metrics (via NewProcessCollector)"* [VERIFIED,
-<https://pkg.go.dev/github.com/prometheus/client_golang/prometheus>]. Context0 uses
+<https://pkg.go.dev/github.com/prometheus/client_golang/prometheus>]. Kora uses
 `prometheus.MustRegister` (the default registry), so `go_goroutines`, heap stats, GC, fds and
 CPU are already on `/metrics`. Half of USE is already there and probably unused.
 
@@ -432,7 +432,7 @@ The mechanism matters: Prometheus quantile estimation *"is calculated by assumin
 distribution within a bucket"* - if the true p50 is 3ms and the only information is "n
 observations landed somewhere in [0, 5ms]", the estimate is an artifact of the bucket layout,
 not the data. [Interpolation behaviour is VERIFIED from
-<https://prometheus.io/docs/practices/histograms/>; the arithmetic applied to Context0 is
+<https://prometheus.io/docs/practices/histograms/>; the arithmetic applied to Kora is
 INFERENCE.]
 
 **Better buckets** [INFERENCE, derived from the verified principle that boundaries should
@@ -458,7 +458,7 @@ Design rules behind that list:
    pgvector scan, AGE query blowup) live out there and you need to distinguish "slow" from
    "catastrophically slow".
 4. **Do not exceed ~15 buckets** per label combination. Cost is `buckets × label
-   combinations`, and Context0 will have a few hundred label combinations.
+   combinations`, and Kora will have a few hundred label combinations.
 
 **Better still: native histograms.** The Prometheus docs are unusually blunt: *"The most
 important lesson to learn from this document is simple: If you can, use native histograms and
@@ -481,7 +481,7 @@ both from one instrument.
 One more verified caution on aggregation, which is the reason to prefer histograms over
 summaries here: with summaries *"you cannot aggregate quantiles (e.g. to calculate the total
 90th percentile latency for a service backed by multiple replicated workers)"* [VERIFIED]. On
-Kubernetes with multiple Context0 replicas, that rules summaries out.
+Kubernetes with multiple Kora replicas, that rules summaries out.
 
 ---
 
@@ -509,7 +509,7 @@ method set:
 | `TotalConns()` | `int32` | Total in pool |
 
 Config knobs that these interact with, also verified from that page: `MaxConns` (*"The default
-is the greater of 4 or runtime.NumCPU()"* - worth checking Context0 sets this explicitly; the
+is the greater of 4 or runtime.NumCPU()"* - worth checking Kora sets this explicitly; the
 default is far too small for a k8s pod with a low CPU limit), `MinConns`, `MaxConnLifetime`,
 `MaxConnLifetimeJitter` (*"helps prevent all connections from being closed at the exact same
 time, starving the pool"*), `MaxConnIdleTime`, `PingTimeout`.
@@ -611,10 +611,10 @@ func (c *poolCollector) Collect(ch chan<- prometheus.Metric) {
 [The API shapes - `Describe`/`Collect`/`MustNewConstMetric`/`CounterValue` - are VERIFIED from
 the client_golang docs; this specific composition is INFERENCE.]
 
-Naming: cumulative ones end in `_total` (`context0_pgxpool_acquires_total`,
+Naming: cumulative ones end in `_total` (`kora_pgxpool_acquires_total`,
 `..._empty_acquires_total`, `..._canceled_acquires_total`,
 `..._acquire_duration_seconds_total`, `..._empty_acquire_wait_seconds_total`); gauges do not
-(`context0_pgxpool_acquired_conns`, `..._idle_conns`, `..._max_conns`). If Context0 ever runs
+(`kora_pgxpool_acquired_conns`, `..._idle_conns`, `..._max_conns`). If Kora ever runs
 more than one pool, add a single bounded `pool` label - the Prometheus guide anticipates this:
 *"a database connection pool should distinguish the databases it is talking to"* [VERIFIED].
 
@@ -678,7 +678,7 @@ Only histograms and counters carry exemplars; gauges do not. [INFERENCE]
 
 ### Is it worth doing?
 
-**[INFERENCE] Yes for Context0, but only after tracing exists, and it is the 6th priority not
+**[INFERENCE] Yes for Kora, but only after tracing exists, and it is the 6th priority not
 the 1st.**
 
 The argument for: exemplars solve the single hardest problem in latency debugging - the
@@ -695,7 +695,7 @@ distinction from §7), a handful of lines of code.
 
 The argument against, honestly stated: it requires an OpenMetrics-capable scrape path, a
 Prometheus feature flag, and a Grafana datasource with `exemplarTraceIdDestinations`
-configured. That is three pieces of infrastructure coordination. If Context0's Prometheus is
+configured. That is three pieces of infrastructure coordination. If Kora's Prometheus is
 managed by someone else, the flag may be a negotiation.
 
 **Practical alternative if exemplars are blocked** [INFERENCE]: tail-based sampling in an OTel
@@ -718,10 +718,10 @@ sampler. Cruder, but needs no cooperation from the metrics stack.
 
 **Row 2 - RED, aggregate then per-method:**
 
-- Request rate: `sum(rate(context0_rpc_duration_seconds_count[5m])) by (method)`
+- Request rate: `sum(rate(kora_rpc_duration_seconds_count[5m])) by (method)`
 - Error ratio: `sum(rate(...{code!="OK"}[5m])) by (method) / sum(rate(...[5m])) by (method)`
 - Latency p50/p95/p99:
-  `histogram_quantile(0.99, sum(rate(context0_rpc_duration_seconds_bucket[5m])) by (le, method))`
+  `histogram_quantile(0.99, sum(rate(kora_rpc_duration_seconds_bucket[5m])) by (le, method))`
   Note the aggregation order - `sum by (le)` *before* `histogram_quantile`. This is the
   aggregatability property that makes histograms usable across replicas and summaries not
   [VERIFIED, §3].
@@ -731,10 +731,10 @@ sampler. Cruder, but needs no cooperation from the metrics stack.
 
 **Row 3 - dependencies (pgxpool + Postgres):**
 
-- Pool utilization: `context0_pgxpool_acquired_conns / context0_pgxpool_max_conns`
-- Pool saturation: `rate(context0_pgxpool_empty_acquire_wait_seconds_total[5m])` - the
+- Pool utilization: `kora_pgxpool_acquired_conns / kora_pgxpool_max_conns`
+- Pool saturation: `rate(kora_pgxpool_empty_acquire_wait_seconds_total[5m])` - the
   "average goroutines blocked" number from §4.
-- `rate(context0_pgxpool_canceled_acquires_total[5m])` - should be flat zero.
+- `rate(kora_pgxpool_canceled_acquires_total[5m])` - should be flat zero.
 - Query duration p95 split by operation (vector search vs AGE traversal vs write). These have
   wildly different profiles and averaging them together hides regressions.
 
@@ -802,36 +802,36 @@ The workbook's own detection-time formula for approach 1 is
 `alerting window size / reporting period` of budget spend, and for approach 2:
 `(1 − SLO) / error ratio × alerting window size`. [VERIFIED]
 
-**Concrete rules for Context0** [INFERENCE - the structure is the workbook's canonical
+**Concrete rules for Kora** [INFERENCE - the structure is the workbook's canonical
 multiwindow/multi-burn-rate pattern; the specific SLO numbers are proposals]:
 
 Assume a 99.9% availability SLO over 30 days.
 
 ```yaml
 # Fast burn: 14.4x rate consumes 2% of a 30d budget in 1h. Page.
-- alert: Context0ErrorBudgetFastBurn
+- alert: KoraErrorBudgetFastBurn
   expr: |
-    (context0:slo_errors:ratio_rate1h  > (14.4 * 0.001))
+    (kora:slo_errors:ratio_rate1h  > (14.4 * 0.001))
     and
-    (context0:slo_errors:ratio_rate5m  > (14.4 * 0.001))
+    (kora:slo_errors:ratio_rate5m  > (14.4 * 0.001))
   for: 2m
   labels: {severity: page}
 
 # Slow burn: 6x rate consumes 5% of budget in 6h. Page.
-- alert: Context0ErrorBudgetSlowBurn
+- alert: KoraErrorBudgetSlowBurn
   expr: |
-    (context0:slo_errors:ratio_rate6h  > (6 * 0.001))
+    (kora:slo_errors:ratio_rate6h  > (6 * 0.001))
     and
-    (context0:slo_errors:ratio_rate30m > (6 * 0.001))
+    (kora:slo_errors:ratio_rate30m > (6 * 0.001))
   for: 15m
   labels: {severity: page}
 
 # 3x over 24h / 3x over 3d. Ticket, not page.
-- alert: Context0ErrorBudgetBurnTicket
+- alert: KoraErrorBudgetBurnTicket
   expr: |
-    (context0:slo_errors:ratio_rate3d  > (1 * 0.001))
+    (kora:slo_errors:ratio_rate3d  > (1 * 0.001))
     and
-    (context0:slo_errors:ratio_rate6h  > (1 * 0.001))
+    (kora:slo_errors:ratio_rate6h  > (1 * 0.001))
   labels: {severity: ticket}
 ```
 
@@ -839,7 +839,7 @@ The short second window is the part that matters and the part people omit: it is
 **good reset time**, since the alert stops firing minutes after recovery instead of hours later.
 That directly addresses the approach-2 flaw quoted above.
 
-Precompute the ratios as recording rules (`context0:slo_errors:ratio_rate1h` etc.) - the
+Precompute the ratios as recording rules (`kora:slo_errors:ratio_rate1h` etc.) - the
 workbook's examples use exactly this `job:slo_errors_per_request:ratio_rate10m` naming
 convention [VERIFIED], and it also mitigates the "expensive over long windows" concern.
 
@@ -848,9 +848,9 @@ convention [VERIFIED], and it also mitigates the "expensive over long windows" c
 
 ```
 1 - (
-  sum(rate(context0_rpc_duration_seconds_bucket{le="0.025"}[1h]))
+  sum(rate(kora_rpc_duration_seconds_bucket{le="0.025"}[1h]))
   /
-  sum(rate(context0_rpc_duration_seconds_count[1h]))
+  sum(rate(kora_rpc_duration_seconds_count[1h]))
 )
 ```
 
@@ -861,8 +861,8 @@ interpolated estimate and the alert inherits that error.
 above should be the only *pages*, but a few cause-based **tickets** are worth having because
 they are leading indicators:
 
-- `rate(context0_pgxpool_canceled_acquires_total[5m]) > 0` for 10m - pool exhaustion.
-- `time() - context0_consolidation_last_success_timestamp_seconds > 3600` - stalled background
+- `rate(kora_pgxpool_canceled_acquires_total[5m]) > 0` for 10m - pool exhaustion.
+- `time() - kora_consolidation_last_success_timestamp_seconds > 3600` - stalled background
   worker. The Prometheus guide notes *"Knowing the last time that a system processed something
   is useful for detecting if it has stalled"* [VERIFIED].
 - `go_goroutines` growth over 6h - leak.
@@ -870,7 +870,7 @@ they are leading indicators:
 
 **Low-traffic caveat** [VERIFIED that the workbook flags this]: the chapter explicitly notes
 *"alerting can become particularly sensitive to nonsignificant events during low-traffic
-periods (discussed in Low-Traffic Services and Error Budget Alerting)"*. If Context0 serves a
+periods (discussed in Low-Traffic Services and Error Budget Alerting)"*. If Kora serves a
 handful of requests per minute in some environments, a single error becomes a 100% error rate
 over a short window. Mitigations: longer short-windows, a minimum-traffic guard
 (`and sum(rate(...[5m])) > 0.1`), or synthetic probe traffic.
@@ -904,7 +904,7 @@ The docs' own worked example makes the scale concrete [VERIFIED]: node_exporter 
 per user, you would quickly reach a double digit number of millions with 10,000 users on 10,000
 nodes. This is too much for the current implementation of Prometheus."*
 
-Apply that arithmetic to Context0 [INFERENCE]: `context0_rpc_duration_seconds` with 14 buckets
+Apply that arithmetic to Kora [INFERENCE]: `kora_rpc_duration_seconds` with 14 buckets
 × 15 methods × 17 status codes is ~3,570 series - fine. Multiply by 10,000 projects and you
 have **35.7 million series** from one metric. Each series carries memory in the head block, an
 index entry, and disk. This will OOM Prometheus. And critically, **the damage persists**:
@@ -920,7 +920,7 @@ MUST become `_OTHER` when unrecognized, and `error.type` *"SHOULD be predictable
 have low cardinality"* [VERIFIED, §2]. Two independent standards bodies both treating this as a
 MUST/SHOULD is strong signal.
 
-### Full list of labels to avoid in Context0
+### Full list of labels to avoid in Kora
 
 [INFERENCE, applying the verified rules above to this codebase.]
 
@@ -939,7 +939,7 @@ other label you add - which is another reason to keep application labels tight.
 by `MemoriesTotal`), `relationship` (relates_to/supersedes/caused_by - already correct in
 `EdgesTotal`), `level` (4), `transport` (2), `operation` (a small enum you define), `component`.
 
-Context0's existing `MemoriesTotal{type}` and `EdgesTotal{relationship}` are **already the right
+Kora's existing `MemoriesTotal{type}` and `EdgesTotal{relationship}` are **already the right
 pattern** - the label domain is fixed by the schema, not by user input. Preserve that
 discipline.
 

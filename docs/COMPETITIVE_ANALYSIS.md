@@ -1,4 +1,4 @@
-# Competitive Analysis: Context0 vs Supermemory
+# Competitive Analysis: Kora vs Supermemory
 
 ## Supermemory — What They Do Well
 
@@ -77,11 +77,11 @@ results = client.search(query="auth architecture", container_tag="user-123")
 
 ## Feature Gap Analysis: What We're Missing
 
-Here's what Supermemory has that Context0 doesn't yet, and what we should build:
+Here's what Supermemory has that Kora doesn't yet, and what we should build:
 
 ### CRITICAL — Must Build for MVP+
 
-| Feature | Supermemory | Context0 Today | Priority |
+| Feature | Supermemory | Kora Today | Priority |
 |---------|-------------|----------------|----------|
 | **Auto memory extraction from conversations** | Parses unstructured text, extracts facts automatically | Manual: agent must explicitly call Store with structured content | **P0** — This is their killer feature |
 | **User Profiles (static + dynamic)** | Auto-built, auto-maintained, queryable as a unit | No profile concept — just raw memories | **P0** — Needed for personalization use case |
@@ -92,7 +92,7 @@ Here's what Supermemory has that Context0 doesn't yet, and what we should build:
 
 ### HIGH — Build Soon After MVP
 
-| Feature | Supermemory | Context0 Today | Priority |
+| Feature | Supermemory | Kora Today | Priority |
 |---------|-------------|----------------|----------|
 | **Relationship auto-detection** | Detects updates/extends/derives automatically | Manual: agent calls Connect() explicitly | **P2** |
 | **Multi-content ingestion** | PDF, DOCX, images, audio, video, URLs | Text only | **P2** |
@@ -103,7 +103,7 @@ Here's what Supermemory has that Context0 doesn't yet, and what we should build:
 
 ### MEDIUM — Differentiation Opportunities
 
-| Feature | Supermemory | Context0 Today | Priority |
+| Feature | Supermemory | Kora Today | Priority |
 |---------|-------------|----------------|----------|
 | **Framework SDKs** | LangChain, CrewAI, Vercel AI, Claude Code integrations | Python SDK + Go CLI | **P3** |
 | **Benchmarking** | LongMemEval-S, LoCoMo benchmarks | No benchmarks yet | **P3** |
@@ -111,11 +111,11 @@ Here's what Supermemory has that Context0 doesn't yet, and what we should build:
 
 ---
 
-## Where Context0 Already Wins
+## Where Kora Already Wins
 
 Things we have that Supermemory doesn't offer:
 
-| Context0 Advantage | Details |
+| Kora Advantage | Details |
 |-------------------|---------|
 | **Open source** | Full source code, Apache 2.0. Supermemory is closed-source SaaS. |
 | **Self-hostable** | Helm chart, K8s manifests. Supermemory is hosted-only. |
@@ -173,7 +173,7 @@ Things we have that Supermemory doesn't offer:
    - MCP (Model Context Protocol) server for Claude Code
 
 8. **MemoryBench**
-   - Run LongMemEval-S and LoCoMo benchmarks against Context0
+   - Run LongMemEval-S and LoCoMo benchmarks against Kora
    - Publish results, establish credibility
 
 ---
@@ -182,10 +182,10 @@ Things we have that Supermemory doesn't offer:
 
 ```
 Supermemory = Managed memory SaaS (closed source, hosted)
-Context0    = Self-hosted memory engine (open source, K8s-native)
+Kora    = Self-hosted memory engine (open source, K8s-native)
 
 Supermemory is Vercel.
-Context0 is Kubernetes.
+Kora is Kubernetes.
 
 Same problem, different philosophy:
 - They optimize for "get started in 5 minutes" (developer convenience)

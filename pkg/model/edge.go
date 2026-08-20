@@ -1,4 +1,4 @@
-// Package model defines the core domain types for the Context0 memory engine,
+// Package model defines the core domain types for the Kora memory engine,
 // including memories, edges, sessions, and projects.
 package model
 
@@ -9,7 +9,7 @@ import (
 )
 
 // RelationshipType represents the semantic type of a directed edge between
-// two memory nodes in the Context0 knowledge graph.
+// two memory nodes in the Kora knowledge graph.
 type RelationshipType string
 
 const (
@@ -33,7 +33,7 @@ const (
 	RelCausedBy RelationshipType = "caused_by"
 )
 
-// relationshipTypes is the closed set of edge labels Context0 recognizes.
+// relationshipTypes is the closed set of edge labels Kora recognizes.
 var relationshipTypes = map[RelationshipType]bool{
 	RelBelongsTo:  true,
 	RelContains:   true,
@@ -54,7 +54,7 @@ func (r RelationshipType) Valid() bool {
 }
 
 // Edge represents a directed, weighted relationship between two memory nodes
-// in the Context0 knowledge graph. Edges are created explicitly via the
+// in the Kora knowledge graph. Edges are created explicitly via the
 // Connect RPC or automatically during extraction.
 type Edge struct {
 	// ID is the unique identifier for this edge.

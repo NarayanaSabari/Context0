@@ -8,8 +8,8 @@
 # Usage: scripts/verify_k8s.sh [namespace]
 set -uo pipefail
 
-NS="${1:-context0}"
-DB_NAME="${DB_NAME:-context0}"
+NS="${1:-kora}"
+DB_NAME="${DB_NAME:-kora}"
 PASS=0
 FAIL=0
 declare -a FAILURES
@@ -37,17 +37,17 @@ section() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 api_pod() {
   for _ in $(seq 1 60); do
     local p
-    p=$(kubectl get pod -n "$NS" -l app=context0-api \
+    p=$(kubectl get pod -n "$NS" -l app=kora-api \
       -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name} {.status.containerStatuses[0].ready} {.metadata.deletionTimestamp}{"\n"}{end}' \
       2>/dev/null | awk '$2=="true" && $3=="" {print $1; exit}')
     if [[ -n "$p" ]]; then printf '%s' "$p"; return 0; fi
     sleep 2
   done
-  kubectl get pod -n "$NS" -l app=context0-api -o jsonpath='{.items[0].metadata.name}'
+  kubectl get pod -n "$NS" -l app=kora-api -o jsonpath='{.items[0].metadata.name}'
 }
 
 section "1. Probes: three endpoints, three questions"
-spec=$(kubectl get deploy -n "$NS" context0-api -o json)
+spec=$(kubectl get deploy -n "$NS" kora-api -o json)
 check "startupProbe targets /startupz" "/startupz" \
   "$(jq -r '.spec.template.spec.containers[0].startupProbe.httpGet.path' <<<"$spec")"
 check "livenessProbe targets /livez" "/livez" \
@@ -84,13 +84,13 @@ section "4. Runtime configuration reaches the process"
 check "GOMEMLIMIT derived from limits.memory" "536870912" \
   "$(kubectl exec -n "$NS" "$(api_pod)" -- printenv GOMEMLIMIT)"
 check "pool_max_conns set explicitly in the DSN" "pool_max_conns=10" \
-  "$(kubectl exec -n "$NS" "$(api_pod)" -- printenv CONTEXT0_DATABASE_URL)"
+  "$(kubectl exec -n "$NS" "$(api_pod)" -- printenv KORA_DATABASE_URL)"
 # Asserts that the chart passes the value through, not what the value is:
 # pinning the number here means every retune of the default breaks the suite for
 # no reason. The default itself is pinned by a unit test against measured
 # service cost.
 check "rate limit is configurable, not hardcoded" "configured" \
-  "$([[ "$(kubectl exec -n "$NS" "$(api_pod)" -- printenv CONTEXT0_RATE_LIMIT_PER_MINUTE)" =~ ^[0-9]+$ ]] \
+  "$([[ "$(kubectl exec -n "$NS" "$(api_pod)" -- printenv KORA_RATE_LIMIT_PER_MINUTE)" =~ ^[0-9]+$ ]] \
     && echo configured || echo missing)"
 
 section "5. Lifecycle: drain outlives the grace period"
@@ -117,10 +117,10 @@ for name in shared_buffers work_mem maintenance_work_mem effective_cache_size; d
     for (i=2; i<=length(p); i++) out = out toupper(substr(p[i],1,1)) substr(p[i],2);
     print out
   }')
-  want=$(awk -v k="$key:" '$1==k {print $2; exit}' charts/context0/values.yaml)
+  want=$(awk -v k="$key:" '$1==k {print $2; exit}' charts/kora/values.yaml)
   [[ -n "$want" ]] || { printf '  \033[33mSKIP\033[0m  %s not found in values.yaml\n' "$key"; continue; }
   check "$name matches the chart ($key: $want)" "$want" \
-    "$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc "SHOW $name;" 2>/dev/null | tr -d '[:space:]')"
+    "$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d kora -tAc "SHOW $name;" 2>/dev/null | tr -d '[:space:]')"
 done
 
 # The reason the limit was raised: /dev/shm is medium: Memory, so it counts
@@ -128,7 +128,7 @@ done
 # At 1Gi those did not fit and a six-worker soak OOM-killed Postgres six times.
 mem_limit=$(kubectl get sts postgres-age -n "$NS" -o jsonpath='{.spec.template.spec.containers[0].resources.limits.memory}' 2>/dev/null)
 shm_mb=$(kubectl exec -n "$NS" postgres-age-0 -- sh -c "df -m /dev/shm | awk 'NR==2{print \$2}'" 2>/dev/null)
-sb_mb=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc \
+sb_mb=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d kora -tAc \
   "SELECT setting::bigint*8/1024 FROM pg_settings WHERE name='shared_buffers';" 2>/dev/null | tr -d '[:space:]')
 limit_mb=$(awk -v l="$mem_limit" 'BEGIN{ gsub(/Gi/,"",l); if (l ~ /Mi/) { gsub(/Mi/,"",l); print l } else { print l*1024 } }')
 printf '  observed: limit %s, /dev/shm %sMi, shared_buffers %sMB\n' "$mem_limit" "${shm_mb:-?}" "${sb_mb:-?}"
@@ -151,14 +151,14 @@ check "postgres never reached its memory limit" "0" \
 
 section "7. Performance work reaches the cluster, not just the laptop"
 check "property indexes created automatically on first boot" "memory_id_idx" \
-  "$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc \
+  "$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d kora -tAc \
      "SELECT string_agg(indexname, ',') FROM pg_indexes WHERE schemaname='context0' AND indexname LIKE 'memory%';" 2>/dev/null)"
 check "project_id index present too" "memory_project_id_idx" \
-  "$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d context0 -tAc \
+  "$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d kora -tAc \
      "SELECT string_agg(indexname, ',') FROM pg_indexes WHERE schemaname='context0' AND indexname LIKE 'memory%';" 2>/dev/null)"
 
 section "8. Public API works end to end in-cluster"
-key=$(kubectl get secret -n "$NS" context0-api-keys -o jsonpath='{.data.keys}' | base64 -d | cut -d, -f1)
+key=$(kubectl get secret -n "$NS" kora-api-keys -o jsonpath='{.data.keys}' | base64 -d | cut -d, -f1)
 stored=$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c \
   "wget -q -O- --header='Content-Type: application/json' --header='X-API-Key: $key' \
    --post-data='{\"content\":\"verification probe\",\"type\":2,\"project_id\":\"verify\",\"tags\":[\"v\"]}' \
@@ -168,14 +168,14 @@ queried=$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c \
   "wget -q -O- --header='X-API-Key: $key' \
    'http://localhost:8080/v1/memories/query?query=verification&project_id=verify&top_k=3'" 2>/dev/null)
 check "GET /v1/memories/query returns it" "verification probe" "$queried"
-check "/metrics is scrapeable without auth" "context0" \
+check "/metrics is scrapeable without auth" "kora" \
   "$(kubectl exec -n "$NS" "$(api_pod)" -- wget -q -O- http://localhost:8080/metrics 2>/dev/null | head -40 | tr '\n' ' ')"
 
 section "9. Web UI resolves the API upstream"
-check "web deployment sets API_HOST to in-cluster DNS" "context0-api.$NS.svc.cluster.local" \
-  "$(kubectl get deploy -n "$NS" context0-web -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="API_HOST")].value}' 2>/dev/null)"
+check "web deployment sets API_HOST to in-cluster DNS" "kora-api.$NS.svc.cluster.local" \
+  "$(kubectl get deploy -n "$NS" kora-web -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="API_HOST")].value}' 2>/dev/null)"
 check "web pod is Running, not CrashLoopBackOff" "Running" \
-  "$(kubectl get pod -n "$NS" -l app=context0-web -o jsonpath='{.items[0].status.phase}' 2>/dev/null)"
+  "$(kubectl get pod -n "$NS" -l app=kora-web -o jsonpath='{.items[0].status.phase}' 2>/dev/null)"
 
 section "10. Failure mode: the database goes away"
 # The reason liveness must not touch the database. Before this split, a brief
@@ -210,7 +210,7 @@ section "11. Credentials and authentication"
 # source, so a regression in either place is caught.
 pgpw=$(kubectl get secret -n "$NS" postgres-age-secret -o jsonpath='{.data.password}' | base64 -d)
 check "the database password is not a shipped default" "notdefault" \
-  "$([[ "$pgpw" == "context0-dev-password" ]] && echo isdefault || echo notdefault)"
+  "$([[ "$pgpw" == "kora-dev-password" ]] && echo isdefault || echo notdefault)"
 check "no shipped default API key is accepted" "401" \
   "$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c \
     "wget -q -S -O /dev/null --header='X-API-Key: ctx0_dev_key_1' \
@@ -221,9 +221,9 @@ check "no shipped default API key is accepted" "401" \
 # inlined into the Deployment spec: `kubectl get deploy -o yaml` is readable by
 # far more people than Secrets are.
 check "the password is absent from the Deployment spec" "0" \
-  "$(kubectl get deploy -n "$NS" context0-api -o yaml | grep -c -- "$pgpw" || true)"
+  "$(kubectl get deploy -n "$NS" kora-api -o yaml | grep -c -- "$pgpw" || true)"
 check "the password reaches the pod via secretKeyRef" "POSTGRES_PASSWORD" \
-  "$(kubectl get deploy -n "$NS" context0-api -o jsonpath='{.spec.template.spec.containers[0].env[?(@.valueFrom.secretKeyRef)].name}')"
+  "$(kubectl get deploy -n "$NS" kora-api -o jsonpath='{.spec.template.spec.containers[0].env[?(@.valueFrom.secretKeyRef)].name}')"
 
 # Deny-by-default: before this, anything outside /v1/ was served without a key,
 # so any future route -- an admin surface, a mistakenly mounted profiler -- was
@@ -282,14 +282,14 @@ check "readiness does not blame the database for a departed caller" "200" \
 # The kubelet's own timeout must sit above the handler's 1s database bound, or
 # the two race and whichever fires first decides the answer.
 check "the readiness probe timeout exceeds the handler's database bound" "yes" \
-  "$(t=$(kubectl get deploy -n "$NS" context0-api -o jsonpath='{.spec.template.spec.containers[0].readinessProbe.timeoutSeconds}' 2>/dev/null); \
+  "$(t=$(kubectl get deploy -n "$NS" kora-api -o jsonpath='{.spec.template.spec.containers[0].readinessProbe.timeoutSeconds}' 2>/dev/null); \
     [[ -n "$t" && "$t" -gt 1 ]] && echo yes || echo no)"
 
 # Keys are stored hashed, so the running process cannot hand back a credential
 # even if it is compromised or dumped.
 # /v1/health answers without a credential because probes cannot present one,
 # but it must not volunteer what is running and how much data is in it. Found
-# via the CLI: `context0 stats` with no API key returned the version, node
+# via the CLI: `kora stats` with no API key returned the version, node
 # count and edge count.
 check "an anonymous caller gets no graph statistics" "0" \
   "$(kubectl exec -n "$NS" "$(api_pod)" -- wget -q -O- http://localhost:8080/v1/health 2>/dev/null \
@@ -311,7 +311,7 @@ check "an authenticated caller still gets the statistics" "ok" \
 # The whole log, not a tail: this line is written once at startup, so on a pod
 # that has been serving for a while it sits thousands of lines back. A --tail
 # window made the check report a missing line as a missing feature.
-cfg_line=$(kubectl logs -n "$NS" deploy/context0-api 2>/dev/null \
+cfg_line=$(kubectl logs -n "$NS" deploy/kora-api 2>/dev/null \
   | grep '"msg":"configuration"' | head -1)
 check "the server logs its effective configuration" "1" \
   "$([[ -n "$cfg_line" ]] && echo 1 || echo 0)"
@@ -322,9 +322,9 @@ check "the configuration log counts keys without printing them" "0" \
   "$(grep -c "$key" <<<"$cfg_line" || true)"
 
 check "stored keys are hashes, not the plaintext key" "0" \
-  "$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c 'cat /proc/1/environ 2>/dev/null | tr "\0" "\n" | grep -c "^CONTEXT0_API_KEYS=$key$"' 2>/dev/null || echo 0)"
+  "$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c 'cat /proc/1/environ 2>/dev/null | tr "\0" "\n" | grep -c "^KORA_API_KEYS=$key$"' 2>/dev/null || echo 0)"
 check "the API key never appears in logs" "0" \
-  "$(kubectl logs -n "$NS" deploy/context0-api --tail=500 2>/dev/null | grep -c "$key" || true)"
+  "$(kubectl logs -n "$NS" deploy/kora-api --tail=500 2>/dev/null | grep -c "$key" || true)"
 
 section "12. Pod identity and network isolation"
 # Every pod used to run as the namespace `default` service account with its
@@ -334,7 +334,7 @@ section "12. Pod identity and network isolation"
 check "no service account token is mounted in the API pod" "absent" \
   "$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c \
     'test -d /var/run/secrets/kubernetes.io/serviceaccount && echo present || echo absent' 2>/dev/null)"
-check "the API runs as its own service account, not default" "context0-api-sa" \
+check "the API runs as its own service account, not default" "kora-api-sa" \
   "$(kubectl get pod -n "$NS" "$(api_pod)" -o jsonpath='{.spec.serviceAccountName}')"
 
 # The rule that matters: before this, a pod in an unrelated namespace connected
@@ -358,7 +358,7 @@ fi
 # the API. Labelling the namespace revealed that Postgres ran as root with full
 # capabilities and the web UI ran as root, because only the API had ever been
 # given a securityContext.
-for wl in "deploy/context0-api" "statefulset/postgres-age" "deploy/context0-web"; do
+for wl in "deploy/kora-api" "statefulset/postgres-age" "deploy/kora-web"; do
   uid=$(kubectl get "$wl" -n "$NS" -o jsonpath='{.spec.template.spec.securityContext.runAsUser}' 2>/dev/null)
   check "$wl runs as a non-root uid" "nonroot" \
     "$([[ -n "$uid" && "$uid" != "0" ]] && echo nonroot || echo "root(${uid:-unset})")"
@@ -370,10 +370,10 @@ done
 
 # The web UI must still actually serve after being moved off port 80 to run
 # unprivileged: hardening that breaks the product is not hardening.
-web_np=$(kubectl get svc context0-web -n "$NS" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null)
+web_np=$(kubectl get svc kora-web -n "$NS" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null)
 if [[ -n "$web_np" ]]; then
   check "the web UI still serves through its NodePort as non-root" "200" \
-    "$(docker exec "${KIND_NODE:-context0-dev-control-plane}" \
+    "$(docker exec "${KIND_NODE:-kora-dev-control-plane}" \
       curl -s -o /dev/null -w '%{http_code}' "http://localhost:$web_np/" 2>/dev/null)"
 fi
 
@@ -381,16 +381,16 @@ fi
 # credential in a URL ends up in browser history, Referer headers, and every
 # access log on the path -- verified before the fix by loading /?key=ctx0_...
 # and finding it verbatim in the web pod's log.
-web_np_leak=$(kubectl get svc context0-web -n "$NS" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null)
+web_np_leak=$(kubectl get svc kora-web -n "$NS" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null)
 if [[ -n "$web_np_leak" ]]; then
   probe_secret="ctx0_verify_probe_$$"
-  docker exec "${KIND_NODE:-context0-dev-control-plane}" \
+  docker exec "${KIND_NODE:-kora-dev-control-plane}" \
     curl -s -o /dev/null "http://localhost:$web_np_leak/?key=$probe_secret" 2>/dev/null || true
   sleep 2
   check "the web server does not log API keys from URLs" "0" \
-    "$(kubectl logs -n "$NS" deploy/context0-web --tail=30 2>/dev/null | grep -c "$probe_secret" || true)"
+    "$(kubectl logs -n "$NS" deploy/kora-web --tail=30 2>/dev/null | grep -c "$probe_secret" || true)"
   check "the web server sets a Referrer-Policy" "same-origin" \
-    "$(docker exec "${KIND_NODE:-context0-dev-control-plane}" \
+    "$(docker exec "${KIND_NODE:-kora-dev-control-plane}" \
       curl -sI "http://localhost:$web_np_leak/" 2>/dev/null \
       | awk -F': ' 'tolower($1)=="referrer-policy"{print $2}' | tr -d '\r')"
 
@@ -400,7 +400,7 @@ if [[ -n "$web_np_leak" ]]; then
   # absent against the running deployment before these were added: Chrome
   # loaded the UI inside a foreign iframe with no complaint.
   web_hdr() {
-    docker exec "${KIND_NODE:-context0-dev-control-plane}" \
+    docker exec "${KIND_NODE:-kora-dev-control-plane}" \
       curl -sI "http://localhost:$web_np_leak$2" 2>/dev/null \
       | awk -F': ' -v h="$1" 'tolower($1)==h{print $2}' | tr -d '\r'
   }
@@ -427,7 +427,7 @@ if [[ -n "$web_np_leak" ]]; then
 
   # Hardening that breaks the product is not hardening. The bundle and
   # stylesheet must still load, with the MIME types nosniff now enforces.
-  ui_assets=$(docker exec "${KIND_NODE:-context0-dev-control-plane}" \
+  ui_assets=$(docker exec "${KIND_NODE:-kora-dev-control-plane}" \
     curl -s "http://localhost:$web_np_leak/" 2>/dev/null | grep -oE '/assets/[^"]+' || true)
   check "the page references its built assets" "yes" \
     "$([[ -n "$ui_assets" ]] && echo yes || echo no)"
@@ -448,36 +448,36 @@ mx=$(kubectl exec -n "$NS" "$(api_pod)" -- wget -q -O- http://localhost:8080/met
 # Pool exhaustion is this service's most likely saturation point and used to be
 # invisible: a deadlock here once presented as uniformly slow requests with no
 # metric naming the cause.
-check "connection pool occupancy is exposed" "context0_pool_connections" \
-  "$(grep -o 'context0_pool_connections' <<<"$mx" | head -1)"
-check "pool acquire wait is exposed" "context0_pool_acquire_wait_seconds_total" \
-  "$(grep -o 'context0_pool_acquire_wait_seconds_total' <<<"$mx" | head -1)"
+check "connection pool occupancy is exposed" "kora_pool_connections" \
+  "$(grep -o 'kora_pool_connections' <<<"$mx" | head -1)"
+check "pool acquire wait is exposed" "kora_pool_acquire_wait_seconds_total" \
+  "$(grep -o 'kora_pool_acquire_wait_seconds_total' <<<"$mx" | head -1)"
 
 # RED for every method, not just the two that were instrumented by hand: a
 # failing Extract or GetProfile previously produced no metric at all.
-check "per-method request counters exist" "context0_requests_total" \
-  "$(grep -o 'context0_requests_total' <<<"$mx" | head -1)"
+check "per-method request counters exist" "kora_requests_total" \
+  "$(grep -o 'kora_requests_total' <<<"$mx" | head -1)"
 check "request counters are labelled by status code" "code" \
-  "$(grep -o 'context0_requests_total{code=' <<<"$mx" | head -1 | grep -o 'code')"
+  "$(grep -o 'kora_requests_total{code=' <<<"$mx" | head -1 | grep -o 'code')"
 
 # The histogram must be able to tell p50 from p99. With the default buckets,
 # both landed in [0.1, 0.25] along with 79% of all samples.
-lo=$(grep -c 'context0_request_duration_seconds_bucket{.*le="0.125"' <<<"$mx" || true)
+lo=$(grep -c 'kora_request_duration_seconds_bucket{.*le="0.125"' <<<"$mx" || true)
 check "latency buckets resolve the range this service operates in" "present" \
   "$([[ "$lo" -gt 0 ]] && echo present || echo missing)"
 
 section "14. Session lifecycle accounting"
-# context0_active_sessions is a gauge decremented by EndSession. EndSession
+# kora_active_sessions is a gauge decremented by EndSession. EndSession
 # used to accept a repeat end, so a retried request -- a client timeout, an
 # at-least-once queue -- decremented it again and drove the gauge negative:
 # one start plus three ends left it at -2. Anything alerting or scaling on it
 # was then reading a number that could not occur.
-key=$(kubectl get secret -n "$NS" context0-api-keys -o jsonpath='{.data}' \
+key=$(kubectl get secret -n "$NS" kora-api-keys -o jsonpath='{.data}' \
   | python3 -c "import sys,json,base64; d=json.load(sys.stdin); print(base64.b64decode(list(d.values())[0]).decode().split(',')[0])")
 
 gauge() {
   kubectl exec -n "$NS" "$(api_pod)" -- wget -q -O- http://localhost:8080/metrics 2>/dev/null \
-    | awk '/^context0_active_sessions /{print $2; exit}'
+    | awk '/^kora_active_sessions /{print $2; exit}'
 }
 
 before_gauge=$(gauge)
@@ -514,27 +514,27 @@ section "15. CLI behaviour against the live engine"
 # acted on. Every failure found in it had the same shape: bad input produced a
 # confident, successful-looking result.
 #
-# `context0 stats` with a rejected key printed "Nodes: 0" and exited 0. Health
+# `kora stats` with a rejected key printed "Nodes: 0" and exited 0. Health
 # deliberately answers without a credential -- probes cannot present one -- and
 # withholds statistics from callers it cannot authenticate, so a rejected key
 # comes back as a successful response full of zeros. Rendered verbatim, a typo
-# in CONTEXT0_API_KEY was indistinguishable from an empty database, and no
+# in KORA_API_KEY was indistinguishable from an empty database, and no
 # script would catch it.
-cli_bin="$(mktemp -d)/context0"
+cli_bin="$(mktemp -d)/kora"
 if go build -o "$cli_bin" ./cmd/cli 2>/dev/null; then
   grpc_pf_port=15099
-  kubectl port-forward -n "$NS" svc/context0-api "$grpc_pf_port:50051" >/dev/null 2>&1 &
+  kubectl port-forward -n "$NS" svc/kora-api "$grpc_pf_port:50051" >/dev/null 2>&1 &
   cli_pf_pid=$!
   trap 'kill "$cli_pf_pid" 2>/dev/null || true' EXIT
   sleep 4
 
-  cli() { CONTEXT0_ENDPOINT="localhost:$grpc_pf_port" CONTEXT0_PROJECT=verify-cli "$@"; }
+  cli() { KORA_ENDPOINT="localhost:$grpc_pf_port" KORA_PROJECT=verify-cli "$@"; }
 
   # A rejected key must fail loudly rather than render zeros as data.
-  cli_out=$(cli env CONTEXT0_API_KEY=definitely-not-a-real-key "$cli_bin" stats 2>&1 || true)
+  cli_out=$(cli env KORA_API_KEY=definitely-not-a-real-key "$cli_bin" stats 2>&1 || true)
   # Capture the status immediately; $? reflects only the previous command, and
   # any check in between would overwrite it.
-  cli env CONTEXT0_API_KEY=definitely-not-a-real-key "$cli_bin" stats >/dev/null 2>&1
+  cli env KORA_API_KEY=definitely-not-a-real-key "$cli_bin" stats >/dev/null 2>&1
   cli_bad_status=$?
   check "a rejected API key makes the CLI exit non-zero" "nonzero" \
     "$([[ $cli_bad_status -ne 0 ]] && echo nonzero || echo zero)"
@@ -544,13 +544,13 @@ if go build -o "$cli_bin" ./cmd/cli 2>/dev/null; then
     "$(grep -qE '^ *Nodes: +0' <<<"$cli_out" && echo yes || echo no)"
 
   # And a valid key still works, or the check above is a regression in disguise.
-  cli_ok=$(cli env CONTEXT0_API_KEY="$key" "$cli_bin" stats 2>&1 || true)
+  cli_ok=$(cli env KORA_API_KEY="$key" "$cli_bin" stats 2>&1 || true)
   check "a valid API key still returns real statistics" "ok" \
     "$(grep -qE 'Nodes: +[1-9]' <<<"$cli_ok" && echo ok || echo missing)"
 
   # An unrecognised type used to fall through to semantic, filing the memory
   # under the wrong type with no indication.
-  cli_type=$(cli env CONTEXT0_API_KEY="$key" "$cli_bin" store "verify-cli probe" --type=bogus 2>&1 || true)
+  cli_type=$(cli env KORA_API_KEY="$key" "$cli_bin" store "verify-cli probe" --type=bogus 2>&1 || true)
   check "an unknown memory type is rejected" "rejected" \
     "$(grep -qi 'unknown memory type' <<<"$cli_type" && echo rejected || echo accepted)"
 
@@ -564,10 +564,10 @@ else
 fi
 
 section "16. Multi-replica behaviour (only when replicas > 1)"
-replicas=$(kubectl get deploy context0-api -n "$NS" -o jsonpath='{.spec.replicas}')
+replicas=$(kubectl get deploy kora-api -n "$NS" -o jsonpath='{.spec.replicas}')
 if [[ "${replicas:-1}" -gt 1 ]]; then
-  check "a PodDisruptionBudget exists" "context0-api" \
-    "$(kubectl get pdb context0-api -n "$NS" -o jsonpath='{.metadata.name}' 2>/dev/null)"
+  check "a PodDisruptionBudget exists" "kora-api" \
+    "$(kubectl get pdb kora-api -n "$NS" -o jsonpath='{.metadata.name}' 2>/dev/null)"
 
   # The PDB must actually gate evictions, not merely exist. `kubectl delete`
   # bypasses PDBs entirely, so this uses the eviction API -- which is what a
@@ -577,7 +577,7 @@ if [[ "${replicas:-1}" -gt 1 ]]; then
   pods=()
   while IFS= read -r line; do
     [[ -n "$line" ]] && pods+=("$line")
-  done < <(kubectl get pods -n "$NS" -l app=context0-api \
+  done < <(kubectl get pods -n "$NS" -l app=kora-api \
     --field-selector=status.phase=Running \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
   evict() {
@@ -593,7 +593,7 @@ EOF
   fi
 
   # Wait for the fleet to come back before anything else runs.
-  kubectl rollout status deploy/context0-api -n "$NS" --timeout=180s >/dev/null 2>&1
+  kubectl rollout status deploy/kora-api -n "$NS" --timeout=180s >/dev/null 2>&1
 else
   printf '  skipped: replicas=%s (PDB and topology spread are gated on >1)\n' "${replicas:-1}"
 fi
@@ -614,7 +614,7 @@ check "/dev/shm is larger than the 64Mi default" "ok" \
 # A backup is only a backup if it restores. This asserts the index survives the
 # round trip, because that is the part that fails silently.
 check "the HNSW vector index can be rebuilt at the current data size" "ok" \
-  "$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d "$DB_NAME" -tAc \
+  "$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d "$DB_NAME" -tAc \
     "SET maintenance_work_mem='128MB';
      CREATE INDEX IF NOT EXISTS shm_probe_idx ON public.memory_embeddings
        USING hnsw (embedding vector_cosine_ops);
@@ -628,11 +628,11 @@ check "the HNSW vector index can be rebuilt at the current data size" "ok" \
 # Counts come from the live database, so this measures the guard rather than
 # re-running a full restore, which takes minutes and is exercised by
 # scripts/backup.sh verify.
-live_mem=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d "$DB_NAME" -tAc \
+live_mem=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d "$DB_NAME" -tAc \
   "LOAD 'age'; SET search_path=ag_catalog,public;
    SELECT count(*) FROM cypher('context0', \$\$ MATCH (m:Memory) RETURN m \$\$) AS (m agtype);" \
   2>/dev/null | tail -1)
-live_emb=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U context0 -d "$DB_NAME" -tAc \
+live_emb=$(kubectl exec -n "$NS" postgres-age-0 -- psql -U kora -d "$DB_NAME" -tAc \
   "SELECT count(*) FROM public.memory_embeddings;" 2>/dev/null | tail -1)
 
 # An embedding belongs to a memory, so more embeddings than memories means rows

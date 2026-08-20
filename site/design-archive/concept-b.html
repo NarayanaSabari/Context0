@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Context0 - The Proof</title>
-  <meta name="description" content="Context0 is a graph-first memory engine for AI agents. Store conversations, extract typed memories, and query by meaning and relationship." />
+  <title>Kora - The Proof</title>
+  <meta name="description" content="Kora is a graph-first memory engine for AI agents. Store conversations, extract typed memories, and query by meaning and relationship." />
   <style>
     :root {
       color-scheme: dark;
@@ -833,7 +833,7 @@
       font-size: 0.95rem;
     }
 
-    .comparison-table td.context0 {
+    .comparison-table td.kora {
       color: #f0eefc;
       background: rgba(134, 59, 255, 0.055);
     }
@@ -1104,11 +1104,11 @@
   <div class="page-shell">
     <header class="site-header">
       <div class="wrap nav" aria-label="Primary navigation">
-        <a class="brand" href="#top" aria-label="Context0 home">
+        <a class="brand" href="#top" aria-label="Kora home">
           <svg class="brand-mark" viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
             <path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z" />
           </svg>
-          <span class="brand-word">Context0</span>
+          <span class="brand-word">Kora</span>
         </a>
         <nav class="nav-links" aria-label="Page sections">
           <a href="#proof">Proof</a>
@@ -1117,7 +1117,7 @@
           <a href="#install">Install</a>
         </nav>
         <div class="nav-actions">
-          <a class="btn compact" href="https://github.com/context0/Context0">GitHub</a>
+          <a class="btn compact" href="https://github.com/kora/Kora">GitHub</a>
           <a class="btn compact primary" href="#install">Get started</a>
         </div>
       </div>
@@ -1129,10 +1129,10 @@
           <div>
             <p class="eyebrow">Open source · Apache 2.0 · Self-hosted</p>
             <h1 id="hero-title">Memory that can prove which fact is current.</h1>
-            <p class="hero-copy">Context0 is a graph-first memory engine. Store conversations, auto-extract facts, query by meaning and relationship - in your own cluster, on your own data.</p>
+            <p class="hero-copy">Kora is a graph-first memory engine. Store conversations, auto-extract facts, query by meaning and relationship - in your own cluster, on your own data.</p>
             <div class="hero-actions">
               <a class="btn primary" href="#install">Get started</a>
-              <a class="btn" href="https://github.com/context0/Context0">View on GitHub</a>
+              <a class="btn" href="https://github.com/kora/Kora">View on GitHub</a>
             </div>
             <p class="hero-note">The strongest memory answer is not another plausible chunk. It is an answer with the relationship trail that explains why it should be trusted.</p>
           </div>
@@ -1167,7 +1167,7 @@
 
               <article class="answer-card">
                 <div class="panel-label">
-                  <span>Context0</span>
+                  <span>Kora</span>
                   <span class="method-pill">graph + vector</span>
                 </div>
                 <div class="fact-answer">
@@ -1185,7 +1185,7 @@
                       <p>the switch happened after the project needed graph support</p>
                     </div>
                   </div>
-                  <div class="code-card" aria-label="Context0 JSON result snippet">
+                  <div class="code-card" aria-label="Kora JSON result snippet">
                     <div class="code-head"><span>GET /v1/memories/query</span><span>200</span></div>
                     <pre><code>{
   <span class="token-key">"answer"</span>: <span class="token-string">"PostgreSQL"</span>,
@@ -1254,7 +1254,7 @@
                   <span class="stage-index">01</span>
                   <div>
                     <h3>Raw conversation text goes in.</h3>
-                    <p>Context0 accepts conversation text through the extraction endpoint.</p>
+                    <p>Kora accepts conversation text through the extraction endpoint.</p>
                   </div>
                 </div>
                 <div class="stage-row" data-stage-row="1">
@@ -1365,9 +1365,9 @@ CREATE (new)-[:<span class="token-good">BECAUSE</span>]-&gt;(why)</code></pre>
               <div class="split-line">extract</div>
               <div class="code-card">
                 <div class="code-head"><span>python</span><span>SDK</span></div>
-                <pre><code>from context0 import Context0Client
+                <pre><code>from kora import KoraClient
 
-client = Context0Client(endpoint=<span class="token-string">"localhost:50051"</span>, api_key=..., project=<span class="token-string">"my-project"</span>)
+client = KoraClient(endpoint=<span class="token-string">"localhost:50051"</span>, api_key=..., project=<span class="token-string">"my-project"</span>)
 
 client.extract(<span class="token-string">"user: We switched to PostgreSQL\nuser: I prefer vim"</span>)
 results = client.query(<span class="token-string">"what database does this project use?"</span>, top_k=<span class="token-number">3</span>)</code></pre>
@@ -1394,47 +1394,47 @@ results = client.query(<span class="token-string">"what database does this proje
               <p class="section-kicker">Comparison</p>
               <h2 id="comparison-title">Where flat memory loses the thread.</h2>
             </div>
-            <p class="section-copy">Vector similarity is still useful. Context0 keeps it in the same query path as graph traversal, so the result can be similar and related.</p>
+            <p class="section-copy">Vector similarity is still useful. Kora keeps it in the same query path as graph traversal, so the result can be similar and related.</p>
           </div>
-          <div class="comparison-scroll" role="region" aria-label="Traditional memory versus Context0 comparison" tabindex="0">
+          <div class="comparison-scroll" role="region" aria-label="Traditional memory versus Kora comparison" tabindex="0">
             <table class="comparison-table">
               <thead>
                 <tr>
                   <th scope="col">Dimension</th>
                   <th scope="col">Traditional</th>
-                  <th scope="col">Context0</th>
+                  <th scope="col">Kora</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
                   <td>Memory structure</td>
                   <td>Flat text chunks</td>
-                  <td class="context0">Connected knowledge graph</td>
+                  <td class="kora">Connected knowledge graph</td>
                 </tr>
                 <tr>
                   <td>Retrieval</td>
                   <td>Find similar text</td>
-                  <td class="context0">Follow relationships, not just similarity</td>
+                  <td class="kora">Follow relationships, not just similarity</td>
                 </tr>
                 <tr>
                   <td>Updates</td>
                   <td>Old info mixed with new</td>
-                  <td class="context0">Contradictions detected, stale facts superseded</td>
+                  <td class="kora">Contradictions detected, stale facts superseded</td>
                 </tr>
                 <tr>
                   <td>Learning</td>
                   <td>Starts fresh each session</td>
-                  <td class="context0">Consolidates over time, forgets noise</td>
+                  <td class="kora">Consolidates over time, forgets noise</td>
                 </tr>
                 <tr>
                   <td>Sharing</td>
                   <td>Locked to one tool</td>
-                  <td class="context0">Any agent can plug in, framework-agnostic</td>
+                  <td class="kora">Any agent can plug in, framework-agnostic</td>
                 </tr>
                 <tr>
                   <td>Privacy</td>
                   <td>Your data on their servers</td>
-                  <td class="context0">Self-hosted, data never leaves your infra</td>
+                  <td class="kora">Self-hosted, data never leaves your infra</td>
                 </tr>
               </tbody>
             </table>
@@ -1454,9 +1454,9 @@ results = client.query(<span class="token-string">"what database does this proje
           <div class="two-up">
             <div class="stack-card">
               <h3>Query path</h3>
-              <div class="stack-diagram" aria-label="Context0 architecture diagram">
+              <div class="stack-diagram" aria-label="Kora architecture diagram">
                 <div class="stack-layer"><h3>Any agent</h3><p>gRPC or REST, any framework</p></div>
-                <div class="stack-layer"><h3>Context0 Engine</h3><p>Ingest, extract, hybrid query, consolidation</p></div>
+                <div class="stack-layer"><h3>Kora Engine</h3><p>Ingest, extract, hybrid query, consolidation</p></div>
                 <div class="stack-layer db-layer"><h3>PostgreSQL 18</h3><p>Apache AGE graph nodes and pgvector embeddings in one instance</p></div>
                 <div class="stack-layer"><h3>React Web UI + Prometheus</h3><p>Live graph visualization and metrics</p></div>
               </div>
@@ -1525,14 +1525,14 @@ results = client.query(<span class="token-string">"what database does this proje
               <pre><code><span class="token-comment"># Docker Compose</span>
 cat &gt; .env &lt;&lt;EOF
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
-CONTEXT0_API_KEYS=$(go run ./cmd/cli keys generate)
+KORA_API_KEYS=$(go run ./cmd/cli keys generate)
 EOF
 docker compose up</code></pre>
             </div>
             <div class="code-card">
               <div class="code-head"><span>Helm</span><span>Kubernetes</span></div>
               <pre><code><span class="token-comment"># Helm</span>
-helm install context0 ./charts/context0 -n context0 --create-namespace \
+helm install kora ./charts/kora -n kora --create-namespace \
   --set postgres.existingSecret=my-postgres-secret \
   --set auth.existingSecret=my-api-keys</code></pre>
             </div>
@@ -1549,14 +1549,14 @@ helm install context0 ./charts/context0 -n context0 --create-namespace \
 
     <footer class="footer">
       <div class="wrap footer-inner">
-        <a class="brand" href="#top" aria-label="Context0 home">
+        <a class="brand" href="#top" aria-label="Kora home">
           <svg class="brand-mark" viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
             <path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z" />
           </svg>
-          <span class="brand-word">Context0</span>
+          <span class="brand-word">Kora</span>
         </a>
         <div class="footer-links">
-          <a href="https://github.com/context0/Context0">github.com/context0/Context0</a>
+          <a href="https://github.com/kora/Kora">github.com/kora/Kora</a>
           <a href="#install">Docs</a>
           <a href="#install">Contributing</a>
           <a href="#install">Security</a>
