@@ -433,7 +433,61 @@ check "ending an unknown session is not found" "404" \
 # gauge is exactly where it began.
 check "the active-session gauge returns to its starting value" "$before_gauge" "$(gauge)"
 
-section "15. Multi-replica behaviour (only when replicas > 1)"
+section "15. CLI behaviour against the live engine"
+# The CLI is how an operator inspects a deployment, so a wrong answer here is
+# acted on. Every failure found in it had the same shape: bad input produced a
+# confident, successful-looking result.
+#
+# `context0 stats` with a rejected key printed "Nodes: 0" and exited 0. Health
+# deliberately answers without a credential -- probes cannot present one -- and
+# withholds statistics from callers it cannot authenticate, so a rejected key
+# comes back as a successful response full of zeros. Rendered verbatim, a typo
+# in CONTEXT0_API_KEY was indistinguishable from an empty database, and no
+# script would catch it.
+cli_bin="$(mktemp -d)/context0"
+if go build -o "$cli_bin" ./cmd/cli 2>/dev/null; then
+  grpc_pf_port=15099
+  kubectl port-forward -n "$NS" svc/context0-api "$grpc_pf_port:50051" >/dev/null 2>&1 &
+  cli_pf_pid=$!
+  trap 'kill "$cli_pf_pid" 2>/dev/null || true' EXIT
+  sleep 4
+
+  cli() { CONTEXT0_ENDPOINT="localhost:$grpc_pf_port" CONTEXT0_PROJECT=verify-cli "$@"; }
+
+  # A rejected key must fail loudly rather than render zeros as data.
+  cli_out=$(cli env CONTEXT0_API_KEY=definitely-not-a-real-key "$cli_bin" stats 2>&1 || true)
+  # Capture the status immediately; $? reflects only the previous command, and
+  # any check in between would overwrite it.
+  cli env CONTEXT0_API_KEY=definitely-not-a-real-key "$cli_bin" stats >/dev/null 2>&1
+  cli_bad_status=$?
+  check "a rejected API key makes the CLI exit non-zero" "nonzero" \
+    "$([[ $cli_bad_status -ne 0 ]] && echo nonzero || echo zero)"
+  check "a rejected API key is named as the cause" "rejected" \
+    "$(grep -qi 'rejected\|API key' <<<"$cli_out" && echo rejected || echo silent)"
+  check "a rejected key does not render zero counts as data" "no" \
+    "$(grep -qE '^ *Nodes: +0' <<<"$cli_out" && echo yes || echo no)"
+
+  # And a valid key still works, or the check above is a regression in disguise.
+  cli_ok=$(cli env CONTEXT0_API_KEY="$key" "$cli_bin" stats 2>&1 || true)
+  check "a valid API key still returns real statistics" "ok" \
+    "$(grep -qE 'Nodes: +[1-9]' <<<"$cli_ok" && echo ok || echo missing)"
+
+  # An unrecognised type used to fall through to semantic, filing the memory
+  # under the wrong type with no indication.
+  cli_type=$(cli env CONTEXT0_API_KEY="$key" "$cli_bin" store "verify-cli probe" --type=bogus 2>&1 || true)
+  check "an unknown memory type is rejected" "rejected" \
+    "$(grep -qi 'unknown memory type' <<<"$cli_type" && echo rejected || echo accepted)"
+
+  # Silence the shell's job-termination notice, which otherwise prints a
+  # "Terminated" line into the middle of the report.
+  kill "$cli_pf_pid" 2>/dev/null || true
+  wait "$cli_pf_pid" 2>/dev/null || true
+  trap - EXIT
+else
+  printf '  skipped: go toolchain unavailable, cannot build the CLI\n'
+fi
+
+section "16. Multi-replica behaviour (only when replicas > 1)"
 replicas=$(kubectl get deploy context0-api -n "$NS" -o jsonpath='{.spec.replicas}')
 if [[ "${replicas:-1}" -gt 1 ]]; then
   check "a PodDisruptionBudget exists" "context0-api" \
@@ -468,7 +522,7 @@ else
   printf '  skipped: replicas=%s (PDB and topology spread are gated on >1)\n' "${replicas:-1}"
 fi
 
-section "16. Recoverability"
+section "17. Recoverability"
 # /dev/shm defaults to 64Mi in Kubernetes, which is not enough to build the
 # pgvector HNSW index in one allocation: at 94k embeddings the build asked for
 # 131MB and failed. The live database never hits this, because its index grew a

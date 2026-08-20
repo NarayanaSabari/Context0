@@ -90,7 +90,7 @@ func main() {
 	case "graph":
 		cmdGraph(ctx, client, args)
 	case "stats":
-		cmdStats(ctx, healthClient)
+		cmdStats(ctx, healthClient, apiKey)
 	case "session-start":
 		cmdSessionStart(ctx, sessionClient, projectID, args)
 	case "session-end":
@@ -279,10 +279,32 @@ func cmdGraph(ctx context.Context, client pb.Context0Client, args []string) {
 
 // cmdStats queries the health endpoint and prints the engine version,
 // status, and total node/edge counts.
-func cmdStats(ctx context.Context, client pb.HealthServiceClient) {
+func cmdStats(ctx context.Context, client pb.HealthServiceClient, apiKey string) {
 	resp, err := client.Health(ctx, &pb.HealthRequest{})
 	if err != nil {
 		fatalf("stats failed: %v", err)
+	}
+
+	// Health answers without a credential so Kubernetes probes can reach it,
+	// and it withholds the version and graph counts from anyone it could not
+	// authenticate. A rejected key therefore comes back as a successful
+	// response full of zeros rather than as an error.
+	//
+	// Printing that verbatim told a user with a typo in CONTEXT0_API_KEY that
+	// their engine was healthy and empty -- indistinguishable from real data
+	// loss, and exiting 0 so no script would catch it. If a key was presented
+	// and the server still treated us as anonymous, that is an auth failure.
+	if apiKey != "" && resp.Version == "" {
+		fatalf("stats failed: the API key was rejected\n" +
+			"The engine answered, but as an unauthenticated caller: it withholds\n" +
+			"the version and graph counts from callers it cannot authenticate.\n" +
+			"Check CONTEXT0_API_KEY.")
+	}
+
+	if apiKey == "" {
+		fmt.Fprintln(os.Stderr,
+			"note: no CONTEXT0_API_KEY set; the engine withholds statistics from\n"+
+				"unauthenticated callers, so the counts below are not real totals.")
 	}
 
 	fmt.Printf("Context0 Engine v%s\n", resp.Version)
@@ -377,8 +399,14 @@ func fatalf(format string, args ...any) {
 	os.Exit(1)
 }
 
-// parseMemoryType converts a human-friendly type string (e.g. "episodic")
-// into the corresponding protobuf enum value. Defaults to SEMANTIC.
+// parseMemoryType converts a human-friendly type string into the protobuf
+// enum, rejecting anything it does not recognise.
+//
+// An unrecognised value used to fall through to SEMANTIC. A typo in --type
+// therefore stored the memory under the wrong type and said nothing: the write
+// succeeded, the CLI printed success, and the memory was simply filed wrongly
+// -- invisible until a later type-filtered query failed to return it. Guessing
+// is worse than refusing, because the caller never learns they were guessed at.
 func parseMemoryType(s string) pb.MemoryType {
 	switch strings.ToLower(s) {
 	case "episodic":
@@ -388,13 +416,21 @@ func parseMemoryType(s string) pb.MemoryType {
 	case "procedural":
 		return pb.MemoryType_MEMORY_TYPE_PROCEDURAL
 	default:
-		return pb.MemoryType_MEMORY_TYPE_SEMANTIC
+		fatalf("unknown memory type %q (expected: semantic, episodic, procedural)", s)
+		return pb.MemoryType_MEMORY_TYPE_SEMANTIC // unreachable; fatalf exits
 	}
 }
 
 // parseRelType converts a human-friendly relationship string (e.g.
 // "supersedes") into the corresponding protobuf enum value. Defaults to
 // RELATES_TO.
+// parseRelType converts a relationship name into the protobuf enum, rejecting
+// anything it does not recognise.
+//
+// As with parseMemoryType, silently defaulting meant a typo created an edge of
+// the wrong kind. That is worse here: supersedes edges are followed when
+// resolving which fact is current, so a mistyped "supersedes" that became
+// "relates_to" leaves the superseded fact live alongside its replacement.
 func parseRelType(s string) pb.RelationshipType {
 	switch strings.ToLower(s) {
 	case "relates_to":
@@ -404,7 +440,8 @@ func parseRelType(s string) pb.RelationshipType {
 	case "caused_by":
 		return pb.RelationshipType_RELATIONSHIP_TYPE_CAUSED_BY
 	default:
-		return pb.RelationshipType_RELATIONSHIP_TYPE_RELATES_TO
+		fatalf("unknown relationship type %q (expected: relates_to, supersedes, caused_by)", s)
+		return pb.RelationshipType_RELATIONSHIP_TYPE_RELATES_TO // unreachable
 	}
 }
 
