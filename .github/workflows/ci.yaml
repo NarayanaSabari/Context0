@@ -178,6 +178,62 @@ jobs:
             exit 1
           fi
 
+          creds=(--set postgres.password=ci-render-only --set auth.apiKeys=ctx0_ci_render_only)
+
+          # /dev/shm is tmpfs and counts against the container memory limit --
+          # measured on a live pod, writing 100MB into /dev/shm moved cgroup
+          # memory.current by exactly 100Mi. A shmSize at or above the limit
+          # means the pod can be OOM-killed by filling shared memory alone.
+          # An earlier revision of this chart shipped 256Mi of shm plus 320MB
+          # of shared_buffers inside a 1Gi limit and was OOM-killable at rest.
+          for combo in "8Gi:1Gi" "2Gi:2Gi" "1G:512M"; do
+            shm="${combo%%:*}"; lim="${combo##*:}"
+            if helm template context0 ./charts/context0 "${creds[@]}" \
+                 --set postgres.shmSize="$shm" \
+                 --set postgres.resources.limits.memory="$lim" > /dev/null 2>&1; then
+              echo "::error::chart accepted shmSize=$shm with limits.memory=$lim; that pod is OOM-killable by filling /dev/shm alone"
+              exit 1
+            fi
+          done
+
+          # ...and sane combinations must still render, in mixed units, or the
+          # guard above is just breaking the chart.
+          for combo in "256Mi:2Gi" "512Mi:2Gi" "128Mi:512Mi" "256M:2G"; do
+            shm="${combo%%:*}"; lim="${combo##*:}"
+            helm template context0 ./charts/context0 "${creds[@]}" \
+              --set postgres.shmSize="$shm" \
+              --set postgres.resources.limits.memory="$lim" > /dev/null
+          done
+
+          # A PodDisruptionBudget only makes sense above one replica: at
+          # replicas=1 it would block every voluntary eviction, including node
+          # drains.
+          if helm template context0 ./charts/context0 "${creds[@]}" --set api.replicas=1 \
+               | grep -q "kind: PodDisruptionBudget"; then
+            echo "::error::a PDB renders at replicas=1, which blocks node drains"
+            exit 1
+          fi
+          for n in 2 3; do
+            helm template context0 ./charts/context0 "${creds[@]}" --set api.replicas=$n \
+              | grep -q "kind: PodDisruptionBudget" || {
+                echo "::error::no PodDisruptionBudget at replicas=$n"; exit 1; }
+          done
+
+          # Tuning values have to actually reach the container. A renamed key
+          # would leave the default in place silently, which is how a
+          # performance setting stops being applied without anyone noticing.
+          helm template context0 ./charts/context0 "${creds[@]}" \
+            --set postgres.tuning.sharedBuffers=999MB \
+            | grep -q -- "- shared_buffers=999MB" || {
+              echo "::error::postgres.tuning.sharedBuffers does not reach the container"; exit 1; }
+
+          # The consolidation job deletes memories, so its thresholds reaching
+          # the CronJob is not cosmetic.
+          helm template context0 ./charts/context0 "${creds[@]}" \
+            --set consolidation.pruneAgeDays=77 \
+            | grep -A1 "CONSOLIDATION_PRUNE_AGE_DAYS" | grep -q '"77"' || {
+              echo "::error::consolidation.pruneAgeDays does not reach the CronJob"; exit 1; }
+
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:

@@ -1,3 +1,21 @@
+{{/*
+A tmpfs /dev/shm counts against the container's memory limit, so shmSize and
+resources.limits.memory come out of the same budget. Measured on a live pod:
+writing 100MB into /dev/shm moved cgroup memory.current by exactly 100Mi.
+
+Sizing them independently is easy to get wrong -- an earlier revision of this
+chart ran 256Mi of shm plus 320MB of shared_buffers inside a 1Gi limit and was
+OOM-killable at rest. A configuration where shm alone can exhaust the limit
+cannot work, so it is refused at render time rather than becoming a
+CrashLoopBackOff nobody can explain.
+
+The comparison is on bytes, so the units in each value do not have to match.
+*/}}
+{{- $shm := include "context0.bytes" .Values.postgres.shmSize | int64 }}
+{{- $memLimit := include "context0.bytes" .Values.postgres.resources.limits.memory | int64 }}
+{{- if ge $shm $memLimit }}
+{{- fail (printf "postgres.shmSize (%s) must be smaller than postgres.resources.limits.memory (%s): /dev/shm is tmpfs and counts against the same limit, so this pod would be OOM-killed by filling shared memory alone. Leave headroom for shared_buffers (%s) and work_mem (%s) on top." .Values.postgres.shmSize .Values.postgres.resources.limits.memory .Values.postgres.tuning.sharedBuffers .Values.postgres.tuning.workMem) }}
+{{- end }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
