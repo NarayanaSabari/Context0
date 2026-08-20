@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+/* Design tokens.
+ *
+ * These match web/src/index.css so the marketing site and the product UI read
+ * as one product. The purple and cyan come from the logo mark itself
+ * (public/favicon.svg), not from a palette invented for the site.
+ */
+@theme {
+  --color-ink: #0a0a0f;
+  --color-surface: #0f0f17;
+  --color-surface-2: #14141f;
+  --color-line: rgba(225, 226, 232, 0.1);
+  --color-line-bright: rgba(225, 226, 232, 0.2);
+
+  --color-body: #e1e2e8;
+  --color-muted: #9797a8;
+  --color-dim: #65657a;
+
+  --color-brand: #863bff;
+  --color-brand-deep: #7e14ff;
+  --color-brand-pale: #ede6ff;
+  --color-accent: #47bfff;
+
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  /* The editorial display face. Concept D's serif hero was the most memorable
+   * thing the design swarm produced; this keeps that voice. */
+  --font-display: "Instrument Serif", Georgia, "Times New Roman", serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: var(--color-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+body {
+  margin: 0;
+  /* A guard, not a fix: real overflow is caught by the build checks. Without
+   * it a single wide element on a phone lets the whole page slide sideways. */
+  overflow-x: hidden;
+  min-width: 320px;
+  background: var(--color-ink);
+  color: var(--color-body);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Visible focus everywhere, since the whole site is dark and the default
+ * outline disappears against it. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+::selection {
+  background: rgba(134, 59, 255, 0.35);
+  color: #fff;
+}
+
+/* The ambient grid used behind hero sections. Kept here rather than inline so
+ * every page renders the same backdrop. */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgba(225, 226, 232, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(225, 226, 232, 0.04) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+}
+
+.glow-brand {
+  filter: drop-shadow(0 0 10px rgba(134, 59, 255, 0.55));
+}
