@@ -151,6 +151,21 @@ for (const [key, palette] of Object.entries(PALETTES)) {
     // The hero demo fades its transcript 1.6s in; waiting past that means the
     // screenshot shows the settled state rather than a half-played animation.
     await tab.waitForTimeout(2200)
+    // Scroll-revealed sections only animate in once they intersect the
+    // viewport, and a full-page screenshot never scrolls. Walking down the page
+    // first means the capture shows what a visitor sees rather than a column of
+    // blank sections.
+    if (view.full) {
+      await tab.evaluate(async () => {
+        const step = window.innerHeight * 0.75
+        for (let y = 0; y < document.body.scrollHeight; y += step) {
+          window.scrollTo(0, y)
+          await new Promise((r) => setTimeout(r, 120))
+        }
+        window.scrollTo(0, 0)
+        await new Promise((r) => setTimeout(r, 400))
+      })
+    }
     await tab.screenshot({
       path: join(out, `${key}-${view.label}.png`),
       fullPage: view.full,

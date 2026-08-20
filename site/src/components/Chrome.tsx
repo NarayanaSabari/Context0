@@ -38,7 +38,7 @@ export function Nav({ current }: { current?: string }) {
       >
         <a
           href="/"
-          className="flex shrink-0 items-center gap-2.5 py-2 text-[15px] font-semibold tracking-tight"
+          className="flex shrink-0 items-center gap-2.5 py-2 text-[15px] font-semibold tracking-[var(--tracking-tight)]"
         >
           <Mark className="h-5 w-5" />
           {site.name}
@@ -134,7 +134,7 @@ export function Page({ current, children }: { current?: string; children: ReactN
 /** The small monospace label that opens each section. */
 export function Eyebrow({ children }: { children: ReactNode }) {
   return (
-    <p className="mb-5 flex items-center gap-3 font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+    <p className="t-label mb-6 flex items-center gap-3 text-muted">
       <span className="h-px w-8 bg-brand" aria-hidden="true" />
       {children}
     </p>

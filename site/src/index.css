@@ -80,6 +80,32 @@
    * thing the design swarm produced; this keeps that voice. The metric-matched
    * fallback sits directly after it so the first paint is the right size. */
   --font-display: "Instrument Serif", "Instrument Serif Fallback", Georgia, serif;
+
+  /* Type scale.
+   *
+   * Named by role rather than by size, and fluid between a phone and a
+   * desktop so there is one ramp instead of a pile of ad-hoc clamps scattered
+   * through the components. Display sizes carry negative tracking because
+   * Instrument Serif sets loose at large sizes; the tightening increases with
+   * the size, which is how optical sizing behaves.
+   */
+  --text-display: clamp(3.1rem, 6.4vw, 5.5rem);
+  --text-title: clamp(2.1rem, 4.1vw, 3.4rem);
+  --text-subtitle: clamp(1.6rem, 2.6vw, 2.2rem);
+  --text-lead: clamp(1.06rem, 1.35vw, 1.22rem);
+  --text-body: 1rem;
+  --text-small: 0.9375rem;
+  --text-micro: 0.6875rem;
+
+  --tracking-display: -0.035em;
+  --tracking-title: -0.028em;
+  --tracking-tight: -0.015em;
+  --tracking-label: 0.13em;
+
+  /* Vertical rhythm. Sections use one of these rather than each picking their
+   * own padding, so the page has a consistent beat as you scroll. */
+  --space-section: clamp(4.5rem, 9vw, 8rem);
+  --space-section-tight: clamp(3.5rem, 6vw, 5.5rem);
 }
 
 :root {
@@ -89,6 +115,19 @@
 html {
   scroll-behavior: smooth;
   background: var(--color-ink);
+}
+
+/* The header is sticky, so anything scrolled to by an anchor lands underneath
+ * it unless it reserves the header's height. The skip link jumps to #main, so
+ * without this the first thing a keyboard user sees after skipping is the top
+ * of the page hidden behind the nav.
+ *
+ * 4rem is the header height (h-16) plus a little breathing room.
+ */
+:target,
+#main,
+section[id] {
+  scroll-margin-top: 5rem;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -160,4 +199,97 @@ h4 {
  * haloing. */
 .glow-brand {
   filter: drop-shadow(0 1px 2px rgba(23, 22, 38, 0.18));
+}
+
+/* Typographic roles.
+ *
+ * These pair a size with the tracking and leading that size actually needs.
+ * Kept as classes rather than repeated utility strings so the display face is
+ * never set at the wrong tracking by hand.
+ */
+.t-display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--text-display);
+  line-height: 0.93;
+  letter-spacing: var(--tracking-display);
+}
+.t-title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--text-title);
+  line-height: 1.03;
+  letter-spacing: var(--tracking-title);
+}
+.t-subtitle {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--text-subtitle);
+  line-height: 1.1;
+  letter-spacing: var(--tracking-title);
+}
+.t-lead {
+  font-size: var(--text-lead);
+  line-height: 1.62;
+  color: var(--color-muted);
+}
+.t-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+}
+
+/* Optical alignment for the display face.
+ *
+ * Instrument Serif carries left side bearing that makes a headline look
+ * indented by a few pixels against body copy starting at the same x. Pulling
+ * it back by a fraction of an em makes the left edge look straight, which is
+ * the thing the eye actually measures.
+ */
+.optical-left {
+  margin-left: -0.045em;
+}
+
+/* One reveal, used sparingly.
+ *
+ * The research on current landing pages is consistent that animating
+ * everything on scroll now reads as dated, and that one or two tuned reveals
+ * per page is the disciplined version. This is that: a short rise with a
+ * settled easing curve, triggered once.
+ *
+ * It starts visible and is only hidden once the observer is known to be
+ * running, so a visitor whose JavaScript fails never gets a blank page. The
+ * reduced-motion block above already neutralises the transition.
+ */
+.reveal {
+  opacity: 1;
+}
+.js-reveal .reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition:
+    opacity 0.6s cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 0.6s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.js-reveal .reveal.is-in {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .js-reveal .reveal {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Printing never scrolls, so anything still waiting to be revealed would come
+ * out of the printer blank. */
+@media print {
+  .js-reveal .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+  }
 }

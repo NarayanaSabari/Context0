@@ -235,6 +235,18 @@ for (const page of PAGES) {
     }
 
     if (wantShots) {
+      // Scroll through before capturing. Sections that reveal on scroll have
+      // never intersected the viewport in a fresh tab, so a full-page shot
+      // taken straight away records them as blank.
+      await tab.evaluate(async () => {
+        const step = window.innerHeight * 0.75
+        for (let y = 0; y < document.body.scrollHeight; y += step) {
+          window.scrollTo(0, y)
+          await new Promise((r) => setTimeout(r, 110))
+        }
+        window.scrollTo(0, 0)
+        await new Promise((r) => setTimeout(r, 350))
+      })
       await tab.screenshot({ path: join(shotDir, `${page.name}-${vp.name}.png`), fullPage: true })
       await tab.screenshot({ path: join(shotDir, `${page.name}-${vp.name}-fold.png`) })
     }

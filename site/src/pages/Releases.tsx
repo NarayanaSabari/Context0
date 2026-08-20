@@ -35,7 +35,7 @@ export function Releases() {
       />
 
       <section>
-        <div className="mx-auto max-w-4xl px-6 py-16">
+        <div className="mx-auto max-w-4xl px-6 py-[var(--space-section-tight)]">
           <EmptyState
             title="Nothing to download yet"
             body="The first release will land when the core is stable enough to be worth your time. Join the waitlist and you will hear about it the day it ships."
@@ -52,7 +52,7 @@ export function Releases() {
           />
 
           <div className="mt-16 border-t border-line pt-12">
-            <h2 className="text-lg font-semibold tracking-tight">How versions will work</h2>
+            <h2 className="text-lg font-semibold tracking-[var(--tracking-tight)]">How versions will work</h2>
             <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-muted">
               Semantic versioning, with the pre-1.0 caveat that matters: while the major
               version is zero, a minor bump may contain a breaking change. Pin an exact
@@ -76,7 +76,7 @@ export function Releases() {
           </div>
 
           <div className="mt-16 border-t border-line pt-12">
-            <h2 className="text-lg font-semibold tracking-tight">Know when the first one lands</h2>
+            <h2 className="text-lg font-semibold tracking-[var(--tracking-tight)]">Know when the first one lands</h2>
             <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-muted">
               One email, on release day.
             </p>

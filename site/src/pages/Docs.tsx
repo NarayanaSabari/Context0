@@ -64,8 +64,8 @@ export function Docs() {
       />
 
       <section className="border-b border-line">
-        <div className="mx-auto max-w-4xl px-6 py-16">
-          <h2 className="text-lg font-semibold tracking-tight">The ideas</h2>
+        <div className="mx-auto max-w-4xl px-6 py-[var(--space-section-tight)]">
+          <h2 className="text-lg font-semibold tracking-[var(--tracking-tight)]">The ideas</h2>
           <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-muted">
             Four terms cover most of how Context0 thinks about memory.
           </p>
@@ -85,8 +85,8 @@ export function Docs() {
       </section>
 
       <section className="border-b border-line">
-        <div className="mx-auto max-w-4xl px-6 py-16">
-          <h2 className="text-lg font-semibold tracking-tight">Read the source</h2>
+        <div className="mx-auto max-w-4xl px-6 py-[var(--space-section-tight)]">
+          <h2 className="text-lg font-semibold tracking-[var(--tracking-tight)]">Read the source</h2>
           <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-muted">
             Everything is public while it is being built.
           </p>
@@ -100,7 +100,7 @@ export function Docs() {
                 rel={link.external ? 'noopener noreferrer' : undefined}
                 className="group bg-surface p-6 transition-colors hover:bg-surface-2"
               >
-                <h3 className="flex items-center gap-2 text-[15px] font-semibold tracking-tight transition-colors group-hover:text-brand-ink">
+                <h3 className="flex items-center gap-2 text-[15px] font-semibold tracking-[var(--tracking-tight)] transition-colors group-hover:text-brand-ink">
                   {link.title}
                   <span aria-hidden="true" className="text-dim">
                     -&gt;
@@ -114,8 +114,8 @@ export function Docs() {
       </section>
 
       <section>
-        <div className="mx-auto max-w-4xl px-6 py-16">
-          <h2 className="text-lg font-semibold tracking-tight">Be told when the docs are real</h2>
+        <div className="mx-auto max-w-4xl px-6 py-[var(--space-section-tight)]">
+          <h2 className="text-lg font-semibold tracking-[var(--tracking-tight)]">Be told when the docs are real</h2>
           <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-muted">
             The waitlist email goes out the day the first release and its documentation land
             together.

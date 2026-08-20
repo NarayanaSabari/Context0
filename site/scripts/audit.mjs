@@ -229,7 +229,48 @@ const browser = await chromium.launch()
   await context.close()
 }
 
-// 5. A missing page.
+// 5. Scroll-revealed content that never arrives.
+//
+// The homepage hides several sections until they scroll into view. That is a
+// nice effect and a genuinely dangerous default, because every failure mode of
+// the reveal is invisible content rather than a missing animation. A full-page
+// screenshot caught exactly that once: the viewport never moved, so nothing
+// intersected, and three sections rendered blank.
+//
+// This asserts the end state that matters - after the page has settled,
+// nothing marked .reveal is still transparent - both at the top of the page
+// and after scrolling to the bottom.
+{
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  const tab = await context.newPage()
+  await tab.goto(`${base}/`, { waitUntil: 'networkidle' })
+
+  // Without scrolling at all. The failsafe in useReveal has to cover this.
+  await tab.waitForTimeout(2600)
+  const hiddenAtRest = await tab.evaluate(() =>
+    [...document.querySelectorAll('.reveal')].filter(
+      (el) => parseFloat(getComputedStyle(el).opacity) < 0.9,
+    ).length,
+  )
+  if (hiddenAtRest > 0) {
+    report('high', `${hiddenAtRest} revealed section(s) never became visible without scrolling`)
+  }
+
+  // And after a full scroll, which is the ordinary path.
+  await tab.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+  await tab.waitForTimeout(1200)
+  const hiddenAfterScroll = await tab.evaluate(() =>
+    [...document.querySelectorAll('.reveal')].filter(
+      (el) => parseFloat(getComputedStyle(el).opacity) < 0.9,
+    ).length,
+  )
+  if (hiddenAfterScroll > 0) {
+    report('high', `${hiddenAfterScroll} revealed section(s) still hidden after scrolling`)
+  }
+  await context.close()
+}
+
+// 6. A missing page.
 //
 // GitHub Pages serves 404.html for any unmatched path. Without one the visitor
 // gets GitHub's generic page with no way back to the site.
