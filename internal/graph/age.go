@@ -1606,13 +1606,42 @@ func (r *AGERepository) Ping(ctx context.Context) error {
 }
 
 // NodeCount returns the total number of vertices in the AGE graph.
+//
+// Counted from AGE's own base table rather than through Cypher. AGE stores
+// every vertex in _ag_label_vertex and every edge in _ag_label_edge regardless
+// of label, so the two forms return identical numbers -- verified against this
+// cluster at 207,820 vertices and 770,777 edges.
+//
+// The Cypher form is dramatically slower for edges: `MATCH ()-[e]->()` binds
+// both endpoint vertices to satisfy the pattern, so counting 770k edges also
+// walks 1.5M vertex references. Measured on a live database, the edge count ran
+// 1,080ms through Cypher against 33ms from the base table, while the node count
+// -- which has no endpoints to resolve -- ran 42ms against 17ms.
+//
+// That mattered because these are health-check counts: /v1/health showed a 4ms
+// median and a 1,548ms p95 in a soak run, the tail being every request that
+// arrived after the 5s cache TTL expired and paid for the recompute.
 func (r *AGERepository) NodeCount(ctx context.Context) (int64, error) {
-	return r.count(ctx, `MATCH (n) RETURN count(n)`, "node")
+	return r.countTable(ctx, "_ag_label_vertex", "node")
 }
 
 // EdgeCount returns the total number of directed edges in the AGE graph.
+// See NodeCount for why this reads the base table rather than using Cypher.
 func (r *AGERepository) EdgeCount(ctx context.Context) (int64, error) {
-	return r.count(ctx, `MATCH ()-[e]->() RETURN count(e)`, "edge")
+	return r.countTable(ctx, "_ag_label_edge", "edge")
+}
+
+// countTable counts rows in one of AGE's internal label tables.
+//
+// The table name is a compile-time constant from the two callers above, never
+// caller input, so quoting it into the statement introduces no injection risk.
+func (r *AGERepository) countTable(ctx context.Context, table, label string) (int64, error) {
+	var n int64
+	q := fmt.Sprintf(`SELECT count(*) FROM %s.%q`, GraphName, table)
+	if err := r.pool.QueryRow(ctx, q).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count %s: %w", label, err)
+	}
+	return n, nil
 }
 
 // --- Helpers ---

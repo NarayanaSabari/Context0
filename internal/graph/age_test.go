@@ -1840,3 +1840,81 @@ func TestEndSessionUnknownIDIsNotFound(t *testing.T) {
 		t.Error("an unknown session was reported as already ended")
 	}
 }
+
+// TestCountsMatchTheCypherForm pins the equivalence the fast counts rely on.
+//
+// NodeCount and EdgeCount read AGE's internal label tables directly instead of
+// going through Cypher, because `MATCH ()-[e]->()` binds both endpoint vertices
+// to satisfy the pattern: measured at 1,080ms against 33ms for the same number
+// on a 770k-edge graph. That is only safe while AGE keeps every vertex in
+// _ag_label_vertex and every edge in _ag_label_edge regardless of label.
+//
+// If a future AGE version changes that layout, the counts would silently drift
+// rather than fail, and a health endpoint would report a number that is merely
+// plausible. This compares the two forms directly so the assumption cannot rot
+// unnoticed.
+func TestCountsMatchTheCypherForm(t *testing.T) {
+	repo, ctx := testRepo(t)
+
+	// Write something, so the comparison is not trivially 0 == 0.
+	projectID := newProjectID(t)
+	from := storeMemory(t, repo, ctx, newMemory(projectID, "count equivalence one"))
+	to := storeMemory(t, repo, ctx, newMemory(projectID, "count equivalence two"))
+	if _, err := repo.CreateEdge(ctx, model.Edge{
+		ID:           uuid.New(),
+		FromID:       from.ID,
+		ToID:         to.ID,
+		Relationship: model.RelRelatesTo,
+		Weight:       1.0,
+		CreatedAt:    time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create edge: %v", err)
+	}
+
+	cypherCount := func(q string) int64 {
+		t.Helper()
+		rows, err := repo.cypher(ctx, q, nil)
+		if err != nil {
+			t.Fatalf("cypher count: %v", err)
+		}
+		n, found, err := scanOne[int64](rows)
+		if err != nil || !found {
+			t.Fatalf("scan cypher count: err=%v found=%v", err, found)
+		}
+		return n
+	}
+
+	// Both reads have to happen close together, since the suite writes
+	// concurrently. A small drift is expected; a structural mismatch is not.
+	const tolerance = 200
+
+	gotNodes, err := repo.NodeCount(ctx)
+	if err != nil {
+		t.Fatalf("NodeCount: %v", err)
+	}
+	wantNodes := cypherCount(`MATCH (n) RETURN count(n)`)
+	if diff := gotNodes - wantNodes; diff > tolerance || diff < -tolerance {
+		t.Errorf("NodeCount returned %d but the Cypher form returned %d "+
+			"(difference %d): the base table no longer holds every vertex, so "+
+			"the fast count is reporting a number that is merely plausible",
+			gotNodes, wantNodes, diff)
+	}
+
+	gotEdges, err := repo.EdgeCount(ctx)
+	if err != nil {
+		t.Fatalf("EdgeCount: %v", err)
+	}
+	wantEdges := cypherCount(`MATCH ()-[e]->() RETURN count(e)`)
+	if diff := gotEdges - wantEdges; diff > tolerance || diff < -tolerance {
+		t.Errorf("EdgeCount returned %d but the Cypher form returned %d "+
+			"(difference %d): the base table no longer holds every edge",
+			gotEdges, wantEdges, diff)
+	}
+
+	// Both must be counting something, or an empty table would agree with a
+	// broken query.
+	if gotNodes < 2 || gotEdges < 1 {
+		t.Errorf("counts are implausibly low after writing 2 vertices and 1 edge: "+
+			"nodes=%d edges=%d", gotNodes, gotEdges)
+	}
+}
