@@ -8,8 +8,8 @@
 
 export const site = {
   name: 'Context0',
-  domain: 'context0.sabarinarayanakg.in',
-  url: 'https://context0.sabarinarayanakg.in',
+  domain: 'context0.sabarinarayana.com',
+  url: 'https://context0.sabarinarayana.com',
   tagline: 'Memory for AI agents',
   description:
     'Context0 is an open-source memory engine for AI agents. Graph-first, self-hosted, Apache 2.0. Join the waitlist.',

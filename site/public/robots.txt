@@ -2,4 +2,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://context0.sabarinarayanakg.in/sitemap.xml
+Sitemap: https://context0.sabarinarayana.com/sitemap.xml

@@ -1,6 +1,6 @@
 # The marketing site
 
-The landing page at <https://context0.sabarinarayanakg.in>.
+The landing page at <https://context0.sabarinarayana.com>.
 
 Separate from `web/`, which is the in-cluster graph UI shipped with the product.
 This one is a static marketing site: no API calls, no auth, no backend. It
@@ -139,25 +139,34 @@ to `main` that touches `site/`. Pull requests build and verify but never deploy.
      -f 'source[branch]=main' -f 'source[path]=/'
    ```
 
-2. **Add the DNS record** at the registrar for `sabarinarayanakg.in`:
+2. **Add the DNS record** in Cloudflare, on the `sabarinarayana.com` zone:
 
-   | Type | Name | Value | TTL |
-   |------|------|-------|-----|
-   | CNAME | `context0` | `narayanasabari.github.io.` | 3600 |
+   | Type | Name | Target | Proxy | TTL |
+   |------|------|--------|-------|-----|
+   | CNAME | `context0` | `narayanasabari.github.io` | **DNS only** | Auto |
 
-   A `CNAME` rather than an `A` record, because this is a subdomain.
+   Three things that are easy to get wrong:
 
-   The value is `narayanasabari.github.io`, the *owner's* Pages host, not
-   `context0.github.io` and not the project path. The repository is owned by
-   the user `NarayanaSabari`, so that is the host every Pages site of theirs is
-   served from. Pointing the record at `context0.github.io` would resolve to a
-   host that does not serve this site, and the domain would never come up.
+   - **Proxy must be DNS only** (grey cloud, not orange). With the proxy on,
+     GitHub cannot validate domain ownership and certificate issuance fails.
+     The proxy can be enabled later once the certificate exists, though Pages
+     already serves through a CDN so it buys little.
+   - **Name is `context0`**, not the full hostname. Cloudflare appends the zone.
+   - **Target is `narayanasabari.github.io`**, the *owner's* Pages host. Not
+     `context0.github.io`, and not the project path. The repository is owned by
+     the user `NarayanaSabari`, so that is the host every Pages site of theirs
+     is served from. Pointing elsewhere resolves to a host that does not serve
+     this site, and the domain never comes up.
+
+   If Cloudflare's SSL/TLS mode for the zone is **Flexible**, set it to **Full**
+   before enabling HTTPS below. Flexible talks to the origin over plain HTTP,
+   which GitHub redirects, producing a redirect loop.
 
 3. **Set the custom domain** once DNS resolves:
 
    ```bash
    gh api -X PUT repos/NarayanaSabari/Context0/pages \
-     -f 'cname=context0.sabarinarayanakg.in'
+     -f 'cname=context0.sabarinarayana.com'
    ```
 
    Already applied. Note the order: GitHub only issues the TLS certificate
@@ -167,7 +176,7 @@ to `main` that touches `site/`. Pull requests build and verify but never deploy.
 
    ```bash
    gh api -X PUT repos/NarayanaSabari/Context0/pages \
-     -f 'cname=context0.sabarinarayanakg.in' -F 'https_enforced=true'
+     -f 'cname=context0.sabarinarayana.com' -F 'https_enforced=true'
    ```
 
    `public/CNAME` is copied into every build so the domain survives redeploys.
@@ -175,8 +184,8 @@ to `main` that touches `site/`. Pull requests build and verify but never deploy.
 4. **Verify:**
 
    ```bash
-   dig +short context0.sabarinarayanakg.in     # expect narayanasabari.github.io
-   curl -sI https://context0.sabarinarayanakg.in | head -1
+   dig +short context0.sabarinarayana.com     # expect narayanasabari.github.io
+   curl -sI https://context0.sabarinarayana.com | head -1
    ```
 
 ## Design history

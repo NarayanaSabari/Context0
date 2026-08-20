@@ -1,6 +1,6 @@
 name: Deploy Site
 
-# The marketing site at context0.sabarinarayanakg.in. Builds the static Vite
+# The marketing site at context0.sabarinarayana.com. Builds the static Vite
 # bundle in site/ and publishes it to GitHub Pages.
 #
 # Scoped to site/ so a Go-only change does not redeploy the site, and a copy

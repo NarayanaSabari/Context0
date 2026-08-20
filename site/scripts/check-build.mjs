@@ -37,7 +37,7 @@ const prerenderedMarkup = (html) => {
   return html.slice(start + '<div id="root">'.length, end === -1 ? html.length : end)
 }
 
-const DOMAIN = 'context0.sabarinarayanakg.in'
+const DOMAIN = 'context0.sabarinarayana.com'
 const ORIGIN = `https://${DOMAIN}`
 
 // Every page the site is supposed to publish, and the path it must be
