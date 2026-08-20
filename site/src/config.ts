@@ -13,11 +13,10 @@ export const site = {
   tagline: 'Memory for AI agents',
   description:
     'kora is an open-source memory engine for AI agents. Graph-first, self-hosted, Apache 2.0. Join the waitlist.',
-  // Still the Context0 repository: the product is now called kora, but the
-  // GitHub repo has not been renamed. Pointing at the real current location
-  // rather than at a name that does not resolve yet. Update this the moment the
-  // repository is renamed, and GitHub's own redirect will cover the gap.
-  github: 'https://github.com/NarayanaSabari/Context0',
+  // The repository was renamed to Kora alongside the product. GitHub keeps
+  // redirecting the old Context0 URL, but a redirect breaks the moment someone
+  // else claims that name, so this points at the real current location.
+  github: 'https://github.com/NarayanaSabari/Kora',
 } as const
 
 /**

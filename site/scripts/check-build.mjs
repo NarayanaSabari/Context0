@@ -182,7 +182,7 @@ for (const page of PAGES) {
   }
   for (const url of externals.filter((u) => u.includes('github.com'))) {
     check(
-      url.includes('github.com/NarayanaSabari/Context0'),
+      url.includes('github.com/NarayanaSabari/Kora'),
       `${where} GitHub link points somewhere unexpected: ${url}`,
     )
   }
