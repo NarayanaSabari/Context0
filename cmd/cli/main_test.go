@@ -1,11 +1,15 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The CLI had no tests at all. It is a published interface -- a hand-maintained
@@ -192,5 +196,173 @@ func TestUnreachableEngineIsReported(t *testing.T) {
 		if stderr == "" {
 			t.Errorf("`context0 %s` reported nothing on stderr", strings.Join(args, " "))
 		}
+	}
+}
+
+// The tests above all run against an unreachable endpoint, so they exercise
+// argument handling and nothing else. That leaves the success path unproven:
+// mutation testing forced every RPC error branch to fire and the suite did not
+// notice, because from its view every call already failed.
+//
+// These run against a real engine. CONTEXT0_CLI_ENDPOINT is separate from the
+// unreachable default so the two groups cannot be confused, and the tests skip
+// when it is absent rather than silently proving nothing.
+
+func liveEndpoint(t *testing.T) (endpoint, key string) {
+	t.Helper()
+	endpoint = os.Getenv("CONTEXT0_CLI_ENDPOINT")
+	key = os.Getenv("CONTEXT0_API_KEY")
+	if endpoint == "" || key == "" {
+		t.Skip("CONTEXT0_CLI_ENDPOINT and CONTEXT0_API_KEY not set")
+	}
+	return endpoint, key
+}
+
+// runLive executes the CLI against a reachable engine.
+func runLive(t *testing.T, bin, project string, args ...string) (stdout string, code int) {
+	t.Helper()
+	endpoint, key := liveEndpoint(t)
+
+	cmd := exec.Command(bin, args...)
+	cmd.Env = append(os.Environ(),
+		"CONTEXT0_ENDPOINT="+endpoint,
+		"CONTEXT0_API_KEY="+key,
+		"CONTEXT0_PROJECT="+project,
+	)
+	var out, errBuf strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+
+	code = 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		code = ee.ExitCode()
+	} else if err != nil {
+		t.Fatalf("run cli: %v", err)
+	}
+	if code != 0 {
+		t.Logf("stderr: %s", errBuf.String())
+	}
+	return out.String(), code
+}
+
+// TestLiveRoundTrip proves the CLI can actually do its job: store a memory,
+// find it again, connect two, and delete one. Without this, every RPC error
+// branch could fire unconditionally and no test would object.
+func TestLiveRoundTrip(t *testing.T) {
+	bin := cliBinary(t)
+	project := fmt.Sprintf("cli-live-%d", time.Now().UnixNano())
+
+	// Store.
+	out, code := runLive(t, bin, project, "store", "the deploy target is production", "--tags", "cli,live")
+	if code != 0 {
+		t.Fatalf("store exited %d against a reachable engine: %s", code, out)
+	}
+	var stored struct {
+		ID      string `json:"id"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(out), &stored); err != nil {
+		t.Fatalf("store output is not the memory JSON: %v\n%s", err, out)
+	}
+	if stored.ID == "" {
+		t.Fatalf("store returned no id: %s", out)
+	}
+	if stored.Content != "the deploy target is production" {
+		t.Errorf("stored content = %q, want what was passed", stored.Content)
+	}
+
+	// Query finds it. Retried briefly: the memory is committed before the
+	// response, but its embedding is written after, so vector search can lag.
+	var found bool
+	for attempt := 0; attempt < 10 && !found; attempt++ {
+		if attempt > 0 {
+			time.Sleep(300 * time.Millisecond)
+		}
+		qout, qcode := runLive(t, bin, project, "query", "deploy target")
+		if qcode != 0 {
+			t.Fatalf("query exited %d: %s", qcode, qout)
+		}
+		found = strings.Contains(qout, stored.ID)
+	}
+	if !found {
+		t.Error("query did not return the memory that was just stored")
+	}
+
+	// Connect two memories.
+	out2, code2 := runLive(t, bin, project, "store", "the rollback target is staging")
+	if code2 != 0 {
+		t.Fatalf("second store exited %d: %s", code2, out2)
+	}
+	var second struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(out2), &second); err != nil {
+		t.Fatalf("second store output is not JSON: %v", err)
+	}
+
+	cout, ccode := runLive(t, bin, project, "connect", stored.ID, second.ID, "supersedes")
+	if ccode != 0 {
+		t.Fatalf("connect exited %d: %s", ccode, cout)
+	}
+	if !strings.Contains(cout, stored.ID) {
+		t.Errorf("connect output does not reference the source memory: %s", cout)
+	}
+
+	// Delete.
+	dout, dcode := runLive(t, bin, project, "delete", stored.ID)
+	if dcode != 0 {
+		t.Fatalf("delete exited %d: %s", dcode, dout)
+	}
+}
+
+// TestLiveStatsReportsRealNumbers: `context0 stats` is how an operator checks a
+// deployment, so it has to report the engine's actual state rather than the
+// zeros an unauthenticated caller receives.
+func TestLiveStatsReportsRealNumbers(t *testing.T) {
+	bin := cliBinary(t)
+
+	out, code := runLive(t, bin, "cli-live-stats", "stats")
+	if code != 0 {
+		t.Fatalf("stats exited %d: %s", code, out)
+	}
+	if !strings.Contains(out, "Status:") || !strings.Contains(out, "Nodes:") {
+		t.Fatalf("stats output is not the expected report: %s", out)
+	}
+	// A version and a non-zero node count are what distinguish an
+	// authenticated answer from the anonymous one.
+	if strings.Contains(out, "Engine v\n") {
+		t.Errorf("stats reported an empty version, which is the anonymous "+
+			"response: %s", out)
+	}
+	if strings.Contains(out, "Nodes:      0\n") {
+		t.Errorf("stats reported zero nodes against a populated engine, which "+
+			"is the anonymous response: %s", out)
+	}
+}
+
+// TestLiveSessionLifecycle covers the session commands end to end, including
+// the repeat-end rejection the server added.
+func TestLiveSessionLifecycle(t *testing.T) {
+	bin := cliBinary(t)
+	project := fmt.Sprintf("cli-live-session-%d", time.Now().UnixNano())
+
+	out, code := runLive(t, bin, project, "session-start")
+	if code != 0 {
+		t.Fatalf("session-start exited %d: %s", code, out)
+	}
+	id := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`).FindString(out)
+	if id == "" {
+		t.Fatalf("session-start printed no session id: %s", out)
+	}
+
+	if _, code := runLive(t, bin, project, "session-end", id); code != 0 {
+		t.Fatalf("the first session-end exited %d", code)
+	}
+	// The server rejects a repeat end; the CLI must surface that as a failure
+	// rather than printing a duration computed from a rejected response.
+	if _, code := runLive(t, bin, project, "session-end", id); code == 0 {
+		t.Error("a repeated session-end exited 0; the CLI reported success for " +
+			"a request the server rejected")
 	}
 }

@@ -330,6 +330,21 @@ jobs:
           MIN_VERTICES_FOR_LATENCY: "2000"
         run: scripts/verify_perf.sh
 
+      # The CLI's argument handling is covered by unit tests against an
+      # unreachable endpoint, which cannot exercise the success path: forcing
+      # every RPC error branch to fire left that suite green, because from its
+      # view each call already failed. These run against the live engine.
+      - name: Run CLI tests against the live engine
+        env:
+          CONTEXT0_CLI_ENDPOINT: localhost:50051
+          CONTEXT0_API_KEY: ${{ env.E2E_API_KEY }}
+        run: |
+          # The CLI speaks gRPC, and the other steps only forward the HTTP
+          # port, so this needs its own forward.
+          kubectl -n context0 port-forward svc/context0-api 50051:50051 &
+          sleep 5
+          go test ./cmd/cli/ -run Live -count=1 -v
+
       # The Python SDK is a published interface with no coverage: a route
       # table and per-field response parsing that renames everything on the
       # way in. A broken route or a renamed field would reach users with
