@@ -93,6 +93,32 @@ kubectl set env deploy/context0-api -n context0 CONTEXT0_RATE_LIMIT_PER_MINUTE=6
 kubectl set env deploy/context0-api -n context0 CONTEXT0_RATE_LIMIT_PER_MINUTE-
 ```
 
+**Do not compare throughput across runs unless the runs are comparable.** The
+soak reports ops/s, and it is tempting to read a drop as a regression. On a
+shared kind cluster that number moves for reasons that have nothing to do with
+the code: the API pod has a 500m CPU limit and is throttled under this load, the
+graph grows between runs, and a port-forward restarting mid-run costs
+throughput.
+
+Measured on this cluster, alternating between two images on the same workload:
+
+| image | ops/s across runs |
+|---|---|
+| before a change | 36, 40 |
+| after the same change | 29, 36, 53 |
+
+The ranges overlap and the *after* image produced both the lowest and the
+highest number. That is noise, not a regression signature. An earlier reading of
+"throughput halved" came from comparing a 10-minute run against a 45-second one
+taken hours before on a smaller graph -- not a like-for-like comparison, and the
+conclusion drawn from it was wrong.
+
+If throughput genuinely needs comparing, alternate the two images back to back
+in one sitting, run each at least twice, and treat overlapping ranges as no
+result. The `NOTE` about CPU throttling that the soak prints when latency
+exceeds its budget tells you whether the pod was resource-bound during the run,
+which is usually the actual explanation.
+
 ## Checking for leaks
 
 Sample the process metrics across the run. Flat is the requirement; a slope in
