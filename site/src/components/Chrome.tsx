@@ -60,14 +60,18 @@ export function Nav({ current }: { current?: string }) {
               </a>
             )
           })}
+          {/* On a phone the label is dropped but the link is kept. Hiding it
+              entirely, as this did before, left the secondary call to action
+              unreachable on the devices where most first visits happen. */}
           <a
             href={site.github}
             target="_blank"
             rel="noopener noreferrer"
-            className="ml-1 hidden min-h-11 items-center gap-2 rounded-md border border-line-bright px-3 text-[13px] text-body transition-colors hover:border-brand hover:bg-brand/[0.07] hover:text-brand-ink sm:inline-flex"
+            aria-label="Context0 on GitHub"
+            className="ml-1 inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-line-bright px-2.5 text-[13px] text-body transition-colors hover:border-brand hover:bg-brand/[0.07] hover:text-brand-ink sm:px-3"
           >
             <GitHubIcon />
-            GitHub
+            <span className="hidden sm:inline">GitHub</span>
           </a>
         </div>
       </nav>
