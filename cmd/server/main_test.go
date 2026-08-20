@@ -199,12 +199,13 @@ func TestStartupLogsTheEffectiveConfiguration(t *testing.T) {
 	const secret = "ctx0_startup_probe_secret_value"
 
 	// The server does not exit on its own, so run it briefly and stop it.
+	grpcPort := freePort(t)
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(),
 		"CONTEXT0_DATABASE_URL="+dsn,
 		"CONTEXT0_API_KEYS="+secret,
 		"CONTEXT0_RATE_LIMIT_PER_MINUTE=4242",
-		fmt.Sprintf("CONTEXT0_GRPC_PORT=%d", freePort(t)),
+		fmt.Sprintf("CONTEXT0_GRPC_PORT=%d", grpcPort),
 		fmt.Sprintf("CONTEXT0_HTTP_PORT=%d", freePort(t)),
 	)
 	var buf strings.Builder
@@ -214,10 +215,32 @@ func TestStartupLogsTheEffectiveConfiguration(t *testing.T) {
 		t.Fatalf("start server: %v", err)
 	}
 	time.Sleep(6 * time.Second)
+
+	// Dial while the server is still running. Checking after Kill() would
+	// always see a refused connection, which is how an earlier version of this
+	// assertion failed against a perfectly healthy server.
+	//
+	// localhost, not 127.0.0.1: the server listens on ":port", which resolves
+	// to the IPv6 wildcard, so dialling the IPv4 literal can miss it.
+	conn, dialErr := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", grpcPort), 2*time.Second)
+	if dialErr != nil {
+		t.Errorf("nothing is accepting connections on the gRPC port %d: %v",
+			grpcPort, dialErr)
+	} else {
+		_ = conn.Close()
+	}
+
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait()
 
 	out := buf.String()
+
+	// The gRPC listener must actually be bound. Asserting only on the log
+	// leaves the listen error path unprotected: forcing it to fire made the
+	// server exit, and a test that never connects does not notice.
+	if !strings.Contains(out, `"msg":"gRPC server listening"`) {
+		t.Errorf("the server did not report its gRPC listener: %s", out)
+	}
 	if !strings.Contains(out, `"msg":"configuration"`) {
 		t.Fatalf("startup logged no configuration line, so a setting silently "+
 			"replaced by a default leaves no trace: %s", out)
