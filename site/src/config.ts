@@ -13,7 +13,10 @@ export const site = {
   tagline: 'Memory for AI agents',
   description:
     'Context0 is an open-source memory engine for AI agents. Graph-first, self-hosted, Apache 2.0. Join the waitlist.',
-  github: 'https://github.com/context0/Context0',
+  // The canonical location. github.com/context0/Context0 also resolves via a
+  // rename redirect, but linking through a redirect breaks the moment someone
+  // claims that name, so point at the real owner.
+  github: 'https://github.com/NarayanaSabari/Context0',
 } as const
 
 /**

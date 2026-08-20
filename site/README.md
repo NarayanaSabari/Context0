@@ -94,7 +94,7 @@ to `main` that touches `site/`. Pull requests build and verify but never deploy.
    **GitHub Actions**. Or:
 
    ```bash
-   gh api -X POST repos/context0/Context0/pages \
+   gh api -X POST repos/NarayanaSabari/Context0/pages \
      -f 'build_type=workflow' \
      -f 'source[branch]=main' -f 'source[path]=/'
    ```
@@ -103,26 +103,39 @@ to `main` that touches `site/`. Pull requests build and verify but never deploy.
 
    | Type | Name | Value | TTL |
    |------|------|-------|-----|
-   | CNAME | `context0` | `context0.github.io.` | 3600 |
+   | CNAME | `context0` | `narayanasabari.github.io.` | 3600 |
 
-   A `CNAME` rather than an `A` record, because this is a subdomain. It points
-   at the org Pages host, not at a project path.
+   A `CNAME` rather than an `A` record, because this is a subdomain.
+
+   The value is `narayanasabari.github.io`, the *owner's* Pages host, not
+   `context0.github.io` and not the project path. The repository is owned by
+   the user `NarayanaSabari`, so that is the host every Pages site of theirs is
+   served from. Pointing the record at `context0.github.io` would resolve to a
+   host that does not serve this site, and the domain would never come up.
 
 3. **Set the custom domain** once DNS resolves:
 
    ```bash
-   gh api -X PUT repos/context0/Context0/pages \
+   gh api -X PUT repos/NarayanaSabari/Context0/pages \
+     -f 'cname=context0.sabarinarayanakg.in'
+   ```
+
+   Already applied. Note the order: GitHub only issues the TLS certificate
+   after the DNS record resolves, and rejects `https_enforced=true` before that
+   with "The certificate does not exist yet". Once `dig` returns the record,
+   enable it:
+
+   ```bash
+   gh api -X PUT repos/NarayanaSabari/Context0/pages \
      -f 'cname=context0.sabarinarayanakg.in' -F 'https_enforced=true'
    ```
 
    `public/CNAME` is copied into every build so the domain survives redeploys.
-   GitHub issues the TLS certificate automatically, usually within fifteen
-   minutes of the record resolving.
 
 4. **Verify:**
 
    ```bash
-   dig +short context0.sabarinarayanakg.in
+   dig +short context0.sabarinarayanakg.in     # expect narayanasabari.github.io
    curl -sI https://context0.sabarinarayanakg.in | head -1
    ```
 
