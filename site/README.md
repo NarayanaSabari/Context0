@@ -180,5 +180,8 @@ to `main` that touches `site/`. Pull requests build and verify but never deploy.
 
 The visual language came out of a four-way parallel design competition: four
 agents on four different model families, one shared brief, four complete
-independent concepts, compared as real browser renders at both widths. The brief
-and the concepts are kept in `.design/` (gitignored).
+independent concepts, compared as real browser renders at both widths.
+
+`design-archive/` keeps the brief and all four concepts, with a write-up of how
+they scored and which ideas ended up in the shipped site. Open any of them
+directly in a browser; they are self-contained HTML with no build step.
