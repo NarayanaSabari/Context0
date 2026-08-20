@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	pb "github.com/context0/context0/api/gen/context0/v1"
+	"github.com/context0/context0/internal/embedding"
 	"github.com/context0/context0/internal/graph"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -383,5 +384,168 @@ func TestStoreWithoutEmbedderSucceeds(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Store with a nil embedder failed: %v -- the embedder is "+
 			"documented as optional, so this configuration must accept writes", err)
+	}
+}
+
+// TestCancelledStoreStillFinishesTheRecord covers a memory left permanently
+// unsearchable by a client that hung up.
+//
+// Store commits the memory, then embeds it, links it to a session, runs
+// contradiction detection and auto-links by tag. All of that ran on the
+// caller's context, so a client that disconnected after CreateMemory left the
+// memory stored with no embedding row: absent from vector search forever,
+// while Store still returned success, so nothing would ever retry it.
+//
+// Measured before the fix, cancelling across a spread of delays: 2 of 6
+// successful stores had no embedding. After: 0 of 32.
+//
+// Once the memory is committed, finishing its record belongs to the write
+// rather than to the caller, so that work now runs on its own bounded context.
+func TestCancelledStoreStillFinishesTheRecord(t *testing.T) {
+	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	pool, err := graph.NewPool(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	repo := graph.NewAGERepository(pool, 384)
+	if err := repo.InitSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+	svc := NewMemoryService(repo, embedding.NewBagOfWordsEmbedder(384))
+
+	projectID := fmt.Sprintf("cancel-finish-%d", time.Now().UnixNano())
+
+	// A spread of deadlines, so cancellation lands at different points in the
+	// pipeline rather than always the same one.
+	var succeeded []uuid.UUID
+	for i := 0; i < 40; i++ {
+		reqCtx, cancel := context.WithTimeout(ctx, time.Duration(i)*500*time.Microsecond)
+		resp, err := svc.Store(reqCtx, &pb.StoreRequest{
+			Content:   fmt.Sprintf("cancellation probe %d about kubernetes deployment", i),
+			ProjectId: projectID,
+			Type:      pb.MemoryType_MEMORY_TYPE_SEMANTIC,
+		})
+		cancel()
+		if err == nil && resp != nil {
+			id, perr := uuid.Parse(resp.Memory.Id)
+			if perr != nil {
+				t.Fatalf("Store returned an unparseable id %q", resp.Memory.Id)
+			}
+			succeeded = append(succeeded, id)
+		}
+	}
+
+	if len(succeeded) == 0 {
+		t.Fatal("no store succeeded; the test observed nothing")
+	}
+
+	// The invariant: anything Store reported as successful is complete. A
+	// caller told "stored" has no reason to retry, so an incomplete record here
+	// is permanent.
+	var missing int
+	for _, id := range succeeded {
+		var n int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM memory_embeddings WHERE memory_id=$1`, id).Scan(&n); err != nil {
+			t.Fatalf("count embeddings: %v", err)
+		}
+		if n == 0 {
+			missing++
+		}
+	}
+	if missing > 0 {
+		t.Errorf("%d of %d successful stores have no embedding row; those "+
+			"memories are permanently absent from vector search and the caller "+
+			"was told the write succeeded", missing, len(succeeded))
+	}
+}
+
+// TestStoreFinishWorkIsBounded: dropping the caller's cancellation without a
+// deadline of its own would let a stalled provider or database hold the
+// request, and the goroutine serving it, open forever.
+func TestStoreFinishWorkIsBounded(t *testing.T) {
+	if storeFinishTimeout <= 0 {
+		t.Fatal("the post-commit work has no timeout; a stalled dependency " +
+			"would hold the request open indefinitely")
+	}
+	if storeFinishTimeout > 2*time.Minute {
+		t.Errorf("storeFinishTimeout is %s, too long to bound a single write",
+			storeFinishTimeout)
+	}
+}
+
+// TestCancelledExtractStillFinishesItsMemories: Extract has the same shape as
+// Store -- commit a memory, then embed it -- repeated per extracted memory, so
+// it had the same defect.
+//
+// A client that hung up mid-loop left the memories already written with no
+// embedding row, permanently absent from vector search. Measured before the
+// fix across a spread of cancellation points: 3 of 10 persisted memories had
+// no embedding, and the responses reported 7 while 10 had actually landed.
+func TestCancelledExtractStillFinishesItsMemories(t *testing.T) {
+	dsn := os.Getenv("CONTEXT0_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CONTEXT0_TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	pool, err := graph.NewPool(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	repo := graph.NewAGERepository(pool, 384)
+	if err := repo.InitSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+	svc := NewMemoryService(repo, embedding.NewBagOfWordsEmbedder(384))
+
+	projectID := fmt.Sprintf("extract-cancel-%d", time.Now().UnixNano())
+	conversation := "User: I prefer dark mode.\n" +
+		"Assistant: Noted.\n" +
+		"User: I always deploy on Fridays.\n" +
+		"Assistant: Understood.\n" +
+		"User: The backend uses Go."
+
+	for i := 0; i < 30; i++ {
+		reqCtx, cancel := context.WithTimeout(ctx, time.Duration(i)*time.Millisecond)
+		_, _ = svc.Extract(reqCtx, &pb.ExtractRequest{
+			Conversation: conversation,
+			ProjectId:    projectID,
+		})
+		cancel()
+	}
+
+	results, err := repo.QueryMemories(ctx, graph.QueryFilter{ProjectID: projectID, TopK: 500})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("no memory was extracted; the test observed nothing")
+	}
+
+	var missing int
+	for _, r := range results {
+		var n int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM memory_embeddings WHERE memory_id=$1`, r.Memory.ID).Scan(&n); err != nil {
+			t.Fatalf("count embeddings: %v", err)
+		}
+		if n == 0 {
+			missing++
+		}
+	}
+	if missing > 0 {
+		t.Errorf("%d of %d extracted memories have no embedding row; a client "+
+			"disconnecting mid-extraction leaves them permanently absent from "+
+			"vector search", missing, len(results))
 	}
 }

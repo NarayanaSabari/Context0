@@ -94,6 +94,21 @@ func (s *MemoryService) Store(ctx context.Context, req *pb.StoreRequest) (*pb.St
 		return nil, status.Errorf(codes.Internal, "failed to create memory: %v", err)
 	}
 
+	// From here the memory is committed, so finishing its record belongs to
+	// this write rather than to the caller.
+	//
+	// Running the remaining steps on the caller's context meant a client that
+	// hung up after CreateMemory left the memory stored with no embedding row:
+	// permanently absent from vector search, while Store still returned
+	// success, so nothing would ever retry it. Reproduced by cancelling at a
+	// range of delays -- every memory that landed had zero embedding rows,
+	// against exactly one for an uncancelled write.
+	//
+	// The deadline is the write's own. Dropping cancellation without one would
+	// let a stalled provider or database hold the request open indefinitely.
+	ctx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), storeFinishTimeout)
+	defer cancelFinish()
+
 	// Generate and store embedding for vector search.
 	//
 	// A failure here is not fatal to the write -- the memory is already stored
@@ -371,6 +386,14 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 	var pbMemories []*pb.Memory
 	relCount := int32(0)
 
+	// Detached from the caller for the same reason as Store: each memory here
+	// is committed and then embedded, so a client that hangs up mid-loop would
+	// leave the memories already written permanently absent from vector search
+	// while the response still counts them as extracted. Bounded, so a stalled
+	// dependency cannot hold the request open.
+	ctx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), storeFinishTimeout)
+	defer cancelFinish()
+
 	for _, mem := range memories {
 		if err := s.repo.CreateMemory(ctx, mem); err != nil {
 			// Extraction is best-effort per memory: one bad memory must not
@@ -558,6 +581,15 @@ func (s *MemoryService) detectAndSupersede(ctx context.Context, mem model.Memory
 	}
 	return linked
 }
+
+// storeFinishTimeout bounds the work that follows a committed memory:
+// embedding, session linking, contradiction detection and tag auto-linking.
+//
+// These run detached from the caller's context, because the memory is already
+// stored and leaving its record half-finished is worse than a slow request.
+// The bound is what stops a stalled provider or database holding that work --
+// and the goroutine serving it -- open forever.
+const storeFinishTimeout = 30 * time.Second
 
 // maxSupersedesPerStore caps how many supersedes edges a single write may
 // create. Contradiction detection is a heuristic over text overlap, so a
