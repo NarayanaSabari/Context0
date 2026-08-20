@@ -107,7 +107,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: production
-      url: https://context0.sabarinarayana.com
+      url: https://kora.sabarinarayana.com
     steps:
       - uses: actions/checkout@v4
 
@@ -117,6 +117,12 @@ jobs:
           name: site-dist
           path: site/dist
 
+      # --project-name is the Cloudflare Pages project ID, not the product
+      # name. It stays "context0" after the rename to kora because renaming a
+      # Pages project is not possible in place: it would mean creating a new
+      # project, re-attaching the custom domain, and re-issuing the
+      # certificate, with the site down in between. The project serves
+      # kora.sabarinarayana.com; only the internal identifier is historical.
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
