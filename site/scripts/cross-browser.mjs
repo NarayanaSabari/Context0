@@ -13,7 +13,7 @@
 //
 // Run: node scripts/cross-browser.mjs
 
-import { chromium, webkit } from 'playwright'
+import { chromium, webkit, firefox } from 'playwright'
 import { createServer } from 'node:http'
 import { readFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
@@ -61,9 +61,16 @@ const note = (ok, message) => {
 
 if (wantShots) await mkdir(shotDir, { recursive: true })
 
-// ---------------------------------------------------------------- WebKit
-{
-  const browser = await webkit.launch()
+// ------------------------------------------------ WebKit and Gecko
+//
+// Chromium is covered by verify-site.mjs. These are the other two engines a
+// real visitor arrives in, and the ones most likely to disagree about
+// mask-image, flex sizing, and font metrics.
+for (const [engineName, engine] of [
+  ['webkit', webkit],
+  ['firefox', firefox],
+]) {
+  const browser = await engine.launch()
   for (const width of [1440, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 900 } })
     const tab = await context.newPage()
@@ -76,7 +83,7 @@ if (wantShots) await mkdir(shotDir, { recursive: true })
     for (const path of PAGES) {
       await tab.goto(`${base}${path}`, { waitUntil: 'networkidle' })
       await tab.waitForTimeout(600)
-      const where = `webkit ${path} @${width}`
+      const where = `${engineName} ${path} @${width}`
 
       const info = await tab.evaluate(() => ({
         text: (document.body.innerText || '').trim().length,
@@ -107,28 +114,28 @@ if (wantShots) await mkdir(shotDir, { recursive: true })
       note(masked !== 'dropped', `${where}: mask-image not applied on the grid backdrop`)
     }
 
-    note(errors.length === 0, `webkit @${width}: errors: ${errors.slice(0, 3).join(' | ')}`)
+    note(errors.length === 0, `${engineName} @${width}: errors: ${errors.slice(0, 3).join(' | ')}`)
 
     if (wantShots) {
       await tab.goto(`${base}/`, { waitUntil: 'networkidle' })
       await tab.waitForTimeout(800)
-      await tab.screenshot({ path: join(shotDir, `webkit-home-${width}.png`) })
+      await tab.screenshot({ path: join(shotDir, `${engineName}-home-${width}.png`) })
     }
     await context.close()
   }
 
-  // The waitlist has to work in Safari too, not just render.
+  // The waitlist has to work in this engine too, not merely render.
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
   const tab = await context.newPage()
   await tab.goto(`${base}/`, { waitUntil: 'networkidle' })
   const email = tab.locator('input[type="email"]').first()
   await email.fill('someone@example.com')
-  note((await email.inputValue()) === 'someone@example.com', 'webkit: waitlist input rejected typing')
+  note((await email.inputValue()) === 'someone@example.com', `${engineName}: waitlist input rejected typing`)
   const toggle = tab.locator('button:has-text("Replay")').first()
   const before = await tab.locator('main').innerText()
   await toggle.click()
   await tab.waitForTimeout(400)
-  note(before !== (await tab.locator('main').innerText()), 'webkit: hero toggle did nothing')
+  note(before !== (await tab.locator('main').innerText()), `${engineName}: hero toggle did nothing`)
   await context.close()
   await browser.close()
 }
@@ -205,4 +212,4 @@ if (failures.length > 0) {
   console.error('')
   process.exit(1)
 }
-console.log('OK - renders and works in WebKit, no significant layout shift')
+console.log('OK - renders and works in WebKit and Firefox, no significant layout shift')

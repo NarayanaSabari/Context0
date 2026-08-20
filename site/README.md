@@ -84,11 +84,14 @@ Three layers, because they catch different things:
   ratio, a hero animation that never reaches its end state under
   `prefers-reduced-motion`, interactive elements unreachable by keyboard, and a
   missing custom 404.
-- `scripts/cross-browser.mjs` runs the pages in WebKit, because Safari is the
-  engine most likely to disagree about `mask-image` and flex sizing, and
-  measures layout shift with the webfont requests stalled. That check caught the
-  hero jumping 79px when Instrument Serif replaced Georgia; metric-adjusted
-  fallback faces in `index.css` brought it to 0.
+- `scripts/cross-browser.mjs` runs the pages in WebKit and Firefox, the two
+  engines Chromium testing cannot speak for, and measures layout shift with the
+  webfont requests stalled. That check caught the hero jumping 79px when
+  Instrument Serif fell back to Georgia; metric-adjusted fallback faces in
+  `index.css` brought it to 0.
+
+`VERIFICATION.md` records what each check caught, with before-and-after numbers
+and the mutation tests proving each one fails when its fix is reverted.
 
 All four run in CI on every pull request that touches `site/`.
 

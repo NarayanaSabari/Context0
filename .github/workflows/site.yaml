@@ -60,7 +60,7 @@ jobs:
 
       - name: Install browsers
         working-directory: site
-        run: pnpm exec playwright install --with-deps chromium webkit
+        run: pnpm exec playwright install --with-deps chromium webkit firefox
 
       - name: Verify in a browser
         working-directory: site
@@ -72,9 +72,9 @@ jobs:
         working-directory: site
         run: node scripts/audit.mjs
 
-      # Safari renders differently, and webfonts arrive late on a real network.
-      # Neither shows up in a local Chromium screenshot.
-      - name: WebKit and layout stability
+      # Safari and Firefox render differently, and webfonts arrive late on a
+      # real network. Neither shows up in a local Chromium screenshot.
+      - name: WebKit, Firefox, and layout stability
         working-directory: site
         run: node scripts/cross-browser.mjs
 
