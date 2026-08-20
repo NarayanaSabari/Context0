@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "check": "tsc --noEmit && pnpm build && node scripts/check-build.mjs && node scripts/verify-site.mjs && node scripts/audit.mjs && node scripts/cross-browser.mjs",
     "shots": "pnpm build && node scripts/verify-site.mjs --shots",
-    "og": "node scripts/make-og.mjs"
+    "og": "node scripts/make-og.mjs",
+    "links": "node scripts/check-links.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",

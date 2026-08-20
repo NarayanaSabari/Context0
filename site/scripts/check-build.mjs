@@ -220,6 +220,35 @@ for (const page of PAGES) {
   }
 }
 
+// Only the origins we deliberately depend on may appear in the output.
+//
+// A static marketing site should have a small, known set of third parties.
+// Anything new appearing here means a dependency started phoning somewhere,
+// which is both a privacy question and a new way for the page to break.
+{
+  const ALLOWED_ORIGINS = new Set([
+    ORIGIN,
+    'https://github.com',
+    'https://fonts.googleapis.com',
+    'https://fonts.gstatic.com',
+  ])
+  const seen = new Set()
+  for (const page of PAGES) {
+    const file = join(dist, page.path)
+    if (!existsSync(file)) continue
+    for (const m of readFileSync(file, 'utf8').matchAll(/https?:\/\/[^"'\s)]+/g)) {
+      try {
+        seen.add(new URL(m[0]).origin)
+      } catch {
+        failures.push(`unparseable URL in ${page.url}: ${m[0]}`)
+      }
+    }
+  }
+  for (const origin of seen) {
+    check(ALLOWED_ORIGINS.has(origin), `unexpected third-party origin in the output: ${origin}`)
+  }
+}
+
 // The fabricated-claim guard. The project is pre-release: it has no users, no
 // benchmarks, and no customers, so none of these words can be honest yet.
 // Checked across the built JS too, since page copy lives in the bundle.

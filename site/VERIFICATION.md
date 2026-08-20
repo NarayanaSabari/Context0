@@ -42,6 +42,29 @@ The prerender case is caught independently by two layers, which is the intent:
 `check-build.mjs` sees the empty `#root` in the emitted HTML, and `audit.mjs`
 sees the consequence in a real browser with scripts disabled.
 
+## Integration boundaries
+
+Claims about how the site connects to things outside itself, each checked
+rather than assumed:
+
+| Claim | How it was verified |
+|---|---|
+| Design tokens match the product UI | `#0a0a0f` and `#e1e2e8` in `site/src/index.css` are byte-identical to `web/src/index.css` |
+| The logo is the real mark | The SVG path in `Chrome.tsx` compares equal to the one in `web/public/favicon.svg` |
+| Brand colours come from the logo | `#863bff`, `#7e14ff`, `#ede6ff`, `#47bfff` each appear in `favicon.svg` |
+| Outbound links resolve | All four GitHub URLs return 200, including the deep links to `ARCHITECTURE.md` and `CONTRIBUTING.md` |
+| No unexpected third parties | The built HTML references only the site origin, github.com, and Google Fonts |
+| The deploy artifact is valid | A manual workflow run produced a 193 KB `github-pages` artifact; the upload step succeeded |
+
+The origin allowlist was mutation-tested: injecting
+`https://cdn.evil-analytics.example.com` into a page makes `check-build.mjs`
+fail with `unexpected third-party origin`.
+
+`check-links.mjs` is deliberately **not** in `pnpm check` or CI. It depends on
+github.com being reachable, and a marketing site's build should not go red
+because a third party had a bad minute. Run it manually when the outbound links
+change.
+
 ## Bugs found in the checkers themselves
 
 Worth recording, because a checker that reports a false pass is worse than no
@@ -68,6 +91,11 @@ Honest gaps, so nobody reads more into the green checkmarks than is there:
 - **The live domain.** Everything is measured against a local server serving
   `dist/`. Until the DNS record exists, nothing has been checked against
   `context0.sabarinarayanakg.in` itself.
+- **The publish step.** `actions/upload-pages-artifact` is proven to produce a
+  valid artifact, but `actions/deploy-pages` has never run: it is gated on
+  `main`, and this work is still on a branch. The repository has zero Pages
+  deployments so far. The first merge to `main` is the first real test of that
+  step.
 - **The waitlist round trip.** With no endpoint configured, the submit path is
   verified only as far as the visible error state. The success path is
   unexercised until a provider is wired up.

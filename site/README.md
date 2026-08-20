@@ -95,6 +95,14 @@ and the mutation tests proving each one fails when its fix is reverted.
 
 All four run in CI on every pull request that touches `site/`.
 
+```bash
+pnpm links        # do the outbound GitHub links still resolve?
+```
+
+`scripts/check-links.mjs` is deliberately outside `pnpm check` and CI: it
+depends on github.com being reachable, and the build should not go red because
+a third party had a bad minute. Run it when the outbound links change.
+
 ## The social card
 
 `public/og.png` is generated, not hand-drawn:
