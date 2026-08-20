@@ -88,7 +88,7 @@ const base = `http://localhost:${server.address().port}`
 const PAGES = [
   { url: '/', name: 'home', heading: /forgets/i },
   { url: '/releases/', name: 'releases', heading: /releases/i },
-  { url: '/blog/', name: 'blog', heading: /Context0/i },
+  { url: '/blog/', name: 'blog', heading: /kora/i },
   { url: '/docs/', name: 'docs', heading: /documentation/i },
 ]
 const WIDTHS = [
@@ -235,6 +235,18 @@ for (const page of PAGES) {
     }
 
     if (wantShots) {
+      // Scroll through before capturing. Sections that reveal on scroll have
+      // never intersected the viewport in a fresh tab, so a full-page shot
+      // taken straight away records them as blank.
+      await tab.evaluate(async () => {
+        const step = window.innerHeight * 0.75
+        for (let y = 0; y < document.body.scrollHeight; y += step) {
+          window.scrollTo(0, y)
+          await new Promise((r) => setTimeout(r, 110))
+        }
+        window.scrollTo(0, 0)
+        await new Promise((r) => setTimeout(r, 350))
+      })
       await tab.screenshot({ path: join(shotDir, `${page.name}-${vp.name}.png`), fullPage: true })
       await tab.screenshot({ path: join(shotDir, `${page.name}-${vp.name}-fold.png`) })
     }
@@ -341,9 +353,16 @@ for (const page of PAGES) {
 
   // Styling actually applied: an unstyled 404 is the classic broken-asset
   // symptom, and it looks like the site is down rather than the URL wrong.
+  // Asserted as "the stylesheet applied", not as a specific colour: pinning the
+  // exact page background here meant a palette change failed this check for the
+  // wrong reason. An unstyled page is transparent or plain white with the
+  // default serif stack, so that is what this looks for.
   const styled = await tab.evaluate(() => {
-    const bg = getComputedStyle(document.body).backgroundColor
-    return bg === 'rgb(10, 10, 15)'
+    const style = getComputedStyle(document.body)
+    const painted =
+      style.backgroundColor !== 'rgba(0, 0, 0, 0)' &&
+      style.backgroundColor !== 'transparent'
+    return painted && style.fontFamily.includes('Inter')
   })
   note(styled, '404 page did not load the stylesheet')
 

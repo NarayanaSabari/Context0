@@ -17,12 +17,10 @@ export function PageHeader({
   return (
     <section className="relative overflow-hidden border-b border-line">
       <div className="bg-grid pointer-events-none absolute inset-0" aria-hidden="true" />
-      <div className="relative mx-auto max-w-4xl px-6 py-16 sm:py-24">
+      <div className="relative mx-auto max-w-4xl px-6 py-[var(--space-section-tight)]">
         <Eyebrow>{eyebrow}</Eyebrow>
-        <h1 className="font-display text-[clamp(2.5rem,5.5vw,4rem)] font-normal leading-[1] tracking-[-0.03em]">
-          {title}
-        </h1>
-        <p className="mt-6 max-w-2xl text-[17px] leading-relaxed text-muted">{intro}</p>
+        <h1 className="t-title optical-left">{title}</h1>
+        <p className="t-lead mt-6 max-w-2xl">{intro}</p>
       </div>
     </section>
   )
@@ -47,13 +45,13 @@ export function EmptyState({
   action: ReactNode
 }) {
   return (
-    <div className="rounded-xl border border-dashed border-line-bright bg-surface/40 px-6 py-14 text-center">
+    <div className="rounded-2xl border border-dashed border-line-bright bg-surface-2/60 px-6 py-14 text-center">
       <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full border border-line-bright bg-surface">
         <span className="font-mono text-lg text-dim" aria-hidden="true">
           ~
         </span>
       </div>
-      <h2 className="mt-5 text-lg font-semibold tracking-tight">{title}</h2>
+      <h2 className="mt-5 text-lg font-semibold tracking-[var(--tracking-tight)]">{title}</h2>
       <p className="mx-auto mt-2.5 max-w-md text-[15px] leading-relaxed text-muted">{body}</p>
       <div className="mt-7 flex flex-wrap items-center justify-center gap-3">{action}</div>
     </div>
@@ -75,8 +73,8 @@ export function ButtonLink({
     'inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors'
   const styles =
     variant === 'primary'
-      ? 'bg-brand text-white hover:bg-brand-deep'
-      : 'border border-line-bright text-body hover:border-brand hover:bg-brand/10'
+      ? 'bg-emphasis text-on-emphasis hover:bg-emphasis-soft'
+      : 'border border-line-bright text-body hover:border-emphasis hover:text-heading'
   return (
     <a
       href={href}

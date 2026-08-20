@@ -68,10 +68,10 @@ const browser = await chromium.launch()
   await context.close()
 }
 
-// 2. Text contrast against the dark background.
+// 2. Text contrast against the page background.
 //
-// WCAG AA wants 4.5:1 for body text and 3:1 for large text. On a near-black
-// site the muted greys are exactly where this slips.
+// WCAG AA wants 4.5:1 for body text and 3:1 for large text. The muted greys
+// are exactly where this slips.
 {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
   const tab = await context.newPage()
@@ -105,7 +105,11 @@ const browser = await chromium.launch()
           const c = parse(getComputedStyle(n).backgroundColor)
           if (c && c[3] > 0.9) return c
         }
-        return [10, 10, 15, 1]
+        // Nothing opaque found up the tree, so the page background is what
+        // shows through. Read it rather than assuming a colour, so this stays
+        // correct across a palette change.
+        const root = parse(getComputedStyle(document.body).backgroundColor)
+        return root && root[3] > 0.9 ? root : [255, 255, 255, 1]
       }
 
       const out = []
@@ -114,8 +118,17 @@ const browser = await chromium.launch()
         if (!text || el.childElementCount > 0) continue
         const style = getComputedStyle(el)
         if (style.visibility === 'hidden' || style.display === 'none') continue
+        // Screen-reader-only text is clipped to a 1px box and never painted, so
+        // its contrast against the page is meaningless. Measuring it produced a
+        // real-looking failure for the waitlist's "Email address" label, which
+        // no sighted visitor can see. verify-site.mjs already skips these for
+        // the same reason.
+        if (el.className.toString().includes('sr-only')) continue
+        if (el.closest('.sr-only')) continue
         const r = el.getBoundingClientRect()
         if (r.width === 0 || r.height === 0) continue
+        // A clipped element still reports a box, so check the clip too.
+        if (r.width <= 1 || r.height <= 1) continue
 
         const fg = parse(style.color)
         if (!fg) continue
@@ -225,7 +238,48 @@ const browser = await chromium.launch()
   await context.close()
 }
 
-// 5. A missing page.
+// 5. Scroll-revealed content that never arrives.
+//
+// The homepage hides several sections until they scroll into view. That is a
+// nice effect and a genuinely dangerous default, because every failure mode of
+// the reveal is invisible content rather than a missing animation. A full-page
+// screenshot caught exactly that once: the viewport never moved, so nothing
+// intersected, and three sections rendered blank.
+//
+// This asserts the end state that matters - after the page has settled,
+// nothing marked .reveal is still transparent - both at the top of the page
+// and after scrolling to the bottom.
+{
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  const tab = await context.newPage()
+  await tab.goto(`${base}/`, { waitUntil: 'networkidle' })
+
+  // Without scrolling at all. The failsafe in useReveal has to cover this.
+  await tab.waitForTimeout(2600)
+  const hiddenAtRest = await tab.evaluate(() =>
+    [...document.querySelectorAll('.reveal')].filter(
+      (el) => parseFloat(getComputedStyle(el).opacity) < 0.9,
+    ).length,
+  )
+  if (hiddenAtRest > 0) {
+    report('high', `${hiddenAtRest} revealed section(s) never became visible without scrolling`)
+  }
+
+  // And after a full scroll, which is the ordinary path.
+  await tab.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+  await tab.waitForTimeout(1200)
+  const hiddenAfterScroll = await tab.evaluate(() =>
+    [...document.querySelectorAll('.reveal')].filter(
+      (el) => parseFloat(getComputedStyle(el).opacity) < 0.9,
+    ).length,
+  )
+  if (hiddenAfterScroll > 0) {
+    report('high', `${hiddenAfterScroll} revealed section(s) still hidden after scrolling`)
+  }
+  await context.close()
+}
+
+// 6. A missing page.
 //
 // GitHub Pages serves 404.html for any unmatched path. Without one the visitor
 // gets GitHub's generic page with no way back to the site.
@@ -253,3 +307,11 @@ findings.sort((a, b) => order[a.severity] - order[b.severity])
 console.log(`\n${findings.length} finding(s):\n`)
 for (const f of findings) console.log(`  [${f.severity}] ${f.message}`)
 console.log('')
+
+// Findings fail the build.
+//
+// This previously exited 0 and only printed, which meant `pnpm check` reported
+// success while listing real problems above it - including, once, a black
+// heading on a black panel measuring 1:1, which is invisible text. A check
+// nobody is forced to read is not a check.
+process.exit(1)

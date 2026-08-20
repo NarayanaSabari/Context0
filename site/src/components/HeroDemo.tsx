@@ -24,7 +24,9 @@ export function HeroDemo() {
   const [faded, setFaded] = useState(false)
 
   // The fade is the whole point of the "without" state: earlier turns visibly
-  // decay, so the empty answer below feels earned rather than asserted.
+  // decay, so the empty answer below feels earned rather than asserted. On the
+  // dark theme 15% opacity was still legible; on paper that lands almost at the
+  // page colour, so the faded state leans on the blur more than the opacity.
   useEffect(() => {
     if (mode !== 'without') {
       setFaded(false)
@@ -49,16 +51,18 @@ export function HeroDemo() {
       {/* Status strip */}
       <div className="mb-2.5 flex items-center justify-between gap-3 font-mono text-[10px] uppercase tracking-[0.12em] text-dim">
         <span>New session, next day</span>
-        <span className={`flex items-center gap-2 ${remembering ? 'text-accent' : 'text-muted'}`}>
+        <span className={`flex items-center gap-2 ${remembering ? 'text-heading' : 'text-dim'}`}>
           <span
-            className={`h-1.5 w-1.5 rounded-full ${remembering ? 'bg-accent' : 'bg-muted'}`}
+            className={`h-1.5 w-1.5 rounded-full ${
+              remembering ? 'bg-emphasis' : 'border border-dim bg-transparent'
+            }`}
             aria-hidden="true"
           />
           {remembering ? 'Memory on' : 'Memory off'}
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-line-bright bg-surface shadow-2xl shadow-black/40">
+      <div className="overflow-hidden rounded-xl border border-line-bright bg-surface shadow-xl shadow-black/[0.07]">
         {/* Yesterday's conversation */}
         <div className="border-b border-line px-5 py-4">
           <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.1em] text-dim">
@@ -69,11 +73,11 @@ export function HeroDemo() {
               <div
                 key={turn.text}
                 className={`grid grid-cols-[3.25rem_minmax(0,1fr)] gap-3 font-mono text-[11px] leading-relaxed transition-all duration-700 ${
-                  !remembering && faded ? 'opacity-15 blur-[2px]' : 'opacity-100 blur-0'
+                  !remembering && faded ? 'opacity-25 blur-[2px]' : 'opacity-100 blur-0'
                 }`}
               >
-                <span className={turn.who === 'you' ? 'text-accent' : 'text-dim'}>{turn.who}</span>
-                <span className="min-w-0 text-body/90">{turn.text}</span>
+                <span className={turn.who === 'you' ? 'text-heading' : 'text-dim'}>{turn.who}</span>
+                <span className="min-w-0 text-body">{turn.text}</span>
               </div>
             ))}
           </div>
@@ -82,24 +86,24 @@ export function HeroDemo() {
         {/* Today's question */}
         <div className="px-5 py-4">
           <div className="mb-3.5 grid grid-cols-[3.25rem_minmax(0,1fr)] gap-3 font-mono text-[11px] leading-relaxed">
-            <span className="text-accent">you</span>
+            <span className="text-heading">you</span>
             <span className="min-w-0 text-body">Which database does this project use?</span>
           </div>
 
           {remembering ? (
-            <div className="rounded-lg border border-accent/30 bg-accent/[0.06] p-3.5">
+            <div className="rounded-lg bg-emphasis p-3.5">
               <div className="grid grid-cols-[3.25rem_minmax(0,1fr)] gap-3 font-mono text-[11px] leading-relaxed">
-                <span className="text-accent">agent</span>
-                <span className="min-w-0 text-body">
+                <span className="text-on-emphasis/70">agent</span>
+                <span className="min-w-0 text-on-emphasis">
                   PostgreSQL. It replaced MySQL, and I know which one is current.
                 </span>
               </div>
             </div>
           ) : (
-            <div className="rounded-lg border border-red-400/25 bg-red-400/[0.05] p-3.5">
+            <div className="rounded-lg border border-dashed border-line-bright bg-surface-2/60 p-3.5">
               <div className="grid grid-cols-[3.25rem_minmax(0,1fr)] gap-3 font-mono text-[11px] leading-relaxed">
-                <span className="text-red-300/80">agent</span>
-                <span className="min-w-0 text-body/80">
+                <span className="text-dim">agent</span>
+                <span className="min-w-0 text-dim">
                   I do not have enough context to answer that.
                 </span>
               </div>
@@ -114,11 +118,11 @@ export function HeroDemo() {
           aria-pressed={remembering}
           className={`w-full border-t border-line px-5 py-3.5 text-left font-mono text-[11px] font-medium transition-colors ${
             remembering
-              ? 'bg-white/[0.03] text-muted hover:bg-white/[0.06]'
-              : 'bg-brand/12 text-brand-pale hover:bg-brand/20'
+              ? 'bg-surface-2 text-muted hover:bg-line'
+              : 'bg-emphasis text-on-emphasis hover:bg-emphasis-soft'
           }`}
         >
-          {remembering ? 'Replay without memory' : 'Replay with Context0 -->'}
+          {remembering ? 'Replay without memory' : 'Replay with kora -->'}
         </button>
       </div>
     </div>

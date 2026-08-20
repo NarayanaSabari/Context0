@@ -7,16 +7,16 @@
  */
 
 export const site = {
-  name: 'Context0',
-  domain: 'context0.sabarinarayana.com',
-  url: 'https://context0.sabarinarayana.com',
+  name: 'kora',
+  domain: 'kora.sabarinarayana.com',
+  url: 'https://kora.sabarinarayana.com',
   tagline: 'Memory for AI agents',
   description:
-    'Context0 is an open-source memory engine for AI agents. Graph-first, self-hosted, Apache 2.0. Join the waitlist.',
-  // The canonical location. github.com/context0/Context0 also resolves via a
-  // rename redirect, but linking through a redirect breaks the moment someone
-  // claims that name, so point at the real owner.
-  github: 'https://github.com/NarayanaSabari/Context0',
+    'kora is an open-source memory engine for AI agents. Graph-first, self-hosted, Apache 2.0. Join the waitlist.',
+  // The repository was renamed to Kora alongside the product. GitHub keeps
+  // redirecting the old Context0 URL, but a redirect breaks the moment someone
+  // else claims that name, so this points at the real current location.
+  github: 'https://github.com/NarayanaSabari/Kora',
 } as const
 
 /**

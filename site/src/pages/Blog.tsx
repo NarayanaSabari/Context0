@@ -41,12 +41,12 @@ export function Blog() {
     <Page current="/blog/">
       <PageHeader
         eyebrow="Blog"
-        title="Notes from building Context0."
+        title="Notes from building kora."
         intro="Writing about agent memory, the design decisions behind this project, and what breaks along the way. No posts yet - the first ones are being written."
       />
 
       <section>
-        <div className="mx-auto max-w-4xl px-6 py-16">
+        <div className="mx-auto max-w-4xl px-6 py-[var(--space-section-tight)]">
           {POSTS.length === 0 ? (
             <EmptyState
               title="No posts yet"
@@ -70,7 +70,7 @@ export function Blog() {
                     <time className="font-mono text-[11px] uppercase tracking-[0.1em] text-dim">
                       {post.date}
                     </time>
-                    <h2 className="mt-2 text-xl font-semibold tracking-tight transition-colors group-hover:text-brand-pale">
+                    <h2 className="mt-2 text-xl font-semibold tracking-[var(--tracking-tight)] transition-colors group-hover:text-heading">
                       {post.title}
                     </h2>
                     <p className="mt-2 text-[15px] leading-relaxed text-muted">{post.summary}</p>
@@ -81,11 +81,11 @@ export function Blog() {
           )}
 
           <div className="mt-16 border-t border-line pt-12">
-            <h2 className="text-lg font-semibold tracking-tight">What is coming</h2>
+            <h2 className="text-lg font-semibold tracking-[var(--tracking-tight)]">What is coming</h2>
             <div className="mt-7 grid gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-3">
               {TOPICS.map((topic) => (
                 <article key={topic.title} className="bg-surface p-6">
-                  <h3 className="text-[15px] font-semibold leading-snug tracking-tight">
+                  <h3 className="text-[15px] font-semibold leading-snug tracking-[var(--tracking-tight)]">
                     {topic.title}
                   </h3>
                   <p className="mt-2.5 text-[14px] leading-relaxed text-muted">{topic.body}</p>
@@ -95,7 +95,7 @@ export function Blog() {
           </div>
 
           <div className="mt-16 border-t border-line pt-12">
-            <h2 className="text-lg font-semibold tracking-tight">Get them by email</h2>
+            <h2 className="text-lg font-semibold tracking-[var(--tracking-tight)]">Get them by email</h2>
             <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-muted">
               The same list as the waitlist. Nothing more often than it deserves.
             </p>

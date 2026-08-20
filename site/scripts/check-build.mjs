@@ -37,14 +37,14 @@ const prerenderedMarkup = (html) => {
   return html.slice(start + '<div id="root">'.length, end === -1 ? html.length : end)
 }
 
-const DOMAIN = 'context0.sabarinarayana.com'
+const DOMAIN = 'kora.sabarinarayana.com'
 const ORIGIN = `https://${DOMAIN}`
 
 // Every page the site is supposed to publish, and the path it must be
 // reachable at. A page silently missing from the Rollup input would otherwise
 // only be noticed by a visitor hitting a 404.
 const PAGES = [
-  { path: 'index.html', url: '/', title: /Context0/ },
+  { path: 'index.html', url: '/', title: /kora/ },
   { path: 'releases/index.html', url: '/releases/', title: /Releases/ },
   { path: 'blog/index.html', url: '/blog/', title: /Blog/ },
   { path: 'docs/index.html', url: '/docs/', title: /Docs/ },
@@ -182,7 +182,7 @@ for (const page of PAGES) {
   }
   for (const url of externals.filter((u) => u.includes('github.com'))) {
     check(
-      url.includes('github.com/NarayanaSabari/Context0'),
+      url.includes('github.com/NarayanaSabari/Kora'),
       `${where} GitHub link points somewhere unexpected: ${url}`,
     )
   }
