@@ -125,68 +125,74 @@ headline changes.
 
 ## Deployment
 
-`.github/workflows/site.yaml` builds and publishes to GitHub Pages on every push
-to `main` that touches `site/`. Pull requests build and verify but never deploy.
+Hosted on **Cloudflare Pages**. Verified by **GitHub Actions**.
+
+`.github/workflows/site.yaml` runs the five checks on every push and pull
+request touching `site/`, and only then uploads the built site to Cloudflare.
+Deployment is a push from CI rather than a pull by Cloudflare: the same
+artifact that passed the checks is the one that ships, and nothing reaches
+production without going through them.
+
+Cloudflare's own git integration is deliberately **not** connected. If it were,
+it would build and publish straight from `main` on its own, bypassing every
+check here.
 
 ### One-time setup
 
-1. **Enable Pages with the Actions source.** Settings -> Pages -> Source:
-   **GitHub Actions**. Or:
+1. **Create the Pages project.** Cloudflare dashboard -> Workers & Pages ->
+   Create -> Pages -> **Direct Upload**, named `context0`. Direct Upload rather
+   than a git connection, for the reason above. The first real upload comes
+   from CI.
+
+2. **Create an API token.** My Profile -> API Tokens -> Create Token, using the
+   **Edit Cloudflare Workers** template, or a custom token with:
+
+   | Scope | Permission |
+   |---|---|
+   | Account -> Cloudflare Pages | Edit |
+
+   Restrict it to the one account. It needs nothing else - not DNS, not zone
+   settings, and certainly not account-wide write.
+
+3. **Add both secrets to the repository.** Settings -> Secrets and variables ->
+   Actions:
 
    ```bash
-   gh api -X POST repos/NarayanaSabari/Context0/pages \
-     -f 'build_type=workflow' \
-     -f 'source[branch]=main' -f 'source[path]=/'
+   gh secret set CLOUDFLARE_API_TOKEN --repo NarayanaSabari/Context0
+   gh secret set CLOUDFLARE_ACCOUNT_ID --repo NarayanaSabari/Context0
    ```
 
-2. **Add the DNS record** in Cloudflare, on the `sabarinarayana.com` zone:
+   The account ID is on the right-hand side of any Cloudflare dashboard page.
 
-   | Type | Name | Target | Proxy | TTL |
-   |------|------|--------|-------|-----|
-   | CNAME | `context0` | `narayanasabari.github.io` | **DNS only** | Auto |
+4. **Point the custom domain at the Pages project.** Workers & Pages ->
+   `context0` -> Custom domains -> Set up a custom domain ->
+   `context0.sabarinarayana.com`.
 
-   Three things that are easy to get wrong:
+   Cloudflare rewrites the DNS record itself and issues the certificate, so the
+   old `CNAME -> narayanasabari.github.io` record should be removed. Unlike
+   GitHub Pages, the record here **is** proxied (orange cloud); that is how
+   Cloudflare serves and terminates TLS for it.
 
-   - **Proxy must be DNS only** (grey cloud, not orange). With the proxy on,
-     GitHub cannot validate domain ownership and certificate issuance fails.
-     The proxy can be enabled later once the certificate exists, though Pages
-     already serves through a CDN so it buys little.
-   - **Name is `context0`**, not the full hostname. Cloudflare appends the zone.
-   - **Target is `narayanasabari.github.io`**, the *owner's* Pages host. Not
-     `context0.github.io`, and not the project path. The repository is owned by
-     the user `NarayanaSabari`, so that is the host every Pages site of theirs
-     is served from. Pointing elsewhere resolves to a host that does not serve
-     this site, and the domain never comes up.
-
-   If Cloudflare's SSL/TLS mode for the zone is **Flexible**, set it to **Full**
-   before enabling HTTPS below. Flexible talks to the origin over plain HTTP,
-   which GitHub redirects, producing a redirect loop.
-
-3. **Set the custom domain** once DNS resolves:
+5. **Verify:**
 
    ```bash
-   gh api -X PUT repos/NarayanaSabari/Context0/pages \
-     -f 'cname=context0.sabarinarayana.com'
-   ```
-
-   Already applied. Note the order: GitHub only issues the TLS certificate
-   after the DNS record resolves, and rejects `https_enforced=true` before that
-   with "The certificate does not exist yet". Once `dig` returns the record,
-   enable it:
-
-   ```bash
-   gh api -X PUT repos/NarayanaSabari/Context0/pages \
-     -f 'cname=context0.sabarinarayana.com' -F 'https_enforced=true'
-   ```
-
-   `public/CNAME` is copied into every build so the domain survives redeploys.
-
-4. **Verify:**
-
-   ```bash
-   dig +short context0.sabarinarayana.com     # expect narayanasabari.github.io
    curl -sI https://context0.sabarinarayana.com | head -1
    ```
+
+### Rollbacks
+
+Every deploy is retained. Workers & Pages -> `context0` -> Deployments ->
+pick a previous one -> Rollback. That is instant and needs no rebuild, which is
+the main practical gain over the previous setup.
+
+### What happened to GitHub Pages
+
+It served this site briefly and worked. It was replaced because its TLS
+certificate for a custom domain had not issued after roughly fifteen minutes,
+while Cloudflare already terminates TLS for this zone and does it in seconds.
+`public/CNAME` is now unused by the host but harmless, and `check-build.mjs`
+still asserts its contents as a cheap guard against the domain silently
+changing in one place and not another.
 
 ## Design history
 

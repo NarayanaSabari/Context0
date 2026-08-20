@@ -1,10 +1,17 @@
-name: Deploy Site
+name: Site
 
-# The marketing site at context0.sabarinarayana.com. Builds the static Vite
-# bundle in site/ and publishes it to GitHub Pages.
+# Verification runs here; hosting is Cloudflare Pages.
 #
-# Scoped to site/ so a Go-only change does not redeploy the site, and a copy
-# tweak does not wait on the Go test matrix.
+# The split is deliberate. GitHub Actions is where the five checks live,
+# because they need three browser engines and take a couple of minutes -
+# work a CDN build step should not be doing. Cloudflare builds and serves
+# the site, because it already terminates TLS for this domain and issues
+# certificates in seconds rather than the tens of minutes GitHub Pages took.
+#
+# Deployment is a push, not a pull: this workflow uploads the built site to
+# Cloudflare only after the checks pass. Cloudflare's own git integration is
+# deliberately left disconnected, so nothing reaches production without
+# passing through here first.
 
 on:
   push:
@@ -23,12 +30,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: site-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build
+  verify:
+    name: Verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,9 +58,6 @@ jobs:
         working-directory: site
         run: pnpm build
 
-      # A broken link or a page that renders blank is invisible until someone
-      # visits it, and the build is happy either way. Check the emitted HTML,
-      # then drive the real pages in a browser.
       - name: Check built output
         working-directory: site
         run: node scripts/check-build.mjs
@@ -85,27 +89,37 @@ jobs:
         working-directory: site
         run: node scripts/waitlist.mjs
 
-
-      - name: Upload artifact
-        # Only the main-branch run needs to hand anything to the deploy job;
-        # on a PR the build and checks above are the whole point.
+      # Hand the verified build to the deploy job rather than rebuilding it,
+      # so what ships is byte-for-byte what was checked.
+      - name: Upload verified build
         if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
+          name: site-dist
           path: site/dist
+          retention-days: 1
 
   deploy:
     name: Deploy
-    # A PR must not publish to the live domain.
+    # A pull request must never publish to the live domain.
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: build
+    needs: verify
     runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
     environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      name: production
+      url: https://context0.sabarinarayana.com
     steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - uses: actions/checkout@v4
+
+      - name: Download verified build
+        uses: actions/download-artifact@v4
+        with:
+          name: site-dist
+          path: site/dist
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site/dist --project-name=context0 --branch=main
