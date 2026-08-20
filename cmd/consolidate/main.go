@@ -35,6 +35,10 @@ func main() {
 		Format:  cfg.LogFormat,
 		Version: cfg.Version,
 	})
+	if err := cfg.Validate(); err != nil {
+		fatal("invalid configuration", err)
+	}
+
 	slog.Info("consolidation job starting")
 
 	ctx := context.Background()

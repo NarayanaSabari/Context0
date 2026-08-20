@@ -288,6 +288,22 @@ check "an authenticated caller still gets the statistics" "ok" \
     "wget -q -O- --header='X-API-Key: $key' http://localhost:8080/v1/health" 2>/dev/null \
     | grep -qE '"nodeCount":"[1-9]' && echo ok || echo missing)"
 
+# A deployment's behaviour has to be attributable to its configuration. Before
+# this the server logged nothing about auth, the rate limit or the embedding
+# provider, so a setting that had been silently replaced by a default -- which
+# is what an unparseable value used to do -- left no trace anywhere.
+check "the server logs its effective configuration" "1" \
+  "$(kubectl logs -n "$NS" deploy/context0-api --tail=200 2>/dev/null \
+    | grep -c '"msg":"configuration"' | head -1)"
+check "the configuration log reports the rate limit in force" "6000" \
+  "$(kubectl logs -n "$NS" deploy/context0-api --tail=200 2>/dev/null \
+    | grep '"msg":"configuration"' | head -1 \
+    | grep -oE '"rate_limit_per_minute":[0-9]+' | cut -d: -f2)"
+# The key count, never the keys: this line is written on every start.
+check "the configuration log counts keys without printing them" "0" \
+  "$(kubectl logs -n "$NS" deploy/context0-api --tail=200 2>/dev/null \
+    | grep '"msg":"configuration"' | grep -c "$key" || true)"
+
 check "stored keys are hashes, not the plaintext key" "0" \
   "$(kubectl exec -n "$NS" "$(api_pod)" -- sh -c 'cat /proc/1/environ 2>/dev/null | tr "\0" "\n" | grep -c "^CONTEXT0_API_KEYS=$key$"' 2>/dev/null || echo 0)"
 check "the API key never appears in logs" "0" \

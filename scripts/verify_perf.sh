@@ -120,11 +120,22 @@ done
 SH
 kubectl cp /tmp/vp_query.sh "$NS/$POD:/tmp/vp_query.sh" >/dev/null 2>&1
 
+# A fresh project per run.
+#
+# Store fans out into contradiction detection across the target project's
+# existing memories, so writing into a fixed project made every run slower than
+# the last: 20 memories per run had accumulated to 520, and this check began
+# failing at 241ms against a 150ms limit that was set when the project was
+# nearly empty. The service had not regressed -- the measurement had drifted by
+# construction, which is the same flaw as the earlier run against zero
+# vertices. A per-run project keeps the number reproducible.
+STORE_PROJECT="perfcheck-$(date +%s)-$$"
+
 cat > /tmp/vp_store.sh <<SH
 i=0
 while [ \$i -lt 20 ]; do
   wget -q -O /dev/null --header="X-API-Key: $KEY" --header="Content-Type: application/json" \\
-    --post-data="{\"content\":\"perf probe \$i prometheus metrics\",\"project_id\":\"perfcheck\",\"type\":\"MEMORY_TYPE_SEMANTIC\",\"tags\":[\"metrics\"]}" \\
+    --post-data="{\"content\":\"perf probe \$i prometheus metrics\",\"project_id\":\"$STORE_PROJECT\",\"type\":\"MEMORY_TYPE_SEMANTIC\",\"tags\":[\"metrics\"]}" \\
     http://localhost:8080/v1/memories
   i=\$((i+1))
 done

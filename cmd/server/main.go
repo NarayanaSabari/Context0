@@ -63,6 +63,30 @@ func main() {
 		Version: cfg.Version,
 	})
 
+	// Configuration is validated after logging is configured, so a problem is
+	// reported in the same structured stream as everything else, and before
+	// anything binds a port or opens a connection.
+	//
+	// A value that was set but unusable is fatal rather than quietly replaced
+	// by a default: an operator who mistyped CONTEXT0_RATE_LIMIT_PER_MINUTE
+	// would otherwise get the default limit with nothing anywhere saying their
+	// setting was ignored.
+	if err := cfg.Validate(); err != nil {
+		fatal("invalid configuration", err)
+	}
+
+	// The settings actually in force, so a deployment's behaviour can be
+	// attributed to its configuration without guessing which defaults applied.
+	slog.Info("configuration",
+		slog.Int("grpc_port", cfg.GRPCPort),
+		slog.Int("http_port", cfg.HTTPPort),
+		slog.Int("api_keys", len(cfg.APIKeys)),
+		slog.Bool("auth_enabled", len(cfg.APIKeys) > 0),
+		slog.Int("rate_limit_per_minute", cfg.RateLimitPerMinute),
+		slog.String("embedding_provider", cfg.EmbeddingProvider),
+		slog.Int("embedding_dim", cfg.EmbeddingDim),
+		slog.String("log_level", cfg.LogLevel))
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

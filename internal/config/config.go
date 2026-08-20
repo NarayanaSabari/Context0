@@ -151,15 +151,85 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-// getEnvInt reads an integer environment variable, returning fallback when
-// the variable is unset, empty, or not a valid integer.
+// envProblems collects configuration values that were set but unusable.
+//
+// Load has no error return and is called before the logger exists, so problems
+// are accumulated here and reported by Validate once the caller can act on
+// them. A package-level slice is safe because Load runs once, at startup,
+// before any goroutine is started.
+var envProblems []string
+
+// getEnvInt reads an integer environment variable, returning fallback when the
+// variable is unset or empty.
+//
+// A value that is set but unparseable is recorded as a problem rather than
+// silently discarded. Falling back to the default there means an operator who
+// typed CONTEXT0_RATE_LIMIT_PER_MINUTE=6OOO -- letter O -- gets the default
+// limit with nothing anywhere saying their setting was ignored. The same
+// pattern in the consolidation job silently deleted memories on default
+// thresholds.
 func getEnvInt(key string, fallback int) int {
-	if v := os.Getenv(key); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			return i
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		envProblems = append(envProblems,
+			fmt.Sprintf("%s=%q is not an integer", key, v))
+		return fallback
+	}
+	return i
+}
+
+// Validate reports configuration that was supplied but cannot be used.
+//
+// Separate from Load because Load runs before logging is configured: the
+// caller decides how to report, and whether to continue. Returning an error
+// rather than exiting keeps the decision at the composition root.
+func (c Config) Validate() error {
+	problems := append([]string(nil), envProblems...)
+
+	// Ports are checked here rather than left to net.Listen, which reports
+	// "invalid port" only for the listener that failed -- after the other one
+	// is already accepting traffic.
+	for _, p := range []struct {
+		name  string
+		value int
+	}{
+		{"CONTEXT0_GRPC_PORT", c.GRPCPort},
+		{"CONTEXT0_HTTP_PORT", c.HTTPPort},
+	} {
+		if p.value < 1 || p.value > 65535 {
+			problems = append(problems,
+				fmt.Sprintf("%s=%d is outside the valid port range 1-65535", p.name, p.value))
 		}
 	}
-	return fallback
+	if c.GRPCPort == c.HTTPPort {
+		problems = append(problems,
+			fmt.Sprintf("CONTEXT0_GRPC_PORT and CONTEXT0_HTTP_PORT are both %d; "+
+				"one listener would fail to bind", c.GRPCPort))
+	}
+
+	// A non-positive rate limit is a token bucket that can never refill, so
+	// every authenticated request is rejected. That looks like an outage, not
+	// a configuration mistake.
+	if c.RateLimitPerMinute <= 0 {
+		problems = append(problems,
+			fmt.Sprintf("CONTEXT0_RATE_LIMIT_PER_MINUTE=%d must be positive; "+
+				"a non-positive limit rejects every request", c.RateLimitPerMinute))
+	}
+
+	// A negative dimension would be handed to the pgvector column definition.
+	if c.EmbeddingDim < 0 {
+		problems = append(problems,
+			fmt.Sprintf("CONTEXT0_EMBEDDING_DIM=%d must not be negative", c.EmbeddingDim))
+	}
+
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("invalid configuration:\n  - %s", strings.Join(problems, "\n  - "))
 }
 
 // splitEnv reads an environment variable and splits it by sep, trimming
