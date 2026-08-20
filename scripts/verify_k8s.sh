@@ -360,6 +360,49 @@ if [[ -n "$web_np_leak" ]]; then
     "$(docker exec "${KIND_NODE:-context0-dev-control-plane}" \
       curl -sI "http://localhost:$web_np_leak/" 2>/dev/null \
       | awk -F': ' 'tolower($1)=="referrer-policy"{print $2}' | tr -d '\r')"
+
+  # The API key lives in a JavaScript variable in the page and is never
+  # persisted, which is the right design -- but it makes the page itself the
+  # credential store, so what protects the page protects the key. Verified
+  # absent against the running deployment before these were added: Chrome
+  # loaded the UI inside a foreign iframe with no complaint.
+  web_hdr() {
+    docker exec "${KIND_NODE:-context0-dev-control-plane}" \
+      curl -sI "http://localhost:$web_np_leak$2" 2>/dev/null \
+      | awk -F': ' -v h="$1" 'tolower($1)==h{print $2}' | tr -d '\r'
+  }
+
+  check "the UI refuses to be framed" "DENY" "$(web_hdr x-frame-options /)"
+  check "the UI sets a Content-Security-Policy" "present" \
+    "$([[ -n "$(web_hdr content-security-policy /)" ]] && echo present || echo absent)"
+  # frame-ancestors is what a modern browser actually enforces; Chrome blocks
+  # the load with "violates the following Content Security Policy directive".
+  check "the CSP forbids framing" "yes" \
+    "$(grep -q "frame-ancestors 'none'" <<<"$(web_hdr content-security-policy /)" && echo yes || echo no)"
+  # Without this, a served asset can be reinterpreted as script from sniffed
+  # content rather than its declared type.
+  check "the UI sets X-Content-Type-Options" "nosniff" \
+    "$(web_hdr x-content-type-options /)"
+  # The version is not a secret, but publishing the exact build in every
+  # response saves an attacker working out which CVEs apply.
+  check "the web server does not advertise its version" "no" \
+    "$(grep -qE '[0-9]+\.[0-9]+' <<<"$(web_hdr server /)" && echo yes || echo no)"
+  # Headers must be present on the SPA fallback too: a 404 rendered by the app
+  # is the same origin holding the same key.
+  check "hardening headers survive the SPA fallback" "DENY" \
+    "$(web_hdr x-frame-options /no-such-route)"
+
+  # Hardening that breaks the product is not hardening. The bundle and
+  # stylesheet must still load, with the MIME types nosniff now enforces.
+  ui_assets=$(docker exec "${KIND_NODE:-context0-dev-control-plane}" \
+    curl -s "http://localhost:$web_np_leak/" 2>/dev/null | grep -oE '/assets/[^"]+' || true)
+  check "the page references its built assets" "yes" \
+    "$([[ -n "$ui_assets" ]] && echo yes || echo no)"
+  for asset in $ui_assets; do
+    want=css; case "$asset" in *.js) want=javascript;; esac
+    check "asset $asset is served with a $want content-type" "yes" \
+      "$(grep -qi "$want" <<<"$(web_hdr content-type "$asset")" && echo yes || echo no)"
+  done
 fi
 
 check "the API can still reach Postgres through the policy" "200" \

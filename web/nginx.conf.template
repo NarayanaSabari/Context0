@@ -17,6 +17,11 @@ server {
     # 8080, not 80: binding a port below 1024 requires NET_BIND_SERVICE, and
     # this container drops all capabilities and runs as a non-root user.
     listen 8080;
+
+    # Report "nginx" rather than "nginx/1.31.3". The version is not a secret,
+    # but publishing the exact build in every response saves an attacker the
+    # step of working out which CVEs apply.
+    server_tokens off;
     root /usr/share/nginx/html;
     index index.html;
 
@@ -40,7 +45,36 @@ server {
         proxy_set_header Referer "";
     }
 
-    # Tell the browser not to leak this page's URL to other origins, for the
-    # same reason.
+    # Browser-side hardening.
+    #
+    # The API key lives in a JavaScript variable in this page and is never
+    # persisted, which is the right design -- but it makes the page itself the
+    # credential store, so what protects the page protects the key.
+    #
+    # `always` on each, so the headers are present on error responses too: a
+    # 404 rendered by the SPA fallback is the same origin holding the same key.
+
+    # Refuse to be framed. Without this, any origin could iframe the UI and
+    # clickjack a user who has a key loaded. Verified absent against the
+    # running deployment before this change.
+    add_header X-Frame-Options "DENY" always;
+
+    # Do not let a served asset be reinterpreted as script based on sniffed
+    # content rather than its declared type.
+    add_header X-Content-Type-Options "nosniff" always;
+
+    # Tell the browser not to leak this page's URL to other origins: a page
+    # opened with ?key= would otherwise send that URL, key included, as the
+    # Referer of every outbound request.
     add_header Referrer-Policy "same-origin" always;
+
+    # Bound where a compromised page could send the key.
+    #
+    # Sized to what the app actually loads: the bundle and stylesheet are
+    # same-origin, and there are no external origins in the source. connect-src
+    # is 'self' because the API is reached through this same nginx at /v1/.
+    # style-src allows inline because React's style={} attributes and the
+    # graph library set element styles directly. frame-ancestors repeats the
+    # frame refusal above for browsers that prefer CSP.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
 }
