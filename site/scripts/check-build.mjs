@@ -65,6 +65,34 @@ if (existsSync(cnamePath)) {
 }
 
 check(existsSync(join(dist, 'og.png')), 'dist/og.png is missing - link previews would be blank')
+
+// Cloudflare reads response headers from this file in the build output. If it
+// stops being emitted the site keeps working and silently loses its CSP,
+// clickjacking protection, and asset caching - a failure with no symptom.
+{
+  const headersPath = join(dist, '_headers')
+  check(existsSync(headersPath), 'dist/_headers is missing - security headers would be dropped')
+  if (existsSync(headersPath)) {
+    const headers = readFileSync(headersPath, 'utf8')
+    for (const name of [
+      'Content-Security-Policy',
+      'X-Frame-Options',
+      'X-Content-Type-Options',
+      'Referrer-Policy',
+    ]) {
+      check(headers.includes(name), `_headers does not set ${name}`)
+    }
+    // The CSP has to allow the one third party the pages actually load.
+    check(
+      /style-src[^;]*fonts\.googleapis\.com/.test(headers),
+      'CSP style-src does not allow Google Fonts, which every page loads',
+    )
+    check(
+      /font-src[^;]*fonts\.gstatic\.com/.test(headers),
+      'CSP font-src does not allow Google Fonts, which every page loads',
+    )
+  }
+}
 check(existsSync(join(dist, 'favicon.svg')), 'dist/favicon.svg is missing')
 
 for (const page of PAGES) {

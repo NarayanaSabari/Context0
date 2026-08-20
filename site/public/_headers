@@ -1,0 +1,40 @@
+# Response headers, applied by Cloudflare Pages.
+#
+# GitHub Pages offered no way to set these, so the site shipped without them.
+# Cloudflare reads this file from the build output, so they cost nothing now.
+#
+# Syntax: a path pattern, then indented `Header: value` lines.
+# Reference: https://developers.cloudflare.com/pages/configuration/headers/
+
+/*
+  # Do not let the site be framed. It has a form on it, so clickjacking a
+  # transparent overlay onto the waitlist button is a real, cheap attack.
+  X-Frame-Options: DENY
+
+  # Stop browsers second-guessing declared content types.
+  X-Content-Type-Options: nosniff
+
+  # Send the origin to other sites, the full URL to ourselves. Referrer paths
+  # are not sensitive here, but there is no reason to leak them either.
+  Referrer-Policy: strict-origin-when-cross-origin
+
+  # This site has no camera, microphone, or geolocation features. Saying so
+  # means a future dependency cannot quietly start asking for them.
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+
+  # Content Security Policy, written against what the site actually loads:
+  #   - scripts and styles: our own bundle only. Tailwind emits a stylesheet,
+  #     not inline styles, so 'unsafe-inline' is not needed for style-src.
+  #   - fonts: Google Fonts, which is the one third party here.
+  #   - form-action 'none': the waitlist submits via fetch(), never a native
+  #     form POST, so nothing should ever be able to navigate the browser to
+  #     a form target. When a waitlist endpoint is configured, add its origin
+  #     to connect-src rather than relaxing this.
+  #   - frame-ancestors duplicates X-Frame-Options for browsers that prefer CSP.
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'
+
+# Fingerprinted assets never change under the same name, so they can be
+# cached hard. Everything else is revalidated, since index.html must not go
+# stale after a deploy.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

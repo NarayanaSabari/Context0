@@ -11,7 +11,7 @@
 import { chromium } from 'playwright'
 import { createServer } from 'node:http'
 import { readFile, mkdir } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, dirname, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -29,6 +29,31 @@ const TYPES = {
   '': 'text/plain',
 }
 
+// Apply the same response headers Cloudflare will, parsed from the _headers
+// file in the build output. Without this the suite tests a site that behaves
+// differently from production: a Content-Security-Policy that blocks the
+// bundle or the webfonts would pass every local check and break on deploy.
+const globalHeaders = (() => {
+  const file = join(dist, '_headers')
+  if (!existsSync(file)) return {}
+  const out = {}
+  let inGlobal = false
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (/^\/\*\s*$/.test(line)) {
+      inGlobal = true
+      continue
+    }
+    if (/^\//.test(line)) {
+      inGlobal = false
+      continue
+    }
+    if (!inGlobal) continue
+    const m = line.match(/^\s+([A-Za-z-]+):\s*(.+)$/)
+    if (m) out[m[1]] = m[2]
+  }
+  return out
+})()
+
 // Serve dist/ the way GitHub Pages does, including directory index resolution,
 // so /blog/ has to genuinely work rather than only /blog/index.html.
 const server = createServer(async (req, res) => {
@@ -40,7 +65,10 @@ const server = createServer(async (req, res) => {
     if (!existsSync(file) || !file.startsWith(dist)) continue
     try {
       const body = await readFile(file)
-      res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' })
+      res.writeHead(200, {
+        ...globalHeaders,
+        'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream',
+      })
       res.end(body)
       return
     } catch {
@@ -50,7 +78,7 @@ const server = createServer(async (req, res) => {
   // Pages serves 404.html for anything it cannot match, with a 404 status.
   // Mirror that here so the custom error page is exercised the same way.
   const notFound = join(dist, '404.html')
-  res.writeHead(404, { 'Content-Type': 'text/html' })
+  res.writeHead(404, { ...globalHeaders, 'Content-Type': 'text/html' })
   res.end(existsSync(notFound) ? await readFile(notFound) : '<h1>404</h1>')
 })
 
@@ -104,6 +132,11 @@ for (const page of PAGES) {
     // render output.
     const hydrationIssue = errors.find((e) => /hydrat|did not match|server HTML/i.test(e))
     note(!hydrationIssue, `${where}: hydration mismatch: ${hydrationIssue}`)
+
+    // A Content-Security-Policy that blocks the bundle or the webfonts looks
+    // fine in dev, where no headers are applied, and breaks on deploy.
+    const csp = errors.find((e) => /Content Security Policy|Refused to/i.test(e))
+    note(!csp, `${where}: blocked by CSP: ${csp}`)
 
     // Did React actually mount? An exception during render leaves an empty
     // #root and a page that looks like a blank dark screen.
