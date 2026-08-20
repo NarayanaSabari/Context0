@@ -52,6 +52,7 @@ func main() {
 	}
 
 	// Read connection settings from environment, falling back to defaults.
+	warnRenamedEnv()
 	endpoint := cmp.Or(os.Getenv("KORA_ENDPOINT"), "localhost:50051")
 	apiKey := os.Getenv("KORA_API_KEY")
 	projectID := cmp.Or(os.Getenv("KORA_PROJECT"), "default")
@@ -362,6 +363,34 @@ func (s *stringSliceFlag) String() string { return strings.Join(*s, ",") }
 func (s *stringSliceFlag) Set(v string) error {
 	*s = append(*s, v)
 	return nil
+}
+
+// warnRenamedEnv warns about CONTEXT0_* variables left over from before the
+// project was renamed to Kora.
+//
+// The CLI reads its settings straight from the environment and does not go
+// through internal/config, so the server's startup check does not cover it.
+// Every setting here has a fallback, which makes a stale variable silently
+// wrong rather than an error: CONTEXT0_ENDPOINT leaves the CLI talking to
+// localhost instead of the configured server, CONTEXT0_PROJECT queries the
+// "default" project instead of the intended one and reports an empty result
+// that looks like missing data, and CONTEXT0_API_KEY sends no key at all.
+//
+// This warns rather than exits, unlike the server. The server refuses because
+// starting unauthenticated is unsafe and unattended; the CLI is interactive,
+// the operator sees the message, and a hard failure here would break a
+// pipeline over a variable the user may not control.
+func warnRenamedEnv() {
+	for _, kv := range os.Environ() {
+		name, _, ok := strings.Cut(kv, "=")
+		if !ok || !strings.HasPrefix(name, "CONTEXT0_") {
+			continue
+		}
+		fmt.Fprintf(os.Stderr,
+			"warning: %s is set but no longer read: the project was renamed to "+
+				"Kora. Use %s instead.\n",
+			name, "KORA_"+strings.TrimPrefix(name, "CONTEXT0_"))
+	}
 }
 
 // printUsage prints the CLI usage summary to stdout.

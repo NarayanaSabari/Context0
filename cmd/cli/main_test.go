@@ -366,3 +366,51 @@ func TestLiveSessionLifecycle(t *testing.T) {
 			"a request the server rejected")
 	}
 }
+
+// TestRenamedEnvVarsWarn covers the gap the Context0 -> Kora rename left in the
+// CLI. Unlike the server, the CLI reads the environment directly instead of
+// going through internal/config, so the startup check there does not protect
+// it -- and every setting has a fallback, so a stale variable is silently wrong
+// rather than an error.
+//
+// CONTEXT0_ENDPOINT is the clearest case: the CLI ignores it and talks to
+// localhost, so a user pointed at a remote engine quietly queries a different
+// machine. CONTEXT0_PROJECT is worse in a subtle way, because querying the
+// wrong project returns an empty result that reads as "no memories" rather
+// than as a misconfiguration.
+func TestRenamedEnvVarsWarn(t *testing.T) {
+	bin := cliBinary(t)
+
+	for _, old := range []string{
+		"CONTEXT0_ENDPOINT",
+		"CONTEXT0_API_KEY",
+		"CONTEXT0_PROJECT",
+	} {
+		t.Run(old, func(t *testing.T) {
+			_, stderr, _ := run(t, bin, []string{old + "=some-value"}, "query", "anything")
+
+			if !strings.Contains(stderr, old) {
+				t.Errorf("%s was set and the CLI said nothing about it; "+
+					"the setting is silently ignored.\nstderr: %s", old, stderr)
+			}
+			// Naming the replacement is the point: a warning that something is
+			// wrong without saying what to set is barely better than silence.
+			want := "KORA_" + strings.TrimPrefix(old, "CONTEXT0_")
+			if !strings.Contains(stderr, want) {
+				t.Errorf("the warning does not name the replacement %s.\nstderr: %s",
+					want, stderr)
+			}
+		})
+	}
+}
+
+// TestUnrelatedEnvVarsDoNotWarn keeps the check above from being satisfied by
+// warning about everything it sees.
+func TestUnrelatedEnvVarsDoNotWarn(t *testing.T) {
+	bin := cliBinary(t)
+	_, stderr, _ := run(t, bin, []string{"CONTEXTUAL_THING=x"}, "query", "anything")
+
+	if strings.Contains(stderr, "CONTEXTUAL_THING") {
+		t.Errorf("an unrelated variable was reported as renamed.\nstderr: %s", stderr)
+	}
+}
