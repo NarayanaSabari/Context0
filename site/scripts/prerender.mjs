@@ -21,7 +21,9 @@ import { fileURLToPath } from 'node:url'
 import { createServer } from 'vite'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const dist = join(root, 'dist')
+// Normally dist/. Overridable so a test can build a differently-configured
+// copy somewhere else and prerender that instead.
+const dist = process.env.PRERENDER_DIST ?? join(root, 'dist')
 
 // Which built HTML file each page component belongs in.
 const TARGETS = {

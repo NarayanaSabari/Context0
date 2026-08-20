@@ -93,7 +93,12 @@ Three layers, because they catch different things:
 `VERIFICATION.md` records what each check caught, with before-and-after numbers
 and the mutation tests proving each one fails when its fix is reverted.
 
-All four run in CI on every pull request that touches `site/`.
+- `scripts/waitlist.mjs` builds a copy of the site with an endpoint configured,
+  points it at a stub, and drives the waitlist against a provider that is slow,
+  down, or rejecting. The rule it enforces: never show success for an address
+  that did not arrive.
+
+All five run in CI on every pull request that touches `site/`.
 
 ```bash
 pnpm links        # do the outbound GitHub links still resolve?

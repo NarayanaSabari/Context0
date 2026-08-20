@@ -78,6 +78,13 @@ jobs:
         working-directory: site
         run: node scripts/cross-browser.mjs
 
+      # The waitlist is the only thing on this site that does anything. These
+      # drive it against a stubbed provider that is slow, down, or rejecting,
+      # and assert it never claims success for an address that went nowhere.
+      - name: Waitlist failure modes
+        working-directory: site
+        run: node scripts/waitlist.mjs
+
       - name: Upload artifact
         # Only the main-branch run needs to hand anything to the deploy job;
         # on a PR the build and checks above are the whole point.

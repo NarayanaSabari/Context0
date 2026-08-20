@@ -65,6 +65,31 @@ github.com being reachable, and a marketing site's build should not go red
 because a third party had a bad minute. Run it manually when the outbound links
 change.
 
+## The waitlist, off the happy path
+
+The waitlist is the only interactive thing on the site and the only reason it
+exists, so its failure modes are tested rather than assumed. `waitlist.mjs`
+builds a second copy of the site with an endpoint configured (Vite inlines the
+constant, so patching the bundle would be brittle), points it at a stub it
+controls, and drives it:
+
+| Condition | Required behaviour |
+|---|---|
+| Provider returns 500 | Shows an error, never "you are on the list" |
+| Network drops | Shows an error, never a success |
+| Provider is slow | Button reads "Joining...", button and input both disabled |
+| Slow request then succeeds | Confirmation appears |
+| Address is `not-an-email` | Zero requests reach the provider |
+| Valid submission | Request carries an `email` field with the typed address |
+| No endpoint configured | Says signups are not open, sends nothing, offers GitHub |
+
+Mutation-tested by deleting the `if (!response.ok) throw` line - the exact bug
+the test exists to prevent. Two checks fail immediately: *"a 500 from the
+provider still showed a success message"*.
+
+This is also the first exercise of the configured success path, which until now
+was listed as uncovered.
+
 ## Bugs found in the checkers themselves
 
 Worth recording, because a checker that reports a false pass is worse than no
@@ -96,6 +121,7 @@ Honest gaps, so nobody reads more into the green checkmarks than is there:
   `main`, and this work is still on a branch. The repository has zero Pages
   deployments so far. The first merge to `main` is the first real test of that
   step.
-- **The waitlist round trip.** With no endpoint configured, the submit path is
-  verified only as far as the visible error state. The success path is
-  unexercised until a provider is wired up.
+- **A real provider.** The waitlist is driven against a stub, which proves the
+  page's half of the contract: what it sends, and how it behaves when the
+  answer is slow, absent, or an error. Whether Buttondown or Formspree accepts
+  that exact payload is unverified until one is configured.
