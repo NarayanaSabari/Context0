@@ -161,9 +161,12 @@ check(
 
 // 6. Sidebar entries must resolve to files that exist.
 //
-// This is the failure this script exists for. docsify silently renders its
-// "not found" page for a missing document: the build passes, the sidebar looks
-// complete, and the gap only appears when a reader clicks the link.
+// This is the failure this script exists for. Measured against a build with a
+// deliberately broken sidebar entry: the link renders in the nav, clicking it
+// shows docsify's "Not found" body, and the only signal is a 404 in the
+// browser console. The build passes, the sidebar looks complete, and nothing
+// in CI notices - so the gap reaches a reader who clicks the link, or a
+// crawler, before it reaches anyone who could fix it.
 const pages = readdirSync(docs).filter((f) => f.endsWith('.md'))
 check(pages.length > 0, 'dist/docs/ contains no Markdown at all')
 

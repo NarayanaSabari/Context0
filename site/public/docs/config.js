@@ -23,8 +23,14 @@ window.$docsify = {
   repo: 'https://github.com/NarayanaSabari/Kora',
 
   // docsify fetches Markdown relative to this directory, so the route
-  // `#/quickstart` loads /docs/quickstart.md. Without it docsify would look at
-  // the site root and every page would 404.
+  // `#/quickstart` loads /docs/quickstart.md.
+  //
+  // Kept explicit rather than because it is required: docsify infers the same
+  // base from the page URL, and removing this line changes nothing - measured,
+  // the identical set of .md requests goes out either way. It earns its place
+  // by pinning the assumption. The docs are only correct while they are served
+  // from /docs/, and a future move would otherwise depend on that inference
+  // continuing to hold.
   basePath: '/docs/',
   relativePath: false,
 
