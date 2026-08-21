@@ -160,10 +160,16 @@ func main() {
 // cmd/server for why slog has no Fatal of its own.
 //
 // The offending value goes in attrs as a slog attribute rather than being
-// concatenated into msg. That keeps msg a constant, which matters for two
-// reasons: a log aggregator can group on it instead of seeing every bad value
-// as a distinct message, and an environment variable containing a newline
-// cannot forge a second log line by being spliced into the text.
+// concatenated into msg, so msg stays a constant. That is a legibility fix
+// rather than a security one: a log aggregator can group on a constant
+// message instead of treating every bad value as a distinct one.
+//
+// It is *not* what stops log forging - slog's JSON and text handlers both
+// escape newlines in a message, verified against the pre-fix binary, so a
+// value containing a newline never produced a second log line either way.
+// gosec flags the pattern (G706) because it cannot see the handler's
+// escaping. TestRejectedValueCannotForgeALogLine pins that behaviour, since
+// it belongs to the handler rather than to this code.
 func fatal(msg string, err error, attrs ...slog.Attr) {
 	slog.LogAttrs(context.Background(), slog.LevelError, msg,
 		append([]slog.Attr{slog.Any("error", err)}, attrs...)...)

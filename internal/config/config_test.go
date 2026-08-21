@@ -201,9 +201,10 @@ func TestValidateRejectsOutOfRangeValues(t *testing.T) {
 		{
 			name: "embedding dimension that wraps uint32",
 			env:  map[string]string{"KORA_EMBEDDING_DIM": "4294967296"},
-			why: "2^32 converts to uint32(0) in the bag-of-words hash, so the " +
-				"server started cleanly and panicked with a divide-by-zero on " +
-				"the first memory stored",
+			why: "2^32 converts to uint32(0) in the bag-of-words hash. Postgres " +
+				"rejects the column width first, so the server never reached " +
+				"the panic, but it died with SQLSTATE 22003 from the database " +
+				"instead of a message naming the variable",
 		},
 		{
 			name: "absurd embedding dimension",

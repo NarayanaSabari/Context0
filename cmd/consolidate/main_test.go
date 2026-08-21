@@ -202,3 +202,52 @@ func TestUnreachableDatabaseExitsNonZero(t *testing.T) {
 		t.Errorf("the job exited 0 against an unreachable database: %s", out)
 	}
 }
+
+// TestRejectedValueCannotForgeALogLine pins the behaviour that makes echoing
+// an operator-supplied value into the log safe.
+//
+// The tuning variables are echoed back on rejection so an operator can see
+// what they typed. gosec flags that as log injection (G706), and the obvious
+// worry is a value containing a newline splicing a second, fabricated entry
+// into the stream - an audit trail that says maintenance completed when it
+// did not.
+//
+// slog's handlers escape newlines in both message and attributes, so this is
+// not actually possible. That is worth a test rather than a comment: it is a
+// property of the handler, not of this code, and switching to a handler that
+// wrote raw text would silently make the echo unsafe.
+func TestRejectedValueCannotForgeALogLine(t *testing.T) {
+	bin := consolidateBinary(t)
+
+	const forged = "FORGED-ENTRY-MARKER"
+	payload := "0.5\n{\"level\":\"INFO\",\"msg\":\"" + forged + "\",\"pruned\":0}"
+
+	for _, format := range []string{"json", "text"} {
+		t.Run(format, func(t *testing.T) {
+			out, code := runConsolidate(t,
+				bin,
+				"CONSOLIDATION_STALE_THRESHOLD="+payload,
+				"KORA_LOG_FORMAT="+format,
+			)
+			if code == 0 {
+				t.Fatal("the job accepted an unparseable threshold")
+			}
+
+			// The marker may appear escaped inside a field. What must not
+			// happen is a line that consists of the injected record, which is
+			// what a log reader would parse as a separate event.
+			for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "{\"level\"") || strings.HasPrefix(trimmed, "level=") {
+					t.Errorf("a value forged its own log line: %q", trimmed)
+				}
+			}
+
+			// And the message itself stays constant, so an aggregator groups
+			// these rather than seeing one distinct message per bad value.
+			if !strings.Contains(out, "CONSOLIDATION_STALE_THRESHOLD is not a number") {
+				t.Errorf("expected the constant message, got: %s", out)
+			}
+		})
+	}
+}
