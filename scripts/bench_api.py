@@ -5,21 +5,35 @@ Run against a corpus large enough that plan choice matters (the 50k seed used
 in docs/research/performance-audit-2026-08.md). Uses persistent connections and
 in-process timing so it measures the server, not curl's process spawn.
 """
+import os
 import argparse
 import json
 import statistics
 import time
 import urllib.request
 
-API = "http://localhost:8080"
-KEY = "ctx0_dev_key_1"
+# Overridable so these can point at a port-forward on a non-default port, or
+# at a remote deployment. soak.py already took --url; these did not.
+API = os.environ.get("KORA_HTTP_URL", "http://localhost:8080")
+# The key is read lazily by require_key() rather than at import, so --help
+# still works without credentials. It has no default: ctx0_dev_key_1 used to
+# be one, but that key was published in a public repo and removed from the
+# chart in a83af5a, so the default only ever produced 401s.
+def require_key():
+    key = os.environ.get("KORA_API_KEY", "")
+    if not key:
+        raise SystemExit(
+            "KORA_API_KEY is not set.\n"
+            "  export KORA_API_KEY=$(. ./.dev-credentials && echo $DEV_API_KEY)"
+        )
+    return key
 
 
 def call(path, method="GET", body=None):
     req = urllib.request.Request(
         API + path, method=method,
         data=json.dumps(body).encode() if body else None,
-        headers={"X-API-Key": KEY, "Content-Type": "application/json"})
+        headers={"X-API-Key": require_key(), "Content-Type": "application/json"})
     t0 = time.perf_counter()
     with urllib.request.urlopen(req) as r:
         payload = r.read()

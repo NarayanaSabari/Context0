@@ -19,6 +19,7 @@ Usage:
 Exits non-zero if any invariant is violated.
 """
 import argparse
+import os
 import json
 import random
 import signal
@@ -284,7 +285,11 @@ def report(stats, elapsed, budget_ms, quiet=False, throttle_start=None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://localhost:8080")
-    ap.add_argument("--key", default="ctx0_dev_key_1")
+    # No default. ctx0_dev_key_1 used to be one, but that key was published in
+    # a public repo and removed from the chart in a83af5a, so the default only
+    # produced a soak run where every request 401'd -- which still reports
+    # throughput, just of rejections.
+    ap.add_argument("--key", default=os.environ.get("KORA_API_KEY", ""))
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--minutes", type=float, default=5)
     ap.add_argument("--forever", action="store_true")
@@ -292,6 +297,15 @@ def main():
     ap.add_argument("--budget-ms", type=float, default=500)
     ap.add_argument("--report-every", type=float, default=30)
     args = ap.parse_args()
+
+    # An empty key is worse than a wrong one here: the soak still runs, every
+    # request comes back 401, and the report shows healthy throughput and
+    # latency for a server that answered nothing.
+    if not args.key:
+        raise SystemExit(
+            "No API key. Pass --key or set KORA_API_KEY:\n"
+            "  export KORA_API_KEY=$(. ./.dev-credentials && echo $DEV_API_KEY)"
+        )
 
     stats = Stats()
     client = Client(args.url, args.key, stats)

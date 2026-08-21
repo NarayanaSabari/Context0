@@ -255,8 +255,21 @@ for f in charts/kora/values-local.yaml charts/kora/values-production.yaml; do
 done
 
 # The deleted default key must not survive anywhere a user would copy from.
-stale=$(grep -rn "ctx0_dev_key_1" README.md docs/*.md Makefile test/ 2>/dev/null \
-  | grep -v security-research | grep -v keyword-search || true)
+#
+# scripts/ is included because it was the gap: the key lived on as a working
+# default in demo.sh -- which CONTRIBUTING.md tells new contributors to run --
+# and in four Python scripts, long after a83af5a removed it from the chart.
+# This check did not look there.
+#
+# Comment lines are excluded rather than the whole file, so a comment may
+# explain the history while a reintroduced value is still caught. verify_k8s.sh
+# is excluded because it presents the key deliberately and asserts a 401.
+stale=$(grep -rn "ctx0_dev_key_1" README.md docs/*.md Makefile test/ scripts/ 2>/dev/null \
+  | grep -v security-research | grep -v keyword-search \
+  | grep -v 'verify_install.sh' \
+  | grep -v 'verify_k8s.sh' \
+  | grep -vE ':[0-9]+:[[:space:]]*#' \
+  | grep -v 'used to live here' || true)
 check_empty "no doc still tells users to use the removed default key" "$stale"
 
 printf '\n\033[1m%s\033[0m\n' "=== $PASS passed, $FAIL failed ==="

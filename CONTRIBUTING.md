@@ -85,7 +85,10 @@ make test
 
 ```bash
 # Option 1: Docker Compose (simplest)
-# TODO: docker-compose.yaml coming soon
+# Generate credentials once, then start everything:
+echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> .env
+echo "KORA_API_KEYS=$(go run ./cmd/cli keys generate)" >> .env
+docker compose up
 
 # Option 2: kind cluster
 make kind-up
