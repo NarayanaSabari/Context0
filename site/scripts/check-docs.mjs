@@ -257,6 +257,38 @@ for (const page of pages) {
   }
 }
 
+// 10. The metrics table must match the metrics the engine actually exports.
+//
+// operations.md lists every kora_* metric by name. That list is the kind of
+// documentation that rots invisibly: a metric added in Go is simply absent
+// here, and a renamed one leaves a table entry pointing at something that no
+// longer exists - which an operator only discovers when their dashboard query
+// returns nothing. Two were already missing when this check was written.
+//
+// Compared against internal/metrics/metrics.go, which is the definition. The
+// check is skipped when that file is not reachable, so the site can still be
+// built from a standalone copy of site/.
+{
+  const source = join(root, '..', 'internal', 'metrics', 'metrics.go')
+  const page = join(docs, 'operations.md')
+
+  if (existsSync(source) && existsSync(page)) {
+    const declared = new Set(
+      [...readFileSync(source, 'utf8').matchAll(/Name:\s*"(kora_[a-z_]+)"/g)].map((m) => m[1]),
+    )
+    const documented = new Set(
+      [...readFileSync(page, 'utf8').matchAll(/`(kora_[a-z_]+)`/g)].map((m) => m[1]),
+    )
+
+    for (const name of declared) {
+      check(documented.has(name), `${name} is exported but missing from the docs metrics table`)
+    }
+    for (const name of documented) {
+      check(declared.has(name), `docs list ${name}, which the engine does not export`)
+    }
+  }
+}
+
 if (failures.length > 0) {
   console.error(`\ndocs check failed (${failures.length}):\n`)
   for (const f of failures) console.error(`  - ${f}`)

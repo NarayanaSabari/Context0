@@ -57,8 +57,10 @@ Prometheus metrics are on `/metrics`, on the HTTP port, requiring no API key. Na
 | `kora_memories_total` | counter | Memories created |
 | `kora_edges_total` | counter | Edges created |
 | `kora_requests_total` | counter | Requests, by outcome |
+| `kora_request_duration_seconds` | histogram | RPC latency, labelled by method - the D of RED, for every method rather than the two instrumented by hand |
 | `kora_query_duration_seconds` | histogram | Query latency |
 | `kora_store_duration_seconds` | histogram | Store latency |
+| `kora_query_results_count` | histogram | How many results each query returned, bucketed for the usual 0-20 |
 | `kora_active_sessions` | gauge | Sessions currently open |
 | `kora_pool_connections` | gauge | Connection pool state |
 | `kora_pool_acquire_wait_seconds_total` | counter | Time spent waiting for a connection |

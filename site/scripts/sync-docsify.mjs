@@ -2,11 +2,15 @@
 //
 // docsify's own quickstart loads the library from a CDN. This site cannot do
 // that: public/_headers sets `script-src 'self'`, so a jsdelivr <script> tag is
-// blocked by the browser before it executes, and the docs would render as a
-// blank page in production while looking perfect in any local test that skips
-// the headers. Relaxing the CSP to allow a third-party origin to execute
-// arbitrary script on the docs domain is the wrong trade for saving one copy
-// step, so the runtime is vendored instead and served from our own origin.
+// blocked by the browser before it executes, and the docs get stuck on their
+// pre-JavaScript fallback in production while looking perfect in any local test
+// that skips the headers. Verified: serving the shell with a jsdelivr script
+// under the real CSP gives "Loading the script ... violates the following
+// Content Security Policy directive", no .markdown-section, and only the
+// hand-written fallback on screen. Relaxing the CSP to allow a third-party
+// origin to execute arbitrary script on the docs domain is the wrong trade for
+// saving one copy step, so the runtime is vendored instead and served from our
+// own origin.
 //
 // Vendoring from node_modules rather than committing a blob keeps the upgrade
 // path honest: `pnpm up docsify` then a rebuild, with the version recorded in
