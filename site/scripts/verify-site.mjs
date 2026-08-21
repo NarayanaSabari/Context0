@@ -479,6 +479,65 @@ for (const page of PAGES) {
     }
   }
 
+  // Narrow viewport.
+  //
+  // Everything above runs at 1440px, where the sidebar is docked and the
+  // content column is wide. A phone is a different layout: the sidebar
+  // collapses behind a toggle, and any element that cannot shrink pushes the
+  // page sideways. These docs are mostly reference tables, which is exactly
+  // the element that does not shrink - and a theme rule that broke this
+  // reproduced only on CI, because whether the widest table exceeds 390px
+  // depends on the font metrics of the machine rendering it.
+  {
+    const narrow = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const phone = await narrow.newPage()
+
+    for (const route of ['#/', '#/api', '#/configuration', '#/operations']) {
+      await phone.goto(`${base}/docs/${route}`, { waitUntil: 'networkidle' })
+      await phone.waitForTimeout(700)
+
+      // Real horizontal scroll, measured the way a thumb would produce it.
+      const slide = await phone.evaluate(() => {
+        window.scrollTo(9999, 0)
+        const x = window.scrollX
+        window.scrollTo(0, 0)
+        return x
+      })
+      note(slide === 0, `docs ${route} @390: page scrolls horizontally by ${slide}px`)
+
+      // A table wider than the screen is fine, as long as it scrolls inside
+      // its own box rather than taking the page with it.
+      const spill = await phone.evaluate(
+        (vw) =>
+          [...document.querySelectorAll('.markdown-section table')]
+            .map((el) => Math.round(el.getBoundingClientRect().right))
+            .filter((right) => right > vw + 1).length,
+        390,
+      )
+      note(spill === 0, `docs ${route} @390: ${spill} table(s) overflow the viewport`)
+    }
+
+    // The sidebar toggle is the only route to navigation on a phone.
+    await phone.goto(`${base}/docs/`, { waitUntil: 'networkidle' })
+    await phone.waitForTimeout(600)
+    const toggle = phone.locator('.sidebar-toggle').first()
+    if ((await toggle.count()) > 0) {
+      await toggle.click()
+      await phone.waitForTimeout(500)
+      const visible = await phone.evaluate(() => {
+        const el = document.querySelector('.sidebar')
+        if (!el) return false
+        const box = el.getBoundingClientRect()
+        return box.width > 0 && box.right > 0
+      })
+      note(visible, 'docs @390: the sidebar toggle did not reveal the navigation')
+    } else {
+      failures.push('docs @390: no sidebar toggle, so navigation is unreachable on a phone')
+    }
+
+    await narrow.close()
+  }
+
   await context.close()
 }
 

@@ -185,13 +185,26 @@ body {
   padding: 1rem 1.25rem;
 }
 
+/* Tables.
+ *
+ * docsify sets `display: block; overflow: auto` so a table too wide for the
+ * screen scrolls inside its own box. That is load-bearing on a phone, and an
+ * earlier version of this file replaced it with `display: table` to get
+ * rounded corners - which pushed the widest table past the viewport and made
+ * the whole page scroll sideways. These docs are mostly reference tables, so
+ * that affected most pages.
+ *
+ * The scroll container is kept, and the border and radius moved onto it. The
+ * table inside is free to be as wide as it needs.
+ */
 .markdown-section table {
-  display: table;
+  display: block;
   width: 100%;
+  overflow-x: auto;
   border: 1px solid var(--kora-line);
   border-radius: 10px;
   border-collapse: collapse;
-  overflow: hidden;
+  border-spacing: 0;
 }
 
 .markdown-section tr {
@@ -199,11 +212,23 @@ body {
   border-top: 1px solid var(--kora-line);
 }
 
+/* docsify stripes alternate rows. On a monochrome page that reads as two
+ * different surfaces rather than as banding, so every row is the same. */
+.markdown-section tr:nth-child(2n) {
+  background: var(--kora-surface);
+}
+
 .markdown-section th {
   background: var(--kora-surface-2);
   color: var(--kora-heading);
   font-weight: 600;
   text-align: left;
+}
+
+.markdown-section th,
+.markdown-section td {
+  border: 1px solid var(--kora-line);
+  padding: 0.5em 0.85em;
 }
 
 /* Sidebar: quiet by default, with the active page marked by weight and a rule

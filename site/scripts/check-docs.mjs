@@ -228,6 +228,35 @@ for (const page of pages) {
   }
 }
 
+// 9. Tables must stay inside a scroll container.
+//
+// These docs are mostly reference tables, and a table wider than a phone is
+// normal. docsify handles that by setting `display: block; overflow: auto` so
+// the table scrolls inside its own box; overriding that with `display: table`
+// to get rounded corners instead makes the whole page scroll sideways on a
+// phone.
+//
+// That regression shipped once and passed every local run, because whether the
+// widest table happens to exceed 390px depends on font metrics - so it
+// reproduced on CI's Linux font stack and not on macOS. Asserting the rule
+// itself is environment-independent, and fails in the editor rather than
+// twenty minutes later.
+{
+  const themePath = join(docs, 'theme.css')
+  if (existsSync(themePath)) {
+    const theme = readFileSync(themePath, 'utf8')
+    const tableRule = theme.match(/\.markdown-section table\s*\{([^}]*)\}/)?.[1] ?? ''
+    check(
+      /display:\s*block/.test(tableRule),
+      '.markdown-section table must keep `display: block` - `display: table` makes wide tables scroll the whole page on a phone',
+    )
+    check(
+      /overflow(-x)?:\s*auto/.test(tableRule),
+      '.markdown-section table needs `overflow-x: auto`, or a wide table has nowhere to scroll',
+    )
+  }
+}
+
 if (failures.length > 0) {
   console.error(`\ndocs check failed (${failures.length}):\n`)
   for (const f of failures) console.error(`  - ${f}`)
