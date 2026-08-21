@@ -21,23 +21,48 @@ import (
 // Limitations: no semantic understanding -- relies purely on lexical overlap.
 // For production quality, switch to OllamaEmbedder or OpenAIEmbedder.
 type BagOfWordsEmbedder struct {
-	dim int
+	// dim is uint32 rather than int because that is the type the hashing
+	// actually needs: positions are `fnvHash(token) % dim`, and fnvHash
+	// returns uint32. Holding it as an int meant a conversion inside the hot
+	// loop, and that conversion is where the wrap happened - a dim that is an
+	// exact multiple of 2^32 became uint32(0) and the modulo panicked with a
+	// divide-by-zero on the first text embedded.
+	//
+	// Storing the narrow type moves the single conversion to the constructor,
+	// where the range is checked once, and leaves the loop conversion-free.
+	dim uint32
 }
+
+// maxDim caps the vector dimension this embedder will accept.
+//
+// KORA_EMBEDDING_DIM is operator-supplied and was only checked for being
+// negative, so `KORA_EMBEDDING_DIM=4294967296` passed validation, started the
+// server cleanly, and took it down on the first memory stored.
+//
+// 65536 is far above any real embedding model - the largest in common use is
+// 3072 - so the cap refuses nothing legitimate, and it keeps the dimension
+// comfortably inside uint32.
+const maxDim = 65536
 
 // NewBagOfWordsEmbedder creates an embedder with the given vector dimension.
 // Recommended value is 384 because it matches common small transformer models
 // (e.g. all-MiniLM-L6-v2), making migration to a real model seamless -- the
 // pgvector column dimension stays the same.
+//
+// Out-of-range dimensions fall back to the default rather than erroring: this
+// constructor has no error return, and the configuration layer rejects bad
+// values with a message naming the variable before it ever gets here.
 func NewBagOfWordsEmbedder(dim int) *BagOfWordsEmbedder {
-	if dim <= 0 {
+	if dim <= 0 || dim > maxDim {
 		dim = 384
 	}
-	return &BagOfWordsEmbedder{dim: dim}
+	// Safe by the bounds above: dim is now within [1, maxDim].
+	return &BagOfWordsEmbedder{dim: uint32(dim)}
 }
 
 // Dimension returns the fixed vector size used by this embedder.
 func (e *BagOfWordsEmbedder) Dimension() int {
-	return e.dim
+	return int(e.dim)
 }
 
 // Embed converts text into a fixed-dimension vector using hashed bag-of-words
@@ -63,8 +88,8 @@ func (e *BagOfWordsEmbedder) Embed(text string) ([]float32, error) {
 		// TF weight uses sublinear scaling: frequent terms get diminishing returns.
 		weight := float32(1.0 + math.Log(float64(count)))
 
-		h1 := fnvHash(token) % uint32(e.dim)
-		h2 := fnvHash(token+"_salt") % uint32(e.dim)
+		h1 := fnvHash(token) % e.dim
+		h2 := fnvHash(token+"_salt") % e.dim
 
 		// A sign hash allows some tokens to subtract, which reduces
 		// systematic positive bias and produces richer vector geometry.
@@ -81,7 +106,7 @@ func (e *BagOfWordsEmbedder) Embed(text string) ([]float32, error) {
 	// similar phrases higher similarity than texts sharing only individual words.
 	for i := 0; i < len(tokens)-1; i++ {
 		bigram := tokens[i] + "_" + tokens[i+1]
-		h := fnvHash(bigram) % uint32(e.dim)
+		h := fnvHash(bigram) % e.dim
 		vec[h] += 0.5
 	}
 

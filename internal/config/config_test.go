@@ -198,6 +198,18 @@ func TestValidateRejectsOutOfRangeValues(t *testing.T) {
 			env:  map[string]string{"KORA_EMBEDDING_DIM": "-384"},
 			why:  "this width is handed to the pgvector column definition",
 		},
+		{
+			name: "embedding dimension that wraps uint32",
+			env:  map[string]string{"KORA_EMBEDDING_DIM": "4294967296"},
+			why: "2^32 converts to uint32(0) in the bag-of-words hash, so the " +
+				"server started cleanly and panicked with a divide-by-zero on " +
+				"the first memory stored",
+		},
+		{
+			name: "absurd embedding dimension",
+			env:  map[string]string{"KORA_EMBEDDING_DIM": "100000000"},
+			why:  "allocates a vector per embed that no real model would need",
+		},
 	}
 
 	for _, tc := range cases {
