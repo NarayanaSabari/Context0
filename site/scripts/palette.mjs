@@ -180,20 +180,39 @@ if (existsSync(dist)) {
   }
   walk(dist)
 
+  // docsify's stylesheet is third-party and full of hue: an accent blue, and a
+  // Prism syntax theme in six colours. It is vendored verbatim on purpose, so
+  // that `pnpm up docsify` is the whole upgrade rather than a re-edit of a
+  // patched copy, which means the hue cannot be removed at this layer.
+  //
+  // It is overridden instead, by public/docs/theme.css, which loads after it
+  // and restates every one of those rules in greys. Skipping the file here is
+  // therefore only safe because something else proves the override actually
+  // won: scripts/verify-site.mjs loads the rendered docs in a browser and
+  // fails on any computed colour with unequal channels. A static scan cannot
+  // see a cascade; that check can, and it is the one that matters.
+  const VENDORED = /^docs\/vendor\//
+
   const channels = (hex) => {
     const h = hex.length === 3 ? [...hex].map((c) => c + c).join('') : hex
     return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16))
   }
 
   const found = new Map()
+  let skipped = 0
   for (const file of files) {
+    const relative = file.slice(dist.length + 1)
+    if (VENDORED.test(relative)) {
+      skipped++
+      continue
+    }
     const text = readFileSync(file, 'utf8')
     for (const [, hex] of text.matchAll(/#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b/g)) {
       const [r, g, b] = channels(hex.toLowerCase())
-      if (r !== g || g !== b) found.set(`#${hex}`, file.slice(dist.length + 1))
+      if (r !== g || g !== b) found.set(`#${hex}`, relative)
     }
     for (const [, r, g, b] of text.matchAll(/rgba?\((\d+),\s*(\d+),\s*(\d+)/g)) {
-      if (+r !== +g || +g !== +b) found.set(`rgb(${r},${g},${b})`, file.slice(dist.length + 1))
+      if (+r !== +g || +g !== +b) found.set(`rgb(${r},${g},${b})`, relative)
     }
   }
 
@@ -206,5 +225,8 @@ if (existsSync(dist)) {
     console.error('Use a token, or a neutral grey.')
     process.exit(1)
   }
-  console.log(`palette: no hue in ${files.length} built files`)
+  console.log(
+    `palette: no hue in ${files.length - skipped} built files` +
+      (skipped ? ` (${skipped} vendored files overridden by docs/theme.css)` : ''),
+  )
 }

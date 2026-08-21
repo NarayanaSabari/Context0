@@ -8,7 +8,7 @@
 //
 // Run manually, or on a schedule:  node scripts/check-links.mjs
 
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -20,22 +20,45 @@ if (!existsSync(dist)) {
   process.exit(1)
 }
 
-const PAGES = ['index.html', 'releases/index.html', 'blog/index.html', 'docs/index.html', '404.html']
+// Every built page, plus the docs.
+//
+// The docs are Markdown rather than HTML, and their outbound links are the
+// most likely on the site to rot: they point at specific files and directories
+// in the repository, which move.
+const PAGES = ['index.html', 'releases/index.html', 'blog/index.html', '404.html']
+const DOC_PAGES = existsSync(join(dist, 'docs'))
+  ? readdirSync(join(dist, 'docs'))
+      .filter((f) => f.endsWith('.md'))
+      .map((f) => `docs/${f}`)
+  : []
 
 // Collect every external link, remembering which pages each appears on so a
 // failure says where to go and fix it.
 const links = new Map()
+const record = (url, page) => {
+  // Font stylesheets are exercised by every page load already.
+  if (url.includes('fonts.googleapis.com') || url.includes('fonts.gstatic.com')) return
+  if (url.startsWith('https://kora.sabarinarayana.com')) return
+  if (!links.has(url)) links.set(url, new Set())
+  links.get(url).add(page)
+}
+
 for (const page of PAGES) {
   const file = join(dist, page)
   if (!existsSync(file)) continue
   const html = readFileSync(file, 'utf8')
   for (const m of html.matchAll(/href="(https?:\/\/[^"]+)"/g)) {
-    const url = m[1]
-    // Font stylesheets are exercised by every page load already.
-    if (url.includes('fonts.googleapis.com') || url.includes('fonts.gstatic.com')) continue
-    if (url.startsWith('https://kora.sabarinarayana.com')) continue
-    if (!links.has(url)) links.set(url, new Set())
-    links.get(url).add(page)
+    record(m[1], page)
+  }
+}
+
+// The docs are Markdown, so their links are [text](url) rather than href="".
+for (const page of DOC_PAGES) {
+  const file = join(dist, page)
+  if (!existsSync(file)) continue
+  const body = readFileSync(file, 'utf8')
+  for (const m of body.matchAll(/\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)) {
+    record(m[1], page)
   }
 }
 

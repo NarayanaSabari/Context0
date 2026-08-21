@@ -27,32 +27,57 @@ const TYPES = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '': 'text/plain',
+  // The docs are Markdown fetched at runtime by docsify.
+  '.md': 'text/markdown',
 }
 
 // Apply the same response headers Cloudflare will, parsed from the _headers
 // file in the build output. Without this the suite tests a site that behaves
 // differently from production: a Content-Security-Policy that blocks the
 // bundle or the webfonts would pass every local check and break on deploy.
-const globalHeaders = (() => {
+//
+// Every rule block is read, not just `/*`, because /docs/ deliberately
+// overrides the global CSP. Reading only the global block would test the docs
+// under a policy they are not actually served with, in the direction that
+// hides failures rather than causing them.
+const headerRules = (() => {
   const file = join(dist, '_headers')
-  if (!existsSync(file)) return {}
-  const out = {}
-  let inGlobal = false
-  for (const line of readFileSync(file, 'utf8').split('\n')) {
-    if (/^\/\*\s*$/.test(line)) {
-      inGlobal = true
-      continue
-    }
+  if (!existsSync(file)) return []
+  const rules = []
+  let current = null
+  for (const raw of readFileSync(file, 'utf8').split('\n')) {
+    const line = raw.replace(/\s+$/, '')
+    if (!line.trim() || line.trim().startsWith('#')) continue
     if (/^\//.test(line)) {
-      inGlobal = false
+      current = { pattern: line.trim(), headers: {}, removed: [] }
+      rules.push(current)
       continue
     }
-    if (!inGlobal) continue
+    if (!current) continue
+    // "! Header-Name" detaches a header inherited from a broader rule.
+    const detach = line.match(/^\s+!\s*([A-Za-z-]+)\s*$/)
+    if (detach) {
+      current.removed.push(detach[1])
+      continue
+    }
     const m = line.match(/^\s+([A-Za-z-]+):\s*(.+)$/)
-    if (m) out[m[1]] = m[2]
+    if (m) current.headers[m[1]] = m[2]
+  }
+  return rules
+})()
+
+// Cloudflare applies every matching rule in order, so a later block's detach
+// plus re-add is what lets /docs/ carry a different policy from /*.
+const headersFor = (url) => {
+  const out = {}
+  for (const rule of headerRules) {
+    const re = new RegExp(`^${rule.pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`)
+    if (!re.test(url)) continue
+    for (const name of rule.removed) delete out[name]
+    Object.assign(out, rule.headers)
   }
   return out
-})()
+}
 
 // Serve dist/ the way GitHub Pages does, including directory index resolution,
 // so /blog/ has to genuinely work rather than only /blog/index.html.
@@ -66,7 +91,7 @@ const server = createServer(async (req, res) => {
     try {
       const body = await readFile(file)
       res.writeHead(200, {
-        ...globalHeaders,
+        ...headersFor(url),
         'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream',
       })
       res.end(body)
@@ -78,18 +103,20 @@ const server = createServer(async (req, res) => {
   // Pages serves 404.html for anything it cannot match, with a 404 status.
   // Mirror that here so the custom error page is exercised the same way.
   const notFound = join(dist, '404.html')
-  res.writeHead(404, { ...globalHeaders, 'Content-Type': 'text/html' })
+  res.writeHead(404, { ...headersFor(url), 'Content-Type': 'text/html' })
   res.end(existsSync(notFound) ? await readFile(notFound) : '<h1>404</h1>')
 })
 
 await new Promise((resolve) => server.listen(0, resolve))
 const base = `http://localhost:${server.address().port}`
 
+// The React pages. /docs/ is docsify and is checked separately below: it has
+// no React root, no site nav or footer, and no waitlist, so running it through
+// this loop would assert things that are true of every page except that one.
 const PAGES = [
   { url: '/', name: 'home', heading: /forgets/i },
   { url: '/releases/', name: 'releases', heading: /releases/i },
   { url: '/blog/', name: 'blog', heading: /kora/i },
-  { url: '/docs/', name: 'docs', heading: /documentation/i },
 ]
 const WIDTHS = [
   { name: 'desktop', width: 1440, height: 900 },
@@ -267,9 +294,250 @@ for (const page of PAGES) {
     await tab.waitForLoadState('networkidle')
     const path = new URL(tab.url()).pathname
     note(path === `/${label.toLowerCase()}/`, `nav "${label}" went to ${path}`)
-    const mounted = await tab.evaluate(() => (document.getElementById('root')?.childElementCount ?? 0) > 0)
-    note(mounted, `nav "${label}" landed on a page that did not mount`)
+    // Did the destination actually render anything?
+    //
+    // React fills #root and leaves it in place. docsify does not: it replaces
+    // that element with its own layout entirely, so "#root has children" is
+    // false on /docs/ even when the page is perfect. Asking whether the body
+    // has real text covers both without pretending they work the same way.
+    await tab
+      .waitForFunction(() => (document.body.innerText || '').trim().length > 400, undefined, {
+        timeout: 5000,
+      })
+      .catch(() => {})
+    const text = await tab.evaluate(() => (document.body.innerText || '').trim().length)
+    note(text > 400, `nav "${label}" landed on a page with almost no text (${text} chars)`)
   }
+  await context.close()
+}
+
+// The docs, which are docsify rather than React.
+//
+// This is the one page whose content arrives by fetching Markdown and
+// rendering it in the browser. That gives it failure modes nothing else on the
+// site has: the runtime blocked by the CSP, a Markdown file that 404s, or a
+// sidebar that renders but routes nowhere. All three leave a page that loads
+// successfully and is empty or broken, so they have to be clicked to be seen.
+{
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  const tab = await context.newPage()
+  const errors = []
+  tab.on('pageerror', (e) => errors.push(e.message))
+  tab.on('console', (m) => {
+    if (m.type() === 'error') errors.push(m.text())
+  })
+  tab.on('response', (r) => {
+    if (r.status() >= 400) errors.push(`${r.status()} for ${r.url().replace(base, '')}`)
+  })
+
+  await tab.goto(`${base}/docs/`, { waitUntil: 'networkidle' })
+  await tab.waitForTimeout(800)
+
+  note(errors.length === 0, `docs: console/network errors: ${errors.slice(0, 3).join(' | ')}`)
+  const csp = errors.find((e) => /Content Security Policy|Refused to/i.test(e))
+  note(!csp, `docs: blocked by CSP: ${csp}`)
+
+  // Did docsify actually render, or is the hand-written fallback still on
+  // screen? The fallback is deliberately good enough to be mistaken for a
+  // working page at a glance, so this asks for the marker docsify creates.
+  const rendered = await tab.evaluate(() => ({
+    hasSidebar: !!document.querySelector('.sidebar-nav'),
+    hasContent: !!document.querySelector('.markdown-section'),
+    h1: document.querySelector('.markdown-section h1')?.textContent?.trim() ?? '',
+    textLength: (document.body.innerText || '').trim().length,
+    links: document.querySelectorAll('.sidebar-nav a').length,
+  }))
+
+  note(rendered.hasContent, 'docs: docsify did not render - .markdown-section is absent')
+  note(rendered.hasSidebar, 'docs: the sidebar did not render')
+  note(rendered.links >= 5, `docs: sidebar has only ${rendered.links} links`)
+  note(rendered.textLength > 800, `docs: page has almost no text (${rendered.textLength} chars)`)
+  note(/kora/i.test(rendered.h1), `docs: unexpected h1 "${rendered.h1}"`)
+
+  // Routing. Clicking a sidebar entry has to actually load that document,
+  // rather than silently landing on docsify's own "not found" body - which is
+  // what a missing Markdown file produces, with no error anywhere.
+  {
+    const link = tab.locator('.sidebar-nav a:has-text("Quick start")').first()
+    if ((await link.count()) > 0) {
+      await link.click()
+      await tab.waitForTimeout(600)
+      const after = await tab.evaluate(() => ({
+        hash: location.hash,
+        h1: document.querySelector('.markdown-section h1')?.textContent?.trim() ?? '',
+        text: (document.querySelector('.markdown-section')?.innerText || '').trim(),
+      }))
+      note(after.hash.includes('quickstart'), `docs: quick start route is "${after.hash}"`)
+      note(/quick start/i.test(after.h1), `docs: quick start rendered h1 "${after.h1}"`)
+      note(
+        !/not found/i.test(after.h1),
+        'docs: quick start resolved to the not-found page - the Markdown file is missing',
+      )
+      note(after.text.length > 500, 'docs: quick start rendered almost no content')
+    } else {
+      failures.push('docs: no "Quick start" link in the sidebar')
+    }
+  }
+
+  // Code blocks are most of these docs, and Prism highlighting them is the
+  // part most likely to break quietly when the vendored bundle changes.
+  {
+    const code = await tab.evaluate(
+      () => document.querySelectorAll('.markdown-section pre code').length,
+    )
+    note(code > 0, 'docs: quick start has no rendered code blocks')
+  }
+
+  // A deep link, loaded cold. This is the case hash routing exists to protect:
+  // with history mode and a missing host rewrite it 404s, and only here.
+  {
+    await tab.goto(`${base}/docs/#/api`, { waitUntil: 'networkidle' })
+    await tab.waitForTimeout(800)
+    const h1 = await tab.evaluate(
+      () => document.querySelector('.markdown-section h1')?.textContent?.trim() ?? '',
+    )
+    note(/api/i.test(h1), `docs: cold-loading a deep link rendered h1 "${h1}"`)
+  }
+
+  // Search is a plugin with its own index, and it fails by finding nothing.
+  {
+    await tab.goto(`${base}/docs/`, { waitUntil: 'networkidle' })
+    await tab.waitForTimeout(600)
+    const input = tab.locator('.sidebar input[type="search"], .sidebar .search input').first()
+    if ((await input.count()) > 0) {
+      await input.fill('supersede')
+      await tab.waitForTimeout(700)
+      const hits = await tab.evaluate(
+        () => document.querySelectorAll('.results-panel .matching-post').length,
+      )
+      note(hits > 0, 'docs: searching for "supersede" returned nothing')
+    } else {
+      failures.push('docs: the search input did not render')
+    }
+  }
+
+  // No colour, measured after the cascade.
+  //
+  // scripts/palette.mjs enforces this everywhere else by scanning the built
+  // CSS, and deliberately skips docs/vendor/: docsify's stylesheet is
+  // third-party, is full of hue - an accent blue plus a six-colour Prism
+  // theme - and is vendored verbatim so upgrades stay a one-line change. What
+  // makes that skip safe is this check, which asks the browser for computed
+  // colours and so sees whether docs/theme.css actually won.
+  //
+  // Every route is visited, and search is left open, because the hue that
+  // survived the first pass of the theme was in a <mark> that only exists once
+  // a search has run.
+  {
+    const scan = () =>
+      tab.evaluate(() => {
+        const parse = (c) => {
+          const m = (c || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/)
+          return m ? [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]] : null
+        }
+        const out = new Set()
+        for (const el of document.querySelectorAll('*')) {
+          const style = getComputedStyle(el)
+          if (style.visibility === 'hidden' || style.display === 'none') continue
+          const box = el.getBoundingClientRect()
+          if (box.width < 1 || box.height < 1) continue
+          for (const prop of [
+            'color',
+            'backgroundColor',
+            'borderTopColor',
+            'borderBottomColor',
+            'borderLeftColor',
+            'fill',
+          ]) {
+            const v = parse(style[prop])
+            if (!v) continue
+            const [r, g, b, a] = v
+            if (a === 0) continue
+            if (r !== g || g !== b) {
+              out.add(`${prop}: ${style[prop]} on <${el.tagName.toLowerCase()}>`)
+            }
+          }
+        }
+        return [...out]
+      })
+
+    for (const route of ['#/', '#/quickstart', '#/api', '#/concepts', '#/operations']) {
+      await tab.goto(`${base}/docs/${route}`, { waitUntil: 'networkidle' })
+      await tab.waitForTimeout(700)
+      const hues = await scan()
+      note(hues.length === 0, `docs ${route}: colour on screen: ${hues.slice(0, 3).join(' | ')}`)
+    }
+
+    // And again with search results showing, which is markup no route renders
+    // on its own.
+    const input = tab.locator('.sidebar input[type="search"], .sidebar .search input').first()
+    if ((await input.count()) > 0) {
+      await input.fill('memory')
+      await tab.waitForTimeout(800)
+      const hues = await scan()
+      note(hues.length === 0, `docs search results: colour on screen: ${hues.slice(0, 3).join(' | ')}`)
+    }
+  }
+
+  // Narrow viewport.
+  //
+  // Everything above runs at 1440px, where the sidebar is docked and the
+  // content column is wide. A phone is a different layout: the sidebar
+  // collapses behind a toggle, and any element that cannot shrink pushes the
+  // page sideways. These docs are mostly reference tables, which is exactly
+  // the element that does not shrink - and a theme rule that broke this
+  // reproduced only on CI, because whether the widest table exceeds 390px
+  // depends on the font metrics of the machine rendering it.
+  {
+    const narrow = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const phone = await narrow.newPage()
+
+    for (const route of ['#/', '#/api', '#/configuration', '#/operations']) {
+      await phone.goto(`${base}/docs/${route}`, { waitUntil: 'networkidle' })
+      await phone.waitForTimeout(700)
+
+      // Real horizontal scroll, measured the way a thumb would produce it.
+      const slide = await phone.evaluate(() => {
+        window.scrollTo(9999, 0)
+        const x = window.scrollX
+        window.scrollTo(0, 0)
+        return x
+      })
+      note(slide === 0, `docs ${route} @390: page scrolls horizontally by ${slide}px`)
+
+      // A table wider than the screen is fine, as long as it scrolls inside
+      // its own box rather than taking the page with it.
+      const spill = await phone.evaluate(
+        (vw) =>
+          [...document.querySelectorAll('.markdown-section table')]
+            .map((el) => Math.round(el.getBoundingClientRect().right))
+            .filter((right) => right > vw + 1).length,
+        390,
+      )
+      note(spill === 0, `docs ${route} @390: ${spill} table(s) overflow the viewport`)
+    }
+
+    // The sidebar toggle is the only route to navigation on a phone.
+    await phone.goto(`${base}/docs/`, { waitUntil: 'networkidle' })
+    await phone.waitForTimeout(600)
+    const toggle = phone.locator('.sidebar-toggle').first()
+    if ((await toggle.count()) > 0) {
+      await toggle.click()
+      await phone.waitForTimeout(500)
+      const visible = await phone.evaluate(() => {
+        const el = document.querySelector('.sidebar')
+        if (!el) return false
+        const box = el.getBoundingClientRect()
+        return box.width > 0 && box.right > 0
+      })
+      note(visible, 'docs @390: the sidebar toggle did not reveal the navigation')
+    } else {
+      failures.push('docs @390: no sidebar toggle, so navigation is unreachable on a phone')
+    }
+
+    await narrow.close()
+  }
+
   await context.close()
 }
 
@@ -303,8 +571,9 @@ for (const page of PAGES) {
     )
   }
 
-  // Every page must offer the waitlist, since that is the site's one goal.
-  for (const path of ['/releases/', '/blog/', '/docs/']) {
+  // Every React page must offer the waitlist, since that is the site's one
+  // goal. /docs/ is excluded: it is docsify, and its job is documentation.
+  for (const path of ['/releases/', '/blog/']) {
     await tab.goto(`${base}${path}`, { waitUntil: 'networkidle' })
     note(
       (await tab.locator('input[type="email"]').count()) > 0,

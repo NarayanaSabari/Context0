@@ -31,6 +31,8 @@ const TYPES = {
   '.css': 'text/css',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  // The docs are Markdown fetched at runtime by docsify.
+  '.md': 'text/markdown',
   '.xml': 'application/xml',
   '.txt': 'text/plain',
 }
@@ -85,12 +87,18 @@ for (const [engineName, engine] of [
       await tab.waitForTimeout(600)
       const where = `${engineName} ${path} @${width}`
 
+      // "Did the page render?" has two shapes here. React fills #root and
+      // leaves it in place; docsify, which serves /docs/, replaces that element
+      // with its own layout, so #root is gone by the time this runs even when
+      // the page is perfect. Check for the marker each one actually leaves.
       const info = await tab.evaluate(() => ({
         text: (document.body.innerText || '').trim().length,
         h1: document.querySelector('h1')?.textContent?.trim() ?? '',
-        mounted: (document.getElementById('root')?.childElementCount ?? 0) > 0,
+        mounted:
+          (document.getElementById('root')?.childElementCount ?? 0) > 0 ||
+          !!document.querySelector('.markdown-section'),
       }))
-      note(info.mounted, `${where}: React did not mount`)
+      note(info.mounted, `${where}: the page did not render`)
       note(info.text > 400, `${where}: only ${info.text} chars of text`)
       note(info.h1.length > 0, `${where}: no h1 text`)
 

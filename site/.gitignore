@@ -2,3 +2,8 @@ node_modules/
 dist/
 .vite/
 .palette-shots/
+
+# Vendored at build time by scripts/sync-docsify.mjs from node_modules.
+# Committing it would mean the docsify version lived in two places, and the
+# copy nobody updates is the one that ships.
+public/docs/vendor/

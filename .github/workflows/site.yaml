@@ -62,6 +62,15 @@ jobs:
         working-directory: site
         run: node scripts/check-build.mjs
 
+      # The docs are docsify: Markdown fetched and rendered in the browser
+      # rather than built. So the build cannot tell whether a sidebar entry
+      # points at a file that exists, whether the vendored runtime was copied,
+      # or whether something crept back onto a CDN that the CSP will block in
+      # production only.
+      - name: Check the docs
+        working-directory: site
+        run: node scripts/check-docs.mjs
+
       - name: Install browsers
         working-directory: site
         run: pnpm exec playwright install --with-deps chromium webkit firefox
