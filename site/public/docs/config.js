@@ -2,8 +2,13 @@
 //
 // In a separate file rather than an inline <script>, which is what docsify's
 // quickstart shows: public/_headers sets a Content-Security-Policy with no
-// 'unsafe-inline' in script-src, so an inline config block would be dropped by
-// the browser and the docs would render as a blank page in production only.
+// 'unsafe-inline' in script-src, so an inline config block is dropped by the
+// browser and docsify never boots - leaving the pre-JavaScript fallback on
+// screen, in production only.
+//
+// Verified rather than assumed: inlining this file under the real CSP gives
+// "Executing inline script violates the following Content Security Policy
+// directive 'script-src 'self''", no .markdown-section, and zero sidebar links.
 
 window.$docsify = {
   // docsify defaults this to '#app'. The rest of the site renders into '#root',
@@ -30,9 +35,13 @@ window.$docsify = {
   // unmatched path under /docs/ back to this index.html. That rewrite is a
   // piece of hosting configuration with no local equivalent, so a broken one
   // fails only in production, and only on a hard refresh of a deep link -
-  // the exact case nobody clicks through before deploying. Hash routing has
-  // no such failure mode: the server only ever serves /docs/index.html, and
-  // the fragment never reaches it.
+  // the exact case nobody clicks through before deploying.
+  //
+  // Measured against a server that mirrors Cloudflare Pages (static files, no
+  // SPA rewrite): /docs/#/api cold-loads HTTP 200 and renders "API reference",
+  // while history mode's /docs/api returns HTTP 404. Hash routing has no such
+  // failure mode - the server only ever serves /docs/index.html, and the
+  // fragment never reaches it.
   routerMode: 'hash',
 
   loadSidebar: true,
