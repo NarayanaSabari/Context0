@@ -34,14 +34,23 @@
 # Environment:
 #   NS         namespace (default: kora)
 #   PG_POD     postgres pod (default: postgres-age-0)
+#   DB         database name (default: kora)
+#   PG_USER    postgres role (default: kora)
+#
+# DB and PG_USER are separate knobs because the rename to Kora left them free
+# to disagree. An operator upgrading from Context0 may keep the old names by
+# setting postgres.user and postgres.database on the chart -- the documented
+# alternative to running scripts/migrate_rename.sh -- and this script has to be
+# usable against that deployment. The role used to be hardcoded, so it was not.
 set -euo pipefail
 
 NS="${NS:-kora}"
 PG_POD="${PG_POD:-postgres-age-0}"
 DB="${DB:-kora}"
+PG_USER="${PG_USER:-kora}"
 
 pg() { kubectl exec -n "$NS" "$PG_POD" -- "$@"; }
-psql_q() { pg psql -U kora -d "$1" -tAc "$2"; }
+psql_q() { pg psql -U "$PG_USER" -d "$1" -tAc "$2"; }
 
 # The dump is streamed to the caller rather than written inside the pod: the
 # container has a read-only root filesystem apart from /tmp, and /tmp is
@@ -50,7 +59,7 @@ cmd_dump() {
   local out="${1:-kora-$(date -u +%Y%m%dT%H%M%SZ).dump}"
   echo "Dumping $DB from $NS/$PG_POD..." >&2
   kubectl exec -n "$NS" "$PG_POD" -- \
-    pg_dump -U kora -d "$DB" -Fc --no-owner --no-acl > "$out"
+    pg_dump -U "$PG_USER" -d "$DB" -Fc --no-owner --no-acl > "$out"
   local size
   size=$(wc -c < "$out" | tr -d ' ')
   if [[ "$size" -lt 1024 ]]; then
@@ -72,7 +81,7 @@ cmd_restore() {
   psql_q postgres "DROP DATABASE IF EXISTS $target" >/dev/null
   psql_q postgres "CREATE DATABASE $target" >/dev/null
   kubectl exec -i -n "$NS" "$PG_POD" -- \
-    pg_restore -U kora -d "$target" --no-owner --no-acl < "$file" 2>&1 \
+    pg_restore -U "$PG_USER" -d "$target" --no-owner --no-acl < "$file" 2>&1 \
     | grep -v '^pg_restore: warning: errors ignored' || true
   echo "$target"
 }
