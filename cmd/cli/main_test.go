@@ -414,3 +414,64 @@ func TestUnrelatedEnvVarsDoNotWarn(t *testing.T) {
 		t.Errorf("an unrelated variable was reported as renamed.\nstderr: %s", stderr)
 	}
 }
+
+// TestOutOfRangeNumericFlagsAreRejected covers a silent wrap.
+//
+// --top-k and --depth are parsed with flag.Int, which yields a 64-bit int, and
+// were converted straight to the int32 the protobuf field wants. A value above
+// 2^31-1 wrapped: `--top-k 3000000000` became -1294967296 and was sent to the
+// engine as a negative limit. Nothing rejected it, so the user got an empty or
+// nonsensical result set with no indication that their input was the problem.
+//
+// The command must fail loudly instead, and say which flag was wrong. These
+// run without a server on purpose: validation happens before the request, so a
+// rejection here proves it is the flag being caught rather than the connection.
+func TestOutOfRangeNumericFlagsAreRejected(t *testing.T) {
+	bin := cliBinary(t)
+
+	cases := []struct {
+		args []string
+		flag string
+	}{
+		{[]string{"query", "anything", "--top-k", "3000000000"}, "top-k"},
+		{[]string{"query", "anything", "--top-k", "2147483648"}, "top-k"},
+		{[]string{"query", "anything", "--top-k", "-1"}, "top-k"},
+		{[]string{"graph", "some-id", "--depth", "4294967296"}, "depth"},
+		{[]string{"graph", "some-id", "--depth", "-5"}, "depth"},
+	}
+
+	for _, tc := range cases {
+		name := strings.Join(tc.args, " ")
+		_, stderr, code := run(t, bin, nil, tc.args...)
+
+		if code == 0 {
+			t.Errorf("`kora %s` exited 0; the value does not fit in the wire field", name)
+		}
+		if !strings.Contains(stderr, tc.flag) {
+			t.Errorf("`kora %s` failed without naming --%s: %q", name, tc.flag, stderr)
+		}
+	}
+}
+
+// TestInRangeNumericFlagsAreAccepted: the bounds check must not reject values
+// anyone would actually type. These reach the network and fail there, which is
+// a different error - what matters is that the flag itself was not refused.
+func TestInRangeNumericFlagsAreAccepted(t *testing.T) {
+	bin := cliBinary(t)
+
+	for _, args := range [][]string{
+		{"query", "anything", "--top-k", "5"},
+		{"query", "anything", "--top-k", "1000"},
+		{"query", "anything", "--top-k", "2147483647"},
+		{"graph", "some-id", "--depth", "2"},
+	} {
+		name := strings.Join(args, " ")
+		_, stderr, _ := run(t, bin, nil, args...)
+
+		for _, complaint := range []string{"must be at most", "must not be negative"} {
+			if strings.Contains(stderr, complaint) {
+				t.Errorf("`kora %s` was rejected as out of range: %q", name, stderr)
+			}
+		}
+	}
+}

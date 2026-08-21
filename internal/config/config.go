@@ -138,6 +138,11 @@ func Load() Config {
 // project was renamed to Kora.
 const renamedEnvPrefix = "CONTEXT0_"
 
+// maxEmbeddingDim is the largest vector dimension accepted from
+// KORA_EMBEDDING_DIM. It mirrors the cap in internal/embedding, which needs
+// the dimension to fit safely in a uint32; see the note in Validate.
+const maxEmbeddingDim = 65536
+
 // checkRenamedEnv records any CONTEXT0_* variable still present in the
 // environment as a configuration problem.
 //
@@ -255,9 +260,22 @@ func (c Config) Validate() error {
 	}
 
 	// A negative dimension would be handed to the pgvector column definition.
+	//
+	// The upper bound matters for a different reason: the bag-of-words
+	// embedder hashes into the vector with `% uint32(dim)`, and a dim that is
+	// an exact multiple of 2^32 converts to uint32(0), panicking with a
+	// divide-by-zero on the first text embedded. Checking only for negatives
+	// let KORA_EMBEDDING_DIM=4294967296 start cleanly and crash on first use.
+	//
+	// 65536 is far above any real model - the largest embeddings in common use
+	// are 3072 - so nothing legitimate is refused here.
 	if c.EmbeddingDim < 0 {
 		problems = append(problems,
 			fmt.Sprintf("KORA_EMBEDDING_DIM=%d must not be negative", c.EmbeddingDim))
+	} else if c.EmbeddingDim > maxEmbeddingDim {
+		problems = append(problems,
+			fmt.Sprintf("KORA_EMBEDDING_DIM=%d exceeds the maximum of %d",
+				c.EmbeddingDim, maxEmbeddingDim))
 	}
 
 	if len(problems) == 0 {

@@ -61,35 +61,41 @@ func main() {
 	if v := os.Getenv("CONSOLIDATION_DECAY_HALF_LIFE_DAYS"); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
 		if err != nil {
-			fatal("CONSOLIDATION_DECAY_HALF_LIFE_DAYS is not a number: "+v, err)
+			fatal("CONSOLIDATION_DECAY_HALF_LIFE_DAYS is not a number", err,
+				slog.String("value", v))
 		}
 		if f <= 0 {
-			fatalMsg("CONSOLIDATION_DECAY_HALF_LIFE_DAYS must be positive, got " + v)
+			fatalMsg("CONSOLIDATION_DECAY_HALF_LIFE_DAYS must be positive",
+				slog.String("value", v))
 		}
 		consolCfg.DecayHalfLifeDays = f
 	}
 	if v := os.Getenv("CONSOLIDATION_STALE_THRESHOLD"); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
 		if err != nil {
-			fatal("CONSOLIDATION_STALE_THRESHOLD is not a number: "+v, err)
+			fatal("CONSOLIDATION_STALE_THRESHOLD is not a number", err,
+				slog.String("value", v))
 		}
 		// Decay scores live in [0, 1]. A threshold above 1 prunes every
 		// unaccessed memory past the age gate; a negative one prunes none,
 		// which silently disables maintenance.
 		if f < 0 || f > 1 {
-			fatalMsg("CONSOLIDATION_STALE_THRESHOLD must be within [0, 1], got " + v)
+			fatalMsg("CONSOLIDATION_STALE_THRESHOLD must be within [0, 1]",
+				slog.String("value", v))
 		}
 		consolCfg.StaleThreshold = f
 	}
 	if v := os.Getenv("CONSOLIDATION_PRUNE_AGE_DAYS"); v != "" {
 		i, err := strconv.Atoi(v)
 		if err != nil {
-			fatal("CONSOLIDATION_PRUNE_AGE_DAYS is not an integer: "+v, err)
+			fatal("CONSOLIDATION_PRUNE_AGE_DAYS is not an integer", err,
+				slog.String("value", v))
 		}
 		// Negative means every memory is old enough to prune, which turns a
 		// maintenance job into a deletion job.
 		if i < 0 {
-			fatalMsg("CONSOLIDATION_PRUNE_AGE_DAYS must not be negative, got " + v)
+			fatalMsg("CONSOLIDATION_PRUNE_AGE_DAYS must not be negative",
+				slog.String("value", v))
 		}
 		consolCfg.PruneAgeDays = i
 	}
@@ -152,13 +158,20 @@ func main() {
 
 // fatal logs a structured error and exits non-zero. See the equivalent in
 // cmd/server for why slog has no Fatal of its own.
-func fatal(msg string, err error) {
-	slog.Error(msg, slog.Any("error", err))
+//
+// The offending value goes in attrs as a slog attribute rather than being
+// concatenated into msg. That keeps msg a constant, which matters for two
+// reasons: a log aggregator can group on it instead of seeing every bad value
+// as a distinct message, and an environment variable containing a newline
+// cannot forge a second log line by being spliced into the text.
+func fatal(msg string, err error, attrs ...slog.Attr) {
+	slog.LogAttrs(context.Background(), slog.LevelError, msg,
+		append([]slog.Attr{slog.Any("error", err)}, attrs...)...)
 	os.Exit(1)
 }
 
 // fatalMsg reports a configuration value that parsed but is out of range.
-func fatalMsg(msg string) {
-	slog.Error(msg)
+func fatalMsg(msg string, attrs ...slog.Attr) {
+	slog.LogAttrs(context.Background(), slog.LevelError, msg, attrs...)
 	os.Exit(1)
 }

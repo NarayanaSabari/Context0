@@ -26,6 +26,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -141,6 +142,33 @@ func cmdStore(ctx context.Context, client pb.KoraClient, projectID string, args 
 	printJSON(resp.Memory)
 }
 
+// int32Flag converts a flag value to the int32 the protobuf field wants,
+// rejecting anything that would not survive the conversion.
+//
+// `flag.Int` yields a platform int, 64-bit everywhere this runs, and a plain
+// int32() conversion of an out-of-range value wraps silently: `--top-k
+// 3000000000` becomes -1294967296 and is sent to the server as a negative
+// limit. Nothing in the pipeline would report that as a mistake, so the user
+// sees an empty or nonsensical result set and no explanation.
+//
+// Negatives are refused for the same reason: they are always a typo, and a
+// negative limit or traversal depth has no meaning.
+//
+// The conversion sits inside the bounds check rather than after it because
+// fatalf exits the process, which static analysis cannot see: written the
+// other way round, the return looks reachable with v out of range and gosec
+// reports the very overflow this function exists to prevent.
+func int32Flag(name string, v int) int32 {
+	if v >= 0 && v <= math.MaxInt32 {
+		return int32(v)
+	}
+	if v < 0 {
+		fatalf("--%s must not be negative, got %d", name, v)
+	}
+	fatalf("--%s must be at most %d, got %d", name, math.MaxInt32, v)
+	return 0 // unreachable: fatalf exits.
+}
+
 // cmdQuery searches memories by a natural-language query. The first positional
 // argument is the query text. Optional flags: --top-k (max results, default 5),
 // --type (filter by memory type, may be repeated).
@@ -168,7 +196,7 @@ func cmdQuery(ctx context.Context, client pb.KoraClient, projectID string, args 
 	resp, err := client.Query(ctx, &pb.QueryRequest{
 		Query:     query,
 		ProjectId: projectID,
-		TopK:      int32(*topK),
+		TopK:      int32Flag("top-k", *topK),
 		Types:     types,
 	})
 	if err != nil {
@@ -261,7 +289,7 @@ func cmdGraph(ctx context.Context, client pb.KoraClient, args []string) {
 
 	resp, err := client.GetGraph(ctx, &pb.GetGraphRequest{
 		CenterId: centerID,
-		Depth:    int32(*depth),
+		Depth:    int32Flag("depth", *depth),
 	})
 	if err != nil {
 		fatalf("graph failed: %v", err)
