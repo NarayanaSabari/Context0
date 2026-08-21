@@ -35,13 +35,23 @@ type BagOfWordsEmbedder struct {
 
 // maxDim caps the vector dimension this embedder will accept.
 //
-// KORA_EMBEDDING_DIM is operator-supplied and was only checked for being
-// negative, so `KORA_EMBEDDING_DIM=4294967296` passed validation, started the
-// server cleanly, and took it down on the first memory stored.
+// Without it, a dim that is an exact multiple of 2^32 converts to uint32(0)
+// and the hashing below panics with a divide-by-zero. KORA_EMBEDDING_DIM is
+// operator-supplied and was validated only for being negative, so
+// NewBagOfWordsEmbedder(4294967296).Embed(...) panicked.
+//
+// In the server that panic was unreachable: cmd/server sizes the pgvector
+// column from Dimension() during InitSchema, before it serves anything, and
+// Postgres rejects a width of 4294967296 as out of range for int4. No
+// dimension pgvector will accept (1..16000) can wrap, since the smallest
+// wrapping value is already 2^32. The cap is still worth having - it turns a
+// confusing SQLSTATE 22003 from the database into a clear error naming the
+// variable, and it stops a future caller with no column in the way (a test, a
+// re-embedding tool) from finding the panic the hard way.
 //
 // 65536 is far above any real embedding model - the largest in common use is
-// 3072 - so the cap refuses nothing legitimate, and it keeps the dimension
-// comfortably inside uint32.
+// 3072, and pgvector itself stops at 16000 - so the cap refuses nothing
+// legitimate.
 const maxDim = 65536
 
 // NewBagOfWordsEmbedder creates an embedder with the given vector dimension.

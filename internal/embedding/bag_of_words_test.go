@@ -85,12 +85,19 @@ func cosine(a, b []float32) float64 {
 
 // TestEmbedSurvivesDimensionsThatOverflowUint32 guards a divide-by-zero panic.
 //
-// Embed hashes tokens into the vector with `fnvHash(token) % uint32(e.dim)`.
-// dim is an int, so a value that is an exact multiple of 2^32 converts to
-// uint32(0) and the modulo panics. That is reachable from configuration:
-// KORA_EMBEDDING_DIM is operator-supplied, and validation only rejected
-// negatives, so 4294967296 started the server cleanly and brought it down on
-// the first memory stored.
+// Embed hashes tokens into the vector with `fnvHash(token) % dim`, and dim was
+// an int converted to uint32 in the loop. A value that is an exact multiple of
+// 2^32 converts to uint32(0) and the modulo panics.
+//
+// Scope, stated honestly: this was not reachable through the running server.
+// cmd/server sizes the pgvector column from Dimension() during InitSchema,
+// before serving, and Postgres rejects a width of 4294967296 as out of range
+// for int4, so the process exits first. No dimension pgvector accepts
+// (1..16000) can wrap - the smallest wrapping value is 2^32 itself.
+//
+// The test is still worth keeping: this package's API is callable from
+// anywhere in the module, and a caller with no Postgres column in the way -
+// a test, a re-embedding tool, a benchmark - would hit the panic directly.
 //
 // The values below are the ones that actually wrap. 4294967296 is 2^32 and
 // 8589934592 is 2^33; both convert to zero. 4294967297 converts to 1, which
