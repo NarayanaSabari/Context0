@@ -1,0 +1,9 @@
+# pnpm asks, per dependency, whether its install scripts may run.
+#
+# docsify's is opencollective-postinstall, which prints a funding message.
+# It is not needed to build anything, and a postinstall script that runs in CI
+# is a supply-chain surface for no benefit, so it stays off. The vendored
+# runtime is copied out of node_modules by scripts/sync-docsify.mjs, which
+# needs only the package's files.
+allowBuilds:
+  docsify: false

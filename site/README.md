@@ -12,7 +12,7 @@ product.
 | URL | Purpose |
 |---|---|
 | `/` | Overview and waitlist signup. Deliberately not a product tour: Kora is pre-release, so the page explains the idea and asks for an email. |
-| `/docs/` | The concepts that will not change, plus links into the repository. Real documentation arrives with the first release. |
+| `/docs/` | The documentation, built with [docsify](https://docsify.js.org/). Markdown in `public/docs/`, rendered in the browser. See [DOCS.md](DOCS.md) before editing it. |
 | `/blog/` | Empty until the first post. Add entries to `POSTS` in `src/pages/Blog.tsx` and the empty state disappears. |
 | `/releases/` | Empty until the first release, with the versioning policy written down. |
 | `404.html` | Served by Pages for any unmatched path, so a mistyped URL keeps the site's design and offers a way back. |
@@ -20,13 +20,18 @@ product.
 These are real HTML entry points, not client-side routes. `/blog/` works on
 first byte, survives a hard refresh, and needs no 404 redirect hack.
 
-Every page is **prerendered** at build time by `scripts/prerender.mjs`: the same
-React components are rendered to static HTML and baked into each file, and the
-client hydrates that markup rather than replacing it. Without this the pages
+Every React page is **prerendered** at build time by `scripts/prerender.mjs`:
+the same components are rendered to static HTML and baked into each file, and
+the client hydrates that markup rather than replacing it. Without this the pages
 were an empty `<div id="root">` until JavaScript ran, which meant a visitor with
 scripts blocked saw a blank screen and a crawler that does not execute
 JavaScript indexed nothing but the `<head>`. The home page went from 0 to about
 1,900 characters of readable text with JavaScript disabled.
+
+`/docs/` is the exception, and is not React at all. It is docsify, which fetches
+Markdown and renders it in the browser, so it cannot be prerendered; it carries
+hand-written fallback markup instead, and is verified by its own checks. The
+reasoning is in [DOCS.md](DOCS.md).
 
 ## Local development
 
@@ -61,10 +66,11 @@ secret key is the wrong provider for a static site.
 
 ```bash
 pnpm check        # typecheck, build, inspect output, drive it in a browser, audit
+pnpm docs        # just the /docs/ checks, when that is all you touched
 pnpm shots        # build and write screenshots to .shots/
 ```
 
-Three layers, because they catch different things:
+Several layers, because they catch different things:
 
 - `scripts/check-build.mjs` reads the emitted `dist/`. It catches a nav link to
   a page that was never built, a missing `CNAME` (which would silently drop the
@@ -90,6 +96,13 @@ Three layers, because they catch different things:
   Instrument Serif fell back to Georgia; metric-adjusted fallback faces in
   `index.css` brought it to 0.
 
+- `scripts/check-docs.mjs` covers `/docs/`, which the other checks cannot see
+  into: docsify renders Markdown at runtime, so a sidebar entry pointing at a
+  file that does not exist produces docsify's "not found" body with no error
+  anywhere. It also catches a missing vendored runtime, a script that crept back
+  onto a CDN (which the CSP blocks in production only), and the no-JavaScript
+  fallback being emptied.
+
 `VERIFICATION.md` records what each check caught, with before-and-after numbers
 and the mutation tests proving each one fails when its fix is reverted.
 
@@ -98,7 +111,7 @@ and the mutation tests proving each one fails when its fix is reverted.
   down, or rejecting. The rule it enforces: never show success for an address
   that did not arrive.
 
-All five run in CI on every pull request that touches `site/`.
+All six run in CI on every pull request that touches `site/`.
 
 ```bash
 pnpm links        # do the outbound GitHub links still resolve?

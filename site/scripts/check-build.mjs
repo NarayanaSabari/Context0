@@ -43,11 +43,14 @@ const ORIGIN = `https://${DOMAIN}`
 // Every page the site is supposed to publish, and the path it must be
 // reachable at. A page silently missing from the Rollup input would otherwise
 // only be noticed by a visitor hitting a 404.
+//
+// /docs/ is not here. It is docsify rather than a React page, so the
+// prerender and hydration checks below do not apply to it, and it is verified
+// separately by scripts/check-docs.mjs.
 const PAGES = [
   { path: 'index.html', url: '/', title: /kora/ },
   { path: 'releases/index.html', url: '/releases/', title: /Releases/ },
   { path: 'blog/index.html', url: '/blog/', title: /Blog/ },
-  { path: 'docs/index.html', url: '/docs/', title: /Docs/ },
 ]
 
 // The 404 is checked separately: Pages serves it for unmatched paths, so it
@@ -232,7 +235,11 @@ for (const page of PAGES) {
   if (existsSync(sitemapPath)) {
     const sitemap = readFileSync(sitemapPath, 'utf8')
     const listed = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1])
-    const expected = PAGES.map((p) => `${ORIGIN}${p.url}`)
+    // /docs/ is a published URL like any other, and belongs in the sitemap.
+    // It is not in PAGES because it is docsify rather than a React page, so it
+    // is added back here: leaving it out would have this check demand its
+    // removal from the sitemap and quietly deindex the documentation.
+    const expected = [...PAGES.map((p) => `${ORIGIN}${p.url}`), `${ORIGIN}/docs/`]
 
     for (const url of listed) {
       check(expected.includes(url), `sitemap lists ${url}, which is not a page of this site`)

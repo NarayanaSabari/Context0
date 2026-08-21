@@ -10,12 +10,17 @@ const here = dirname(fileURLToPath(import.meta.url))
 //
 // GitHub Pages serves static files: a client-side router would need the
 // 404.html redirect hack to survive a hard refresh on /blog, and a visitor
-// landing there would get a flash of the wrong page. Four real HTML entry
-// points means /blog/ and /docs/ are genuine URLs that work on first byte,
-// respond correctly to a crawler, and never depend on JavaScript to route.
+// landing there would get a flash of the wrong page. Real HTML entry points
+// mean /blog/ and /releases/ are genuine URLs that work on first byte, respond
+// correctly to a crawler, and never depend on JavaScript to route.
 //
 // Each page still shares components and CSS through the normal import graph,
 // so this costs nothing in duplication.
+//
+// /docs/ is deliberately absent from this list. It is docsify, which renders
+// Markdown in the browser, and it lives in public/docs/ as static files that
+// vite copies verbatim. Adding it here would have Rollup try to bundle a page
+// that is not part of the React app at all.
 export default defineConfig({
   // Served from the apex of its own subdomain, so assets resolve from '/'.
   base: '/',
@@ -26,7 +31,6 @@ export default defineConfig({
         main: resolve(here, 'index.html'),
         releases: resolve(here, 'releases/index.html'),
         blog: resolve(here, 'blog/index.html'),
-        docs: resolve(here, 'docs/index.html'),
         // GitHub Pages serves dist/404.html for any unmatched path.
         404: resolve(here, '404.html'),
       },

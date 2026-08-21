@@ -5,20 +5,22 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node scripts/prerender.mjs",
+    "build": "tsc && node scripts/sync-docsify.mjs && vite build && node scripts/prerender.mjs",
     "preview": "vite preview",
-    "check": "tsc --noEmit && pnpm build && node scripts/palette.mjs && node scripts/check-build.mjs && node scripts/verify-site.mjs && node scripts/audit.mjs && node scripts/cross-browser.mjs && node scripts/waitlist.mjs",
+    "check": "tsc --noEmit && pnpm build && node scripts/palette.mjs && node scripts/check-build.mjs && node scripts/check-docs.mjs && node scripts/verify-site.mjs && node scripts/audit.mjs && node scripts/cross-browser.mjs && node scripts/waitlist.mjs",
     "shots": "pnpm build && node scripts/verify-site.mjs --shots",
     "og": "node scripts/make-og.mjs",
     "links": "node scripts/check-links.mjs",
     "waitlist": "node scripts/waitlist.mjs",
-    "archive": "node scripts/check-archive.mjs"
+    "archive": "node scripts/check-archive.mjs",
+    "docs": "node scripts/check-docs.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "docsify": "5.0.0",
     "playwright": "^1.62.1",
     "tailwindcss": "^4.2.2",
     "typescript": "~5.9.3",

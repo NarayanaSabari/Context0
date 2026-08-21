@@ -30,7 +30,6 @@ const TARGETS = {
   main: 'index.html',
   releases: 'releases/index.html',
   blog: 'blog/index.html',
-  docs: 'docs/index.html',
   '404': '404.html',
 }
 

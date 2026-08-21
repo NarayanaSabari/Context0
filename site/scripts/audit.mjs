@@ -23,6 +23,8 @@ const TYPES = {
   '.css': 'text/css',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  // The docs are Markdown fetched at runtime by docsify.
+  '.md': 'text/markdown',
 }
 
 const server = createServer(async (req, res) => {
@@ -43,6 +45,9 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, r))
 const base = `http://localhost:${server.address().port}`
 
+// Every page the site publishes. /docs/ is included deliberately: it is
+// docsify rather than React, which makes the no-JavaScript check below more
+// important there, not less.
 const PAGES = ['/', '/releases/', '/blog/', '/docs/']
 const findings = []
 const report = (severity, message) => findings.push({ severity, message })
@@ -51,10 +56,14 @@ const browser = await chromium.launch()
 
 // 1. Without JavaScript.
 //
-// Each page is a React root, so with scripts blocked the body is empty. Social
-// crawlers only read <head>, so previews survive, but a search engine has to
-// render the page to see any content at all, and a visitor with JS blocked
-// sees a blank screen.
+// Each React page is an empty root until it hydrates, so without prerendering
+// the body is blank. Social crawlers only read <head>, so previews survive,
+// but a search engine has to render the page to see any content at all, and a
+// visitor with JS blocked sees a blank screen.
+//
+// /docs/ cannot be prerendered - docsify fetches and renders Markdown in the
+// browser - so it carries hand-written fallback markup inside #root instead.
+// This check is what stops that fallback being quietly deleted.
 {
   const context = await browser.newContext({ javaScriptEnabled: false })
   const tab = await context.newPage()

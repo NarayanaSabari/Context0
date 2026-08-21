@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <title>Docs - kora</title>
+    <meta
+      name="description"
+      content="Documentation for kora, the open-source memory engine for AI agents: install it, store and query memories, and understand how the graph decides what matters."
+    />
+    <link rel="canonical" href="https://kora.sabarinarayana.com/docs/" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="kora" />
+    <meta property="og:title" content="Docs - kora" />
+    <meta
+      property="og:description"
+      content="Install kora, store and query memories, and understand how the graph decides what matters."
+    />
+    <meta property="og:url" content="https://kora.sabarinarayana.com/docs/" />
+    <meta property="og:image" content="https://kora.sabarinarayana.com/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Docs - kora" />
+    <meta
+      name="twitter:description"
+      content="Install kora, store and query memories, and understand how the graph decides what matters."
+    />
+    <meta name="twitter:image" content="https://kora.sabarinarayana.com/og.png" />
+    <meta name="theme-color" content="#f7f7f7" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- docsify's stylesheet, then ours. Ours only overrides variables and a
+         handful of rules, so the order matters: swapping it silently reverts
+         the docs to docsify's default theme, which is the one thing this
+         site's palette check exists to prevent. -->
+    <link rel="stylesheet" href="/docs/vendor/docsify-core.min.css" />
+    <link rel="stylesheet" href="/docs/theme.css" />
+  </head>
+  <body>
+    <!-- docsify renders into this element at runtime, replacing everything
+         inside it.
+         What is written here is therefore the pre-JavaScript state, and it is
+         real content rather than a spinner on purpose: a crawler that does not
+         execute scripts, a reader with scripts blocked, and anyone hitting this
+         page while the bundle is still in flight all see a usable page that
+         says what kora is and links to the same material in plain Markdown.
+         The rest of this site is prerendered to achieve the same thing; docsify
+         renders Markdown in the browser and cannot be, so the fallback is
+         written by hand and checked by scripts/check-build.mjs. -->
+    <div id="root">
+      <main>
+        <h1>kora documentation</h1>
+
+        <p>
+          kora is an open-source memory engine for AI agents. It stores what an agent learns as
+          a graph of typed memories, retrieves them by meaning rather than by keyword, and runs
+          entirely on infrastructure you control. It is Apache 2.0 licensed, built on PostgreSQL
+          with Apache AGE and pgvector, and deployed with a Helm chart.
+        </p>
+
+        <p>
+          These pages are rendered from Markdown in your browser. If you are reading this
+          paragraph, that has not happened yet - either scripts are blocked, or the page is
+          still loading. Every document below also exists as plain Markdown in the repository
+          and needs no JavaScript at all:
+        </p>
+
+        <ul>
+          <li>
+            <a href="https://github.com/NarayanaSabari/Kora#readme" rel="noreferrer"
+              >Introduction, install, and quick start</a
+            >
+            - what kora does, how to run it with Helm, Docker Compose, or kind, and the first
+            memory you store.
+          </li>
+          <li>
+            <a
+              href="https://github.com/NarayanaSabari/Kora/blob/main/ARCHITECTURE.md"
+              rel="noreferrer"
+              >Architecture</a
+            >
+            - the ingest pipeline, the hybrid query path across graph and vector search, the
+            consolidation job, and how the pieces sit in a cluster.
+          </li>
+          <li>
+            <a
+              href="https://github.com/NarayanaSabari/Kora/blob/main/docs/DEVELOPMENT.md"
+              rel="noreferrer"
+              >Development workflow</a
+            >
+            - building from source, running the tests, the branching model, and how a release
+            is cut.
+          </li>
+          <li>
+            <a
+              href="https://github.com/NarayanaSabari/Kora/blob/main/CONTRIBUTING.md"
+              rel="noreferrer"
+              >Contributing</a
+            >
+            - setting up an environment and opening a pull request.
+          </li>
+          <li>
+            <a href="https://github.com/NarayanaSabari/Kora" rel="noreferrer">The repository</a>
+            - the source, the issues, and the design discussions, all public while it is being
+            built.
+          </li>
+        </ul>
+
+        <h2>The ideas</h2>
+
+        <p>
+          Four terms cover most of how kora thinks about memory, and they are stable even while
+          the API is not.
+        </p>
+
+        <dl>
+          <dt>Memory</dt>
+          <dd>
+            A single thing worth remembering: a fact, a preference, or something that happened.
+            Extracted from conversation rather than written by hand, and typed as semantic,
+            episodic, or procedural.
+          </dd>
+
+          <dt>Relationship</dt>
+          <dd>
+            A typed, weighted, directed link between two memories. One memory can supersede
+            another, be caused by another, or simply relate to it.
+          </dd>
+
+          <dt>Supersede</dt>
+          <dd>
+            What happens when new information contradicts old. The old memory is not deleted, it
+            is marked as no longer current, so the history stays queryable and you can ask what
+            was believed and when.
+          </dd>
+
+          <dt>Profile</dt>
+          <dd>
+            The accumulated picture of a user or project: the stable facts and preferences, and
+            what has been happening recently.
+          </dd>
+        </dl>
+
+        <p>
+          <a href="/">Back to kora.sabarinarayana.com</a>
+        </p>
+      </main>
+    </div>
+
+    <!-- Configuration lives in its own file rather than an inline <script>,
+         because public/_headers sets a CSP without 'unsafe-inline'. An inline
+         config block is exactly what docsify's quickstart tells you to write,
+         and it would be silently dropped by the browser in production. -->
+    <script src="/docs/config.js"></script>
+    <script src="/docs/vendor/docsify.min.js"></script>
+    <script src="/docs/vendor/search.min.js"></script>
+  </body>
+</html>

@@ -42,3 +42,27 @@
 # stale after a deploy.
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# The docs are docsify, and docsify styles inline.
+#
+# Two places do it, both unavoidable without forking the library: the search
+# plugin injects a <style> element at runtime, and the loading progress bar
+# animates by assigning to element.style.width. Both are blocked by the global
+# `style-src 'self'` above, and the failure is production-only - locally no
+# headers are applied, so the docs look perfect right up until they deploy.
+#
+# So this relaxes style-src, for this path only. The detach line is required:
+# Cloudflare joins duplicate headers with a comma, and a browser given two
+# policies enforces both, so simply adding a second CSP here would change
+# nothing at all. `! Content-Security-Policy` drops the inherited one first.
+#
+# What is deliberately NOT relaxed:
+#   - script-src stays 'self'. This is the directive that matters, and it is
+#     why docsify is vendored into /docs/vendor/ instead of loaded from the CDN
+#     its quickstart recommends.
+#   - Everything else is copied verbatim from the global policy. Inline *style*
+#     on a page with no forms, no credentials, and no user input is a narrow
+#     concession; inline *script* would not be.
+/docs/*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://cloudflareinsights.com; form-action 'none'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'

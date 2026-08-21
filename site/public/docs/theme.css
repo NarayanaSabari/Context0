@@ -1,0 +1,372 @@
+/* docsify, restyled to match the rest of the site.
+ *
+ * This loads after docsify's core stylesheet and overrides it. The core theme
+ * ships an accent colour and its own type stack; this site is strictly
+ * achromatic (every token is R = G = B, enforced on the rest of the site by
+ * scripts/palette.mjs) and sets its headlines in Instrument Serif. Left alone,
+ * /docs/ would be a visibly different product from every other page.
+ *
+ * The values below are copied from src/index.css rather than imported: that
+ * file is a Tailwind entry point processed by the build, and these docs are
+ * static files served straight out of public/. Keep the two in sync when the
+ * palette changes; the numbers are deliberately few.
+ */
+
+:root {
+  /* The palette, mirroring src/index.css. */
+  --kora-ink: #f7f7f7;
+  --kora-surface: #ffffff;
+  --kora-surface-2: #ededed;
+  --kora-line: rgba(0, 0, 0, 0.12);
+  --kora-line-bright: rgba(0, 0, 0, 0.2);
+  --kora-heading: #000000;
+  --kora-body: #2b2b2b;
+  --kora-muted: #525252;
+  --kora-dim: #636363;
+
+  --kora-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --kora-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  --kora-display: "Instrument Serif", Georgia, serif;
+
+  /* docsify's own variables. Setting these rather than fighting its rules with
+   * !important means anything it derives from them stays consistent. */
+  --base-font-family: var(--kora-sans);
+  --base-font-size: 16px;
+  --base-line-height: 1.65;
+  --base-color: var(--kora-body);
+  --base-background-color: var(--kora-ink);
+
+  --theme-color: var(--kora-heading);
+  --mono-hue: 0;
+  --mono-saturation: 0%;
+
+  --heading-color: var(--kora-heading);
+  --heading-font-family: var(--kora-sans);
+  --heading-font-weight: 600;
+  --link-color: var(--kora-heading);
+  --link-color--hover: var(--kora-heading);
+  --link-text-decoration: underline;
+  --link-text-decoration-color: var(--kora-line-bright);
+
+  --sidebar-background: var(--kora-ink);
+  --sidebar-border-color: var(--kora-line);
+  --sidebar-width: 17rem;
+  --sidebar-nav-link-color: var(--kora-muted);
+  --sidebar-nav-link-color--active: var(--kora-heading);
+  --sidebar-nav-link-text-decoration: none;
+  --sidebar-nav-link-text-decoration--hover: none;
+  --sidebar-nav-link-border-color--active: var(--kora-heading);
+
+  --code-font-family: var(--kora-mono);
+  --code-font-size: 13px;
+  --code-theme-background: var(--kora-surface);
+  --code-block-border-radius: 10px;
+
+  --blockquote-border-color: var(--kora-heading);
+  --table-cell-border-color: var(--kora-line);
+  --search-input-background-color: var(--kora-surface);
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--kora-ink);
+}
+
+/* The wordmark, matching the site nav: lowercase, bold, tightly tracked, and
+ * deliberately not the display serif. The serif is the editorial voice for
+ * headlines; the wordmark is the brand. */
+.app-name-link {
+  font-weight: 700 !important;
+  letter-spacing: -0.03em;
+  text-transform: lowercase;
+  color: var(--kora-heading) !important;
+  text-decoration: none !important;
+}
+
+/* The page title is the one place the editorial serif appears, same as the
+ * hero on the marketing pages. */
+.markdown-section h1 {
+  font-family: var(--kora-display);
+  font-weight: 400;
+  font-size: clamp(2rem, 1.4rem + 2.2vw, 2.9rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.6em;
+}
+
+.markdown-section h2 {
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+  margin-top: 2.4em;
+  padding-top: 1.6em;
+  border-top: 1px solid var(--kora-line);
+}
+
+.markdown-section h3 {
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+  margin-top: 2em;
+}
+
+.markdown-section p,
+.markdown-section li {
+  color: var(--kora-body);
+}
+
+/* Cards and code both sit on white above the off-white page, which is how the
+ * rest of the site separates a raised surface from the page beneath it. */
+.markdown-section pre,
+.markdown-section pre > code {
+  background: var(--kora-surface);
+  border: 1px solid var(--kora-line);
+  color: var(--kora-body);
+}
+
+.markdown-section code {
+  background: var(--kora-surface-2);
+  color: var(--kora-heading);
+  border-radius: 4px;
+  padding: 0.15em 0.4em;
+}
+
+.markdown-section pre > code {
+  border: 0;
+  padding: 0;
+}
+
+/* Syntax highlighting, in greyscale.
+ *
+ * Prism's default theme is colour-coded, which this palette has no room for.
+ * Weight and tone carry the distinction instead, so the code survives
+ * greyscale printing and every form of colour vision deficiency - the same
+ * reasoning as the rest of the design system. */
+.markdown-section .token.comment,
+.markdown-section .token.prolog,
+.markdown-section .token.doctype,
+.markdown-section .token.cdata {
+  color: var(--kora-dim);
+  font-style: italic;
+}
+
+.markdown-section .token.keyword,
+.markdown-section .token.selector,
+.markdown-section .token.important,
+.markdown-section .token.atrule {
+  color: var(--kora-heading);
+  font-weight: 600;
+}
+
+.markdown-section .token.string,
+.markdown-section .token.attr-value,
+.markdown-section .token.char,
+.markdown-section .token.regex {
+  color: var(--kora-muted);
+}
+
+.markdown-section .token.function,
+.markdown-section .token.class-name,
+.markdown-section .token.property,
+.markdown-section .token.attr-name {
+  color: var(--kora-heading);
+}
+
+.markdown-section .token.punctuation,
+.markdown-section .token.operator {
+  color: var(--kora-dim);
+}
+
+.markdown-section blockquote {
+  background: var(--kora-surface);
+  border-left: 3px solid var(--kora-heading);
+  border-radius: 0 8px 8px 0;
+  color: var(--kora-muted);
+  font-style: normal;
+  padding: 1rem 1.25rem;
+}
+
+.markdown-section table {
+  display: table;
+  width: 100%;
+  border: 1px solid var(--kora-line);
+  border-radius: 10px;
+  border-collapse: collapse;
+  overflow: hidden;
+}
+
+.markdown-section tr {
+  background: var(--kora-surface);
+  border-top: 1px solid var(--kora-line);
+}
+
+.markdown-section th {
+  background: var(--kora-surface-2);
+  color: var(--kora-heading);
+  font-weight: 600;
+  text-align: left;
+}
+
+/* Sidebar: quiet by default, with the active page marked by weight and a rule
+ * rather than by a fill. */
+.sidebar {
+  border-right: 1px solid var(--kora-line);
+}
+
+.sidebar ul li a {
+  font-size: 14px;
+}
+
+.sidebar ul li.active > a,
+.sidebar ul li a.active {
+  font-weight: 600;
+  color: var(--kora-heading);
+}
+
+/* Sidebar group headings: "Start here", "Using kora", and so on.
+ *
+ * Scoped to the <strong> itself rather than to the <p> that contains it.
+ * docsify wraps every sidebar entry in a <p>, links included, so styling the
+ * paragraph set the whole navigation in uppercase monospace - which looked
+ * deliberate enough in a screenshot to survive a glance, and made every page
+ * title shout. */
+.sidebar-nav > ul > li > p > strong,
+.sidebar-nav > ul > li > strong {
+  display: block;
+  font-family: var(--kora-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--kora-dim);
+  margin: 1.6rem 0 0.5rem;
+}
+
+/* The paragraph docsify wraps each entry in adds vertical space that stacks
+ * with the list's own. Collapse it so the nav reads as one list. */
+.sidebar-nav > ul > li > p {
+  margin: 0;
+}
+
+/* Search, which the plugin injects into the sidebar. */
+.sidebar .search {
+  border-bottom: 1px solid var(--kora-line);
+}
+
+.sidebar .search input {
+  background: var(--kora-surface);
+  border: 1px solid var(--kora-line);
+  border-radius: 8px;
+  color: var(--kora-body);
+  font-size: 14px;
+  padding: 0.55rem 0.7rem;
+}
+
+/* The browser draws this itself, and its default is a blue that is not in the
+ * palette. Keyboard users get a black ring instead, on every focusable thing. */
+.sidebar .search input:focus-visible,
+.markdown-section a:focus-visible,
+.sidebar a:focus-visible,
+.app-name-link:focus-visible {
+  outline: 2px solid var(--kora-heading);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.sidebar .search .matching-post {
+  border-bottom: 1px solid var(--kora-line);
+}
+
+.sidebar .search p em {
+  background: var(--kora-surface-2);
+  color: var(--kora-heading);
+  font-style: normal;
+}
+
+/* Search hit highlighting.
+ *
+ * docsify marks matched terms with <mark>, and both its stylesheet and the
+ * browser default paint that yellow. This is the only hue that actually
+ * reached the screen after the theme was applied, and scripts/palette.mjs is
+ * right to reject it: the site has no colour to spend. Weight and a grey fill
+ * mark the match instead, which also survives greyscale and every form of
+ * colour vision deficiency. */
+.markdown-section mark,
+.sidebar mark,
+.results-panel mark {
+  background: var(--kora-surface-2);
+  color: var(--kora-heading);
+  font-weight: 600;
+  border-radius: 3px;
+  padding: 0.05em 0.25em;
+}
+
+/* The corner ribbon docsify draws for `repo`. Its default is a coloured
+ * GitHub badge; this is the site's own quiet link treatment. */
+.github-corner svg {
+  color: var(--kora-ink);
+  fill: var(--kora-heading);
+}
+
+.docsify-pagination-container {
+  border-top: 1px solid var(--kora-line);
+  color: var(--kora-muted);
+}
+
+/* Anyone who asked their system not to animate should not be made to. docsify
+ * animates the sidebar toggle and scroll; the rest of the site honours this
+ * and scripts/audit.mjs checks that it does. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* The no-JavaScript fallback in index.html, which docsify replaces once it
+ * boots. Unstyled it is a wall of Times New Roman at full window width; this
+ * gives it the same measure and type as a rendered page, so the pre-render
+ * state looks intentional rather than broken. */
+#root > main {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 4rem;
+  font-family: var(--kora-sans);
+  color: var(--kora-body);
+  line-height: 1.65;
+}
+
+#root > main h1 {
+  font-family: var(--kora-display);
+  font-weight: 400;
+  font-size: clamp(2rem, 1.4rem + 2.2vw, 2.9rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--kora-heading);
+}
+
+#root > main h2 {
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+  color: var(--kora-heading);
+  margin-top: 2.5rem;
+}
+
+#root > main a {
+  color: var(--kora-heading);
+}
+
+#root > main dt {
+  font-family: var(--kora-mono);
+  font-size: 13px;
+  color: var(--kora-heading);
+  margin-top: 1.1rem;
+}
+
+#root > main dd {
+  margin: 0.35rem 0 0;
+  color: var(--kora-muted);
+}
