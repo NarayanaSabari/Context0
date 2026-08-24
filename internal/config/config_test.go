@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -339,11 +340,13 @@ func TestRenamedEnvCheckIgnoresUnrelatedVars(t *testing.T) {
 // prevents is someone turning DefaultVersion into a const or inlining the
 // literal back into Load(), which would re-break stamping invisibly.
 func TestDefaultVersionIsLinkerStampable(t *testing.T) {
-	// A var, not a const: taking its address does not compile for a const.
-	// This also pins the type to string, which -X requires.
-	var p *string = &DefaultVersion
-	if p == nil {
-		t.Fatal("DefaultVersion is not addressable")
+	// The compile-time half of the check, and it asserts more than it appears
+	// to. reflect.TypeOf on a pointer to DefaultVersion does not compile
+	// against a const, and comparing the element kind catches the type
+	// changing, so turning DefaultVersion into either fails here rather than
+	// silently disabling -X at release time.
+	if k := reflect.TypeOf(&DefaultVersion).Elem().Kind(); k != reflect.String {
+		t.Errorf("DefaultVersion is %s, want string; -X only stamps string vars", k)
 	}
 
 	if DefaultVersion == "" {
