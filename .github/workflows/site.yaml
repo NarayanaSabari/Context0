@@ -133,7 +133,7 @@ jobs:
       # certificate, with the site down in between. The project serves
       # kora.sabarinarayana.com; only the internal identifier is historical.
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
