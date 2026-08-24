@@ -39,6 +39,16 @@ jobs:
         uses: bufbuild/buf-setup-action@v1
       - run: buf lint api/proto
 
+      # The published docs at /docs/ are a separate set from the Markdown in
+      # this repo, and nothing checked them against the code. A documented
+      # KORA_* variable that no longer exists does not error when a user sets
+      # it -- the engine falls back to its default and ignores them -- and
+      # Helm accepts a --set path that no chart value matches. Both fail
+      # silently, which is why this compares the docs to the code rather than
+      # to each other.
+      - name: Docs describe settings that exist
+        run: bash scripts/verify_docs.sh
+
       - name: Web lint
         working-directory: web
         run: |
