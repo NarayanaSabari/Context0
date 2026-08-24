@@ -102,7 +102,7 @@ jobs:
       # so what ships is byte-for-byte what was checked.
       - name: Upload verified build
         if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: site-dist
           path: site/dist
