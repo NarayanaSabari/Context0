@@ -1,0 +1,109 @@
+# Dependabot keeps dependencies and pinned action SHAs current.
+#
+# Why this exists: the repo had no automated dependency updates, so nothing
+# surfaced a CVE in a transitive dependency and nothing reminded anyone that
+# pgx, grpc-gateway, and a dozen others had moved on. The github-actions
+# ecosystem matters just as much -- security.yaml pins actions to commit SHAs
+# to avoid running unreviewed upstream code, and a pin nobody bumps becomes a
+# permanently stale action. Dependabot understands the `# v2.28.0` comment
+# convention next to a SHA and updates both together.
+#
+# Grouping is deliberate. Ungrouped, this repo's five ecosystems would open
+# dozens of separate PRs and the noise would train everyone to ignore them.
+# Patch and minor updates are batched per ecosystem; majors come through
+# individually because they need real review.
+
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      go-patch-minor:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Pinned action SHAs live here. Without this they never move.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions-patch-minor:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # pnpm is handled by the `npm` ecosystem. GitHub documents support for pnpm
+  # v7-v10; this repo builds with pnpm 11, but both lockfiles are
+  # lockfileVersion 9.0, which is within the supported range. If these two
+  # entries ever stop opening PRs while the others keep working, that
+  # combination is the first thing to check.
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      web-patch-minor:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      site-patch-minor:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: pip
+    directory: /sdk/python
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Both images are scanned by Trivy in security.yaml, so a base-image CVE is
+  # already visible; this is what makes it fixable without hand-editing.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: docker
+    directory: /docker/postgres-age-vector
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: docker
+    directory: /web
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps)"

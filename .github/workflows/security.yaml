@@ -35,8 +35,14 @@ jobs:
       #
       # Nothing hand-written is excluded: the scan is clean across the other 29
       # files, and this step fails the build if that stops being true.
+      #
+      # Pinned to a commit SHA, not @master. These actions run inside a job
+      # holding a token that can upload SARIF to this repo's security tab, so
+      # a mutable ref means whatever that upstream repo pushes next executes
+      # here with no review. The comment records which release the SHA is, so
+      # the pin can be read and bumped without resolving it by hand.
       - name: gosec
-        uses: securego/gosec@master
+        uses: securego/gosec@9e75c0576c9878035d4221392108d458abe10fc3 # v2.28.0
         with:
           args: "-exclude-dir=api/gen -fmt sarif -out gosec.sarif ./..."
 
@@ -58,7 +64,7 @@ jobs:
           docker build -t kora/postgres-age-vector:scan ./docker/postgres-age-vector/
 
       - name: Scan API image
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: kora/kora:scan
           format: sarif
@@ -66,7 +72,7 @@ jobs:
           severity: CRITICAL,HIGH
 
       - name: Scan Postgres image
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: kora/postgres-age-vector:scan
           format: sarif
