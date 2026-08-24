@@ -30,11 +30,18 @@ updates:
         update-types: ["minor", "patch"]
 
   # Pinned action SHAs live here. Without this they never move.
+  #
+  # The limit is raised above the default of 5 because this repo uses roughly
+  # twenty distinct actions across four workflows, and majors are ungrouped by
+  # design. At 5 the queue truncates silently: upload-artifact got a PR while
+  # download-artifact, its counterpart, did not, which would have left the two
+  # on mismatched majors had the visible one been merged on its own.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
       day: monday
+    open-pull-requests-limit: 12
     commit-message:
       prefix: "chore(ci)"
     groups:
