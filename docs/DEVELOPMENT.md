@@ -534,11 +534,14 @@ kora/
 ├── sdk/
 │   └── python/                  # Python SDK
 ├── scripts/
+│   ├── backup.sh                # Dump, restore, verify
 │   ├── demo.sh                  # Full demo on kind
+│   ├── migrate_rename.sh        # Context0 -> Kora role/database rename
+│   ├── verify_docs.sh           # Docs describe settings that exist
+│   ├── verify_install.sh        # The documented install paths work
 │   └── teardown.sh              # Cleanup
 ├── test/
-│   ├── e2e/                     # E2E tests (build tag: e2e)
-│   └── integration/             # Integration tests (need real DB)
+│   └── e2e/                     # E2E tests (build tag: e2e)
 ├── web/                         # React web UI
 ├── .gitignore
 ├── ARCHITECTURE.md
@@ -555,34 +558,39 @@ kora/
 
 ## Current State → Next Steps
 
-### What we have (v0.1.0-dev)
+> Counts and checkboxes here are corrected as of the Kora rename. The previous
+> version of this section claimed 37 unit tests against an actual 239, and
+> listed the CI pipeline, README, LICENSE, CHANGELOG, Ollama embeddings, and
+> contradiction detection as outstanding when all of them had shipped.
+> `CHANGELOG.md` is the authority for what is in a release; this is orientation.
+
+### What we have
 
 - [x] Core engine (Go, gRPC + REST)
 - [x] Apache AGE graph DB
 - [x] pgvector hybrid search
-- [x] Auto memory extraction
+- [x] Auto memory extraction, with contradiction detection
 - [x] User profiles
 - [x] CLI tool
-- [x] Python SDK
+- [x] Python SDK, with 28 end-to-end tests against a live engine
 - [x] React web UI
-- [x] Helm chart
-- [x] 37 unit tests + 7 E2E tests
+- [x] Helm chart, and a published docs site
+- [x] 239 Go tests plus 11 E2E tests
+- [x] CI/CD pipeline: lint, unit, integration, kind-cluster E2E, security scanning
 - [x] Kind cluster deployment
+- [x] Backup and restore, with verification
+- [x] Structured logging and Prometheus RED metrics
+- [x] API key hashing, deny-by-default auth, rate limiting
 
-### v0.1.0 release requirements
+### Known gaps
 
-- [ ] CI/CD pipeline (GitHub Actions)
-- [ ] Integration tests for graph + pgvector
-- [ ] README.md with quickstart
-- [ ] LICENSE file (Apache 2.0)
-- [ ] CHANGELOG.md
-- [ ] values-local.yaml + values-production.yaml
-- [ ] Docker images pushed to registry
-
-### v0.2.0 goals
-
-- [ ] Ollama embedding integration
-- [ ] Contradiction detection on extraction
-- [ ] MemoryBench baseline results
+- [ ] Docker images published to a registry: the release workflow pushes to
+      GHCR on a tag, but no tag has been cut since `v0.1.0`
+- [ ] The Python SDK does not reach PyPI; the publish step in `release.yaml`
+      is commented out pending a token
+- [ ] Trigram and tsvector keyword indexing, see
+      [docs/research](research/README.md)
 - [ ] Content ingestion (PDF, URLs)
 - [ ] LangChain / CrewAI SDK wrappers
+- [ ] MemoryBench baseline results; `bench/` was removed as a non-building
+      fragment and would need rebuilding

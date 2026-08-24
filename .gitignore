@@ -22,23 +22,6 @@ node_modules/
 web/dist/
 web/.vite/
 
-# Bench — ignore upstream files, only track our provider + modified files
-bench/*
-!bench/src/
-bench/src/*
-!bench/src/providers/
-bench/src/providers/*
-!bench/src/providers/kora/
-!bench/src/providers/index.ts
-!bench/src/types/
-bench/src/types/*
-!bench/src/types/provider.ts
-!bench/src/utils/
-bench/src/utils/*
-!bench/src/utils/config.ts
-bench/data/
-bench/ui/
-
 # Python
 __pycache__/
 *.pyc
