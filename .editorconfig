@@ -1,0 +1,46 @@
+# EditorConfig keeps whitespace consistent across editors.
+# https://editorconfig.org
+#
+# These settings describe what this repo already does rather than imposing a
+# new style: the values were taken from counting indentation across every
+# tracked file. Go is tabs (gofmt's output, 9.5k lines), Python is 4 spaces
+# (964 lines against 30), and everything else is 2.
+#
+# This is not a formatter. gofmt, golangci-lint, and the frontend toolchains
+# remain the authority for the files they own; this only stops an editor with
+# different defaults from adding churn to a diff.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# gofmt emits tabs. An editor set to spaces would fight it on every save.
+[*.go]
+indent_style = tab
+
+[*.py]
+indent_size = 4
+
+[Makefile]
+indent_style = tab
+
+# Trailing whitespace is significant in Markdown: two spaces is a hard line
+# break. Stripping it silently changes rendered output.
+[*.md]
+trim_trailing_whitespace = false
+
+# Generated or vendored: left exactly as their tools produce them.
+[api/gen/**]
+indent_style = unset
+indent_size = unset
+trim_trailing_whitespace = false
+
+[**/pnpm-lock.yaml]
+indent_style = unset
+indent_size = unset
