@@ -1,0 +1,34 @@
+# Code owners are requested for review automatically on any pull request
+# touching the paths they match. Later rules win, so the specific entries
+# below override the catch-all.
+#
+# With a single maintainer this looks redundant, and today it is. It earns its
+# place at the first outside contribution and at the first Dependabot PR
+# against a path where an unreviewed bump would be expensive -- the chart, the
+# workflows, and the auth package are the three where a bad merge is not
+# obvious from a green build.
+
+* @NarayanaSabari
+
+# CI and release automation. A change here can publish artifacts, grant
+# permissions, or run third-party code with a repository token.
+/.github/ @NarayanaSabari
+
+# Authentication and API keys. Several past bugs in this package were things a
+# passing test suite did not notice: auth silently disabled, keys in URLs, a
+# route pattern that unauthenticated everything outside /v1/.
+/internal/auth/ @NarayanaSabari
+
+# Deployment surface. The chart's defaults are what an unchanged install runs.
+/charts/ @NarayanaSabari
+/docker/ @NarayanaSabari
+/Dockerfile @NarayanaSabari
+/docker-compose.yaml @NarayanaSabari
+
+# Operational scripts: backup, restore, and the rename migration all touch
+# live data.
+/scripts/ @NarayanaSabari
+
+# Public interfaces. Breaking either is a breaking change for users.
+/api/proto/ @NarayanaSabari
+/sdk/ @NarayanaSabari

@@ -1,5 +1,10 @@
 # Kora — Memory for AI Agents
 
+> **What this is.** A plain-language explanation of the problem Kora solves and
+> who it is for, with no commands or configuration in it. It is deliberately
+> non-technical: for installation, API, and architecture, start at the
+> [README](README.md) or the [docs](https://kora.sabarinarayana.com/docs/).
+
 ## What is Kora?
 
 Kora is a **memory engine for AI agents**. It gives AI systems the ability to remember — just like how humans remember facts, experiences, and learned skills across conversations and over time.
