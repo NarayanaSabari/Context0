@@ -1,6 +1,16 @@
 # Stage 1: Build
-FROM node:22-alpine AS builder
-RUN corepack enable && corepack prepare pnpm@latest --activate
+FROM node:26-alpine AS builder
+
+# pnpm is installed with npm rather than through corepack. Node 26 no longer
+# ships corepack -- `corepack enable` fails with "not found" -- so the previous
+# line broke the build outright on this base.
+#
+# The version is pinned rather than @latest, which is what corepack was asked
+# for. A build that resolves its own package manager at build time is not
+# reproducible: the same commit could build with a different pnpm next week and
+# resolve the lockfile differently. This is the major matching the local
+# toolchain and the lockfileVersion 9.0 in pnpm-lock.yaml.
+RUN npm install -g pnpm@11.21.0
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
