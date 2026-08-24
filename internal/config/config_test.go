@@ -322,3 +322,52 @@ func TestRenamedEnvCheckIgnoresUnrelatedVars(t *testing.T) {
 		t.Errorf("an unrelated variable was treated as a renamed one: %v", err)
 	}
 }
+
+// TestDefaultVersionIsLinkerStampable guards the release build's version
+// stamping.
+//
+// The release workflow builds every binary with
+// -X ...internal/config.DefaultVersion=$VERSION. The Go linker's -X flag is
+// silent when it cannot apply: against a missing symbol, a constant, or a
+// non-string it does nothing and the build still succeeds. The workflow had
+// been passing that flag to a symbol that was never declared, so released
+// binaries reported the fallback version while the release was tagged
+// something else, and nothing failed to say so.
+//
+// This asserts the two properties -X needs. It cannot execute the linker, so
+// the real end-to-end check is in the release workflow itself; what this
+// prevents is someone turning DefaultVersion into a const or inlining the
+// literal back into Load(), which would re-break stamping invisibly.
+func TestDefaultVersionIsLinkerStampable(t *testing.T) {
+	// A var, not a const: taking its address does not compile for a const.
+	// This also pins the type to string, which -X requires.
+	var p *string = &DefaultVersion
+	if p == nil {
+		t.Fatal("DefaultVersion is not addressable")
+	}
+
+	if DefaultVersion == "" {
+		t.Error("DefaultVersion is empty; an unstamped build would report no version")
+	}
+
+	// Load must read DefaultVersion rather than a literal, or stamping the
+	// variable would change nothing that reaches the health endpoint.
+	original := DefaultVersion
+	t.Cleanup(func() { DefaultVersion = original })
+
+	DefaultVersion = "9.9.9-test"
+	envProblems = nil
+	t.Cleanup(func() { envProblems = nil })
+
+	if got := Load().Version; got != "9.9.9-test" {
+		t.Errorf("Load().Version = %q, want the stamped value; "+
+			"Load is not reading DefaultVersion", got)
+	}
+
+	// The environment variable still wins, so an operator can override a
+	// stamped build without rebuilding it.
+	t.Setenv("KORA_VERSION", "from-env")
+	if got := Load().Version; got != "from-env" {
+		t.Errorf("Load().Version = %q, want KORA_VERSION to take precedence", got)
+	}
+}

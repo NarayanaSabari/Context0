@@ -103,9 +103,23 @@ type Config struct {
 	LogFormat string
 
 	// Version is the engine version string reported by the health endpoint.
-	// Env: KORA_VERSION (default: "0.1.0-dev")
+	// Env: KORA_VERSION, else the build-stamped DefaultVersion.
 	Version string
 }
+
+// DefaultVersion is the version reported when KORA_VERSION is not set.
+//
+// The release workflow overwrites this at link time:
+//
+//	go build -ldflags "-X github.com/NarayanaSabari/Kora/internal/config.DefaultVersion=$VERSION"
+//
+// It must stay a package-level var of type string. -X silently does nothing
+// against a symbol that does not exist, is a constant, or is not a string, and
+// the build still succeeds -- which is exactly what happened before this
+// existed: the workflow had been passing this flag to a symbol that was never
+// declared, so every released binary reported "0.1.0-dev" while the release
+// itself was tagged something else.
+var DefaultVersion = "0.1.0-dev"
 
 // Load reads all configuration from environment variables. Missing or empty
 // variables fall back to their documented defaults. This function never
@@ -130,7 +144,7 @@ func Load() Config {
 		LogLevel:  getEnv("KORA_LOG_LEVEL", "info"),
 		LogFormat: getEnv("KORA_LOG_FORMAT", "json"),
 
-		Version: getEnv("KORA_VERSION", "0.1.0-dev"),
+		Version: getEnv("KORA_VERSION", DefaultVersion),
 	}
 }
 
