@@ -37,6 +37,18 @@ jobs:
 
       - name: Proto lint (buf)
         uses: bufbuild/buf-setup-action@v1
+        with:
+          # Without a token this action calls the GitHub API anonymously to
+          # resolve the download URL, and warns as much. Anonymous requests
+          # are rate limited per runner IP, and once the limit is hit the API
+          # returns an HTML error page that the action tries to parse as a
+          # release, failing with a raw "<!DOCTYPE html>". It looks like a
+          # proto lint error and is not one.
+          #
+          # This became routine rather than rare once Dependabot began opening
+          # PRs: several runs a day, each resolving the same download, share
+          # that per-IP budget.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
       - run: buf lint api/proto
 
       # The published docs at /docs/ are a separate set from the Markdown in
