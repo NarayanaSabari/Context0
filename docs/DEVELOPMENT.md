@@ -338,16 +338,24 @@ steps:
 
 ```
         ╱╲
-       ╱  ╲      E2E Tests (7 tests)
+       ╱  ╲      E2E Tests (11 tests)
       ╱    ╲     Full API flow on kind cluster
      ╱──────╲
     ╱        ╲    Integration Tests
    ╱          ╲   Real DB (AGE + pgvector), no mocks
   ╱────────────╲
- ╱              ╲  Unit Tests (37+ tests)
+ ╱              ╲  Unit Tests
 ╱                ╲ Pure logic, no dependencies
 ╱──────────────────╲
 ```
+
+Counting them: `go test ./... -list '.*'` reports 239 Go tests, of which 56
+skip unless `KORA_TEST_DATABASE_URL` points at a real Postgres with AGE and
+pgvector. The Python SDK adds 28 end-to-end tests against a live engine.
+
+A specific number is deliberately left out of the pyramid above: it was
+written as "37+" and stayed there while the count grew to 239, which is worse
+than no number at all.
 
 ### Test Categories
 
