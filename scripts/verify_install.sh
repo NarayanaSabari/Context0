@@ -262,12 +262,16 @@ done
 # This check did not look there.
 #
 # Comment lines are excluded rather than the whole file, so a comment may
-# explain the history while a reintroduced value is still caught. verify_k8s.sh
-# is excluded because it presents the key deliberately and asserts a 401.
+# explain the history while a reintroduced value is still caught.
+#
+# The scripts that check for this key, or deliberately present it to assert a
+# 401, are excluded by matching verify_*.sh rather than by listing them. The
+# earlier version named verify_install.sh and verify_k8s.sh individually, and
+# adding a third checker -- verify_docs.sh -- turned this check red for
+# containing the string it exists to look for.
 stale=$(grep -rn "ctx0_dev_key_1" README.md docs/*.md Makefile test/ scripts/ 2>/dev/null \
   | grep -v security-research | grep -v keyword-search \
-  | grep -v 'verify_install.sh' \
-  | grep -v 'verify_k8s.sh' \
+  | grep -vE "^scripts/verify_[a-z0-9_]+\.sh:" \
   | grep -vE ':[0-9]+:[[:space:]]*#' \
   | grep -v 'used to live here' || true)
 check_empty "no doc still tells users to use the removed default key" "$stale"
