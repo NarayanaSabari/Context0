@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
 
@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/kora-server ./cmd/server
 RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/kora-consolidate ./cmd/consolidate
 
 # Stage 2: Runtime (alpine for healthcheck support)
-FROM alpine:3.20
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates wget
 RUN adduser -D -u 1000 kora
