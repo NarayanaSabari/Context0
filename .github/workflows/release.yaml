@@ -4,6 +4,20 @@ on:
   push:
     tags:
       - "v*.*.*"
+  # Dry run. Everything except tagging is reachable this way, so a change to
+  # this workflow -- an action major bump, most often -- can be exercised
+  # before it is needed, rather than discovered during a release when the only
+  # way to retry is another tag.
+  #
+  # Nothing publishes on this path: images build without pushing, the chart is
+  # packaged but not pushed, and the GitHub Release step is skipped. The
+  # version comes from the input instead of the tag name.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build as, without the leading v (dry run only)"
+        required: false
+        default: "0.0.0-dryrun"
 
 permissions:
   contents: write
@@ -11,6 +25,12 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
+  # "true" on a manual dispatch, "false" on a tag push. Every publishing step
+  # is gated on this.
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
+  # The tag drives the version on a real release; the input drives it on a dry
+  # run, where github.ref_name is a branch and would produce a bad version.
+  VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
 
 jobs:
   # ── Validate ──────────────────────────────────────────
@@ -59,6 +79,10 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
+            # A dispatch runs on a branch, where the semver patterns above
+            # produce nothing and the build step would have no tag to apply.
+            # This one only appears on a dry run, and is never pushed.
+            type=raw,value=${{ inputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -75,7 +99,9 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          push: true
+          # A dry run builds both platforms and exercises the action, but
+          # publishes nothing.
+          push: ${{ env.DRY_RUN != 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
@@ -114,7 +140,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
+          VERSION=${VERSION:-${GITHUB_REF_NAME#v}}
           go build -ldflags "-s -w -X github.com/NarayanaSabari/Kora/internal/config.DefaultVersion=$VERSION" \
             -o kora-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./cmd/cli
 
@@ -143,13 +169,14 @@ jobs:
 
       - name: Package chart
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          helm package ./charts/kora --version $VERSION --app-version $VERSION
+          VERSION=${VERSION:-${GITHUB_REF_NAME#v}}
+          helm package ./charts/kora --version "$VERSION" --app-version "$VERSION"
 
       - name: Push chart
+        if: env.DRY_RUN != 'true'
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          helm push kora-${VERSION}.tgz oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+          VERSION=${VERSION:-${GITHUB_REF_NAME#v}}
+          helm push "kora-${VERSION}.tgz" oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
 
   # ── Python SDK ────────────────────────────────────────
   python-sdk:
@@ -186,6 +213,10 @@ jobs:
     name: GitHub Release
     runs-on: ubuntu-latest
     needs: [docker, binaries, helm, python-sdk]
+    # A dry run stops here. Everything above it has already run, which is the
+    # point: the jobs that build and package are exercised, and only the step
+    # that would create a public release is skipped.
+    if: github.event_name != 'workflow_dispatch'
     permissions:
       contents: write
     steps:

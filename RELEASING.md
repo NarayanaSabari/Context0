@@ -23,6 +23,25 @@ A release is a tag. Pushing `vX.Y.Z` to `main` triggers
    all moved, and `scripts/migrate_rename.sh` exists because a find-and-replace
    could not do it.
 
+## Rehearsing without releasing
+
+The workflow can be dispatched manually, which runs everything except the
+publishing steps:
+
+```bash
+gh workflow run release.yaml --ref main -f version=0.0.0-dryrun
+```
+
+Images build for both platforms but are not pushed, the chart is packaged but
+not pushed, the SDK is built, and the GitHub Release job is skipped entirely.
+
+This exists because the release path was otherwise unreachable except by
+tagging. Four of this repo's actions appear only in this workflow, so a major
+bump to any of them was unverifiable until a release used it -- and the only
+way to retry a failed release is another tag.
+
+Run it after changing anything in `release.yaml`.
+
 ## Tagging
 
 ```bash
