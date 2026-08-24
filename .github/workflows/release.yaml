@@ -194,14 +194,14 @@ jobs:
           fetch-depth: 0
 
       - name: Download binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: kora-*
           path: release-assets/
           merge-multiple: true
 
       - name: Download Python SDK
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-sdk
           path: release-assets/
