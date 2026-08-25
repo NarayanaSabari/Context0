@@ -262,11 +262,20 @@ jobs:
           name: binaries
           path: bin/
 
-  # ── E2E Tests (main only) ────────────────────────────
+  # ── E2E Tests ─────────────────────────────────────────
+  #
+  # Runs on pull requests as well as main. It was main-only, which had two
+  # consequences worth stating: a change could only fail here after it had
+  # already merged, and "E2E Tests" as a required status check was satisfied by
+  # being skipped -- protection that looked present and was not.
+  #
+  # It is the most expensive job at roughly eight minutes, because it stands up
+  # a kind cluster, deploys the chart, and drives the CLI, the Python SDK, and
+  # the MCP server against a live engine. That is also why it is worth waiting
+  # for: it is the only job that would notice the deployment path breaking.
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
     needs: [build]
     steps:
       - uses: actions/checkout@v7
