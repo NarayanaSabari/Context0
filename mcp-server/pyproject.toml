@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kora-mcp"
+version = "0.1.0"
+description = "MCP server for Kora — memory engine for AI agents"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=3.2.0,<4.0.0",
+    "httpx>=0.28.1,<0.29.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
+[project.scripts]
+kora-mcp = "kora_mcp.server:main"
+
+# setuptools rather than poetry-core, matching sdk/python. The two Python
+# packages in this repo used different build backends and different dependency
+# syntaxes, and this one shipped a 1,980-line poetry.lock that nothing updated:
+# Dependabot's pip ecosystem reads pyproject.toml, so the lock was covered by
+# neither it nor CI. One backend across both means one thing to keep current.
+[tool.setuptools.packages.find]
+include = ["kora_mcp*"]

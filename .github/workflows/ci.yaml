@@ -377,6 +377,19 @@ jobs:
           KORA_API_KEY: ${{ env.E2E_API_KEY }}
         run: python3 sdk/python/tests/test_e2e.py
 
+      # The MCP server is the same shape of risk as the SDK above, and shipped
+      # with no coverage at all: its own route table, its own field parsing,
+      # and a mapping from human words ("semantic") to wire enum values that
+      # nothing checked. It is what an editor talks to, so a break here is
+      # invisible until an agent silently stops remembering things.
+      - name: Run MCP server E2E tests
+        env:
+          KORA_HTTP_URL: http://localhost:8080
+          KORA_API_KEY: ${{ env.E2E_API_KEY }}
+        run: |
+          pip install --quiet ./mcp-server
+          python3 mcp-server/tests/test_e2e.py
+
       - name: Run E2E tests
         env:
           KORA_E2E_HTTP: http://localhost:8080

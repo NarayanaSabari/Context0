@@ -89,6 +89,18 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # The MCP server is a second Python package. It originally used poetry with a
+  # committed lock file, which the pip ecosystem does not read, so it was
+  # covered by nothing; it builds with setuptools now, like sdk/python.
+  - package-ecosystem: pip
+    directory: /mcp-server
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(deps)"
+
   # Both images are scanned by Trivy in security.yaml, so a base-image CVE is
   # already visible; this is what makes it fixable without hand-editing.
   - package-ecosystem: docker
