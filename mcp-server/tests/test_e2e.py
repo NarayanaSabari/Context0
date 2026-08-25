@@ -221,6 +221,76 @@ async def run():
     await clean.close()
     check("a clean environment warns about nothing", len(caught) == 0, f"got {[str(w.message) for w in caught]}")
 
+    section("10. The server module loads and registers its tools")
+    # Everything above exercises the client. server.py is the larger half of
+    # this package -- the tool definitions an editor actually calls -- and
+    # importing it is the minimum proof that its decorators are well formed
+    # and its fastmcp dependency is satisfied. A syntax or schema error here
+    # would leave an agent with no memory tools and no error to point at.
+    try:
+        from kora_mcp import server as srv  # noqa: PLC0415
+
+        # list_tools() is the public accessor and returns Tool objects, not
+        # names. Reading .name off each is what an MCP client effectively does
+        # when it enumerates what the server offers.
+        tools = await srv.mcp.list_tools()
+        names = {t.name for t in tools}
+        expected = {
+            "memory_store",
+            "memory_query",
+            "memory_extract",
+            "memory_profile",
+            "memory_connect",
+            "memory_delete",
+            "memory_graph",
+        }
+        check(
+            "all seven memory tools are registered",
+            expected <= names,
+            f"missing {sorted(expected - names)}",
+        )
+    except Exception as e:  # noqa: BLE001
+        check("the server module imports", False, f"{type(e).__name__}: {e}")
+        srv = None
+
+    if srv is not None:
+        section("11. The server's type mappings match the API")
+        # These turn the words an agent types into wire enum values. If the
+        # proto renumbers an enum, or someone edits this dict, memories are
+        # stored as the wrong type and nothing errors -- the store succeeds,
+        # the type is simply wrong. So each mapping is checked by storing a
+        # memory and reading back the type name the API assigns.
+        for word, expected_name in [
+            ("fact", "MEMORY_TYPE_SEMANTIC"),
+            ("semantic", "MEMORY_TYPE_SEMANTIC"),
+            ("event", "MEMORY_TYPE_EPISODIC"),
+            ("episodic", "MEMORY_TYPE_EPISODIC"),
+            ("howto", "MEMORY_TYPE_PROCEDURAL"),
+            ("procedural", "MEMORY_TYPE_PROCEDURAL"),
+        ]:
+            enum_value = srv.MEMORY_TYPES[word]
+            r = await attempt(
+                f"store as {word!r}",
+                c.store(content=f"type probe {word}", project_id=project, memory_type=enum_value),
+            )
+            got = (r or {}).get("memory", {}).get("type")
+            check(f"{word!r} maps to {expected_name}", got == expected_name, f"got {got!r}")
+
+        # An unrecognised word falls back to semantic rather than sending 0,
+        # which the API rejects as MEMORY_TYPE_UNSPECIFIED.
+        fallback = srv.MEMORY_TYPES.get("not-a-real-type", 2)
+        check("an unknown type falls back to semantic, not unspecified", fallback == 2, f"got {fallback}")
+
+        r = await attempt(
+            "the fallback value is accepted by the API",
+            c.store(content="fallback probe", project_id=project, memory_type=fallback),
+        )
+        check(
+            "the fallback stores as semantic",
+            (r or {}).get("memory", {}).get("type") == "MEMORY_TYPE_SEMANTIC",
+            f"got {(r or {}).get('memory', {}).get('type')!r}",
+        )
+
     await c.close()
     return 0
 
