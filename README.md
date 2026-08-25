@@ -227,6 +227,35 @@ kora graph <memory-id> --depth 2
 kora stats
 ```
 
+### MCP server (Claude Code, Cursor, Windsurf)
+
+Gives any MCP-compatible agent persistent memory as tools, rather than
+hand-written HTTP calls.
+
+```bash
+pip install ./mcp-server
+```
+
+Then in the editor's MCP config:
+
+```json
+{
+  "mcpServers": {
+    "kora": {
+      "command": "kora-mcp",
+      "env": {
+        "KORA_HTTP_URL": "http://localhost:8080",
+        "KORA_API_KEY": "<kora keys generate>"
+      }
+    }
+  }
+}
+```
+
+Seven tools: `memory_store`, `memory_query`, `memory_extract`,
+`memory_profile`, `memory_connect`, `memory_delete`, `memory_graph`. See
+[mcp-server/](mcp-server/) for the full setup.
+
 ## Architecture
 
 ```
@@ -323,9 +352,10 @@ kora/
 │   ├── llm/                # LLM providers (Ollama, OpenAI-compat)
 │   ├── ranking/            # Scoring and ranking
 │   └── service/            # gRPC service handlers
-├── charts/kora/        # Helm chart (deployment topology)
+├── charts/kora/            # Helm chart (deployment topology)
 ├── web/                    # React web UI
 ├── sdk/python/             # Python SDK
+├── mcp-server/             # MCP server for Claude Code, Cursor, Windsurf
 └── test/e2e/               # End-to-end tests
 ```
 

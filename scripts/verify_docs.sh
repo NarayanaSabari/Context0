@@ -51,11 +51,16 @@ while IFS= read -r f; do DOC_FILES+=("$f"); done < <(
 section "1. Every documented KORA_* variable is read by the code"
 
 # The engine reads its settings through internal/config; the CLI reads three of
-# its own directly. Collect both, plus the test-only and e2e names, and treat
-# that as the set of variables that do something.
+# its own directly. The Python packages -- the MCP server, and the benchmark
+# and seeding scripts -- read their own, so they are scanned too: this check
+# was Go-only at first and flagged KORA_HTTP_URL as undocumented-but-unread
+# when the MCP server introduced it, which is the check being wrong rather
+# than the docs.
 known=$(
     {
         grep -rhoE 'KORA_[A-Z0-9_]+' internal/ cmd/ --include='*.go'
+        grep -rhoE 'KORA_[A-Z0-9_]+' mcp-server/ scripts/ --include='*.py' 2>/dev/null
+        grep -rhoE 'KORA_[A-Z0-9_]+' scripts/ --include='*.sh' 2>/dev/null
         # Documented as a prefix in the rename guard, not a literal read.
         echo KORA_E2E_API_KEY
         echo KORA_E2E_HTTP

@@ -112,6 +112,35 @@ kora keys generate
 
 This runs entirely offline and needs no server: it prints a key, and the server stores only its hash. There is no way to recover a key you lose, so capture it when it is printed.
 
+## MCP server
+
+For AI coding agents, Kora ships an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Cursor, Windsurf, Cline, and any other MCP client can store and recall memories as tools rather than through hand-written HTTP calls.
+
+```bash
+pip install ./mcp-server
+```
+
+Then point the editor at it. In Claude Code, `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "kora": {
+      "command": "kora-mcp",
+      "env": {
+        "KORA_HTTP_URL": "http://localhost:8080",
+        "KORA_API_KEY": "<generate with: kora keys generate>",
+        "KORA_PROJECT": "my-project"
+      }
+    }
+  }
+}
+```
+
+Seven tools are exposed: `memory_store`, `memory_query`, `memory_extract`, `memory_profile`, `memory_connect`, `memory_delete`, and `memory_graph`. The store tool takes memory types as words rather than enum values, so an agent can write `"fact"`, `"event"`, or `"howto"`.
+
+Full setup, including Cursor and Windsurf, is in the [MCP server README](https://github.com/NarayanaSabari/Kora/tree/main/mcp-server).
+
 ## Anything else
 
 There is no JavaScript or Go client library yet. The REST API is plain JSON over HTTP with a header for auth, and the [proto definitions](https://github.com/NarayanaSabari/Kora/tree/main/api/proto/kora/v1) generate a gRPC client for any language buf supports.

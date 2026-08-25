@@ -34,6 +34,9 @@ existing deployments; see **Breaking** below.
 
 ### Added
 
+- An MCP server (`mcp-server/`) exposing memory as tools to Claude Code,
+  Cursor, Windsurf, and any other MCP client. Seven tools, covered by 27
+  end-to-end tests against a live engine.
 - Pluggable embedding providers: Ollama, OpenAI, and Google, alongside the
   built-in bag-of-words default.
 - Domain-agnostic contradiction detection.

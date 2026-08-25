@@ -467,10 +467,14 @@ run it against a throwaway cluster rather than anything you care about.
 - [ ] No open P0/P1 bugs for this version
 - [ ] CHANGELOG.md updated
 - [ ] Version bumped in:
-  - [ ] `internal/config/config.go` (default version)
   - [ ] `charts/kora/Chart.yaml` (appVersion + version)
   - [ ] `sdk/python/pyproject.toml` (version)
+  - [ ] `mcp-server/pyproject.toml` (version)
   - [ ] `web/package.json` (version)
+
+> `internal/config/config.go` is deliberately not on that list. `DefaultVersion`
+> is stamped at link time by the release workflow from the tag, so editing it by
+> hand would be overwritten. See [RELEASING.md](../RELEASING.md).
 
 ### Release process
 
@@ -541,6 +545,7 @@ kora/
 │   └── model/                   # Shared domain types
 ├── sdk/
 │   └── python/                  # Python SDK
+├── mcp-server/                  # MCP server (Claude Code, Cursor, Windsurf)
 ├── scripts/
 │   ├── backup.sh                # Dump, restore, verify
 │   ├── demo.sh                  # Full demo on kind
@@ -581,6 +586,7 @@ kora/
 - [x] User profiles
 - [x] CLI tool
 - [x] Python SDK, with 28 end-to-end tests against a live engine
+- [x] MCP server for Claude Code, Cursor, and Windsurf, with 27 end-to-end tests
 - [x] React web UI
 - [x] Helm chart, and a published docs site
 - [x] 239 Go tests plus 11 E2E tests
