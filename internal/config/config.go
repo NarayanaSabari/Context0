@@ -29,6 +29,10 @@
 //	KORA_EMBEDDING_API_KEY  API key for cloud embedding providers (OpenAI, Google) (default: "")
 //	KORA_EMBEDDING_BASE_URL Base URL override for Ollama or any OpenAI-compatible endpoint (default: "")
 //	KORA_EMBEDDING_DIM      Vector dimension; auto-detected from the provider when 0 (default: 0)
+//	KORA_EXTRACTION_PROVIDER Extraction backend: "rule" | "llm" (default: rule)
+//	KORA_EXTRACTION_MODEL   Chat model for LLM extraction (default: gpt-4o-mini)
+//	KORA_EXTRACTION_API_KEY API key for the extraction provider (default: "")
+//	KORA_EXTRACTION_BASE_URL OpenAI-compatible endpoint (default: https://api.openai.com)
 //
 // Metadata:
 //
@@ -93,6 +97,33 @@ type Config struct {
 	// Env: KORA_EMBEDDING_DIM (default: 0)
 	EmbeddingDim int
 
+	// ExtractionProvider selects how conversations are turned into memories.
+	// Accepted values: "rule" (default) or "llm".
+	//
+	// The rule-based scanner is the default because it needs no network, no
+	// API key and no spend, which is what makes a self-hosted install work out
+	// of the box. It transcribes one memory per utterance, so pronouns stay
+	// unresolved and small talk is stored alongside facts. "llm" distils the
+	// conversation into standalone facts instead, at the cost of a request per
+	// conversation.
+	// Env: KORA_EXTRACTION_PROVIDER (default: "rule")
+	ExtractionProvider string
+
+	// ExtractionModel is the chat model used when ExtractionProvider is "llm".
+	// Env: KORA_EXTRACTION_MODEL (default: "gpt-4o-mini")
+	ExtractionModel string
+
+	// ExtractionAPIKey authenticates against the extraction endpoint. Not
+	// required for a local provider such as Ollama.
+	// Env: KORA_EXTRACTION_API_KEY
+	ExtractionAPIKey string
+
+	// ExtractionBaseURL is the OpenAI-compatible chat-completions endpoint.
+	// Any provider speaking that API works: OpenAI, Ollama, vLLM, LiteLLM,
+	// OpenRouter, or Gemini's compatibility layer.
+	// Env: KORA_EXTRACTION_BASE_URL (default: "https://api.openai.com")
+	ExtractionBaseURL string
+
 	// LogLevel is one of debug, info, warn, error.
 	// Env: KORA_LOG_LEVEL (default: info)
 	LogLevel string
@@ -140,6 +171,11 @@ func Load() Config {
 		EmbeddingAPIKey:   getEnv("KORA_EMBEDDING_API_KEY", ""),
 		EmbeddingBaseURL:  getEnv("KORA_EMBEDDING_BASE_URL", ""),
 		EmbeddingDim:      getEnvInt("KORA_EMBEDDING_DIM", 0),
+
+		ExtractionProvider: getEnv("KORA_EXTRACTION_PROVIDER", "rule"),
+		ExtractionModel:    getEnv("KORA_EXTRACTION_MODEL", "gpt-4o-mini"),
+		ExtractionAPIKey:   getEnv("KORA_EXTRACTION_API_KEY", ""),
+		ExtractionBaseURL:  getEnv("KORA_EXTRACTION_BASE_URL", "https://api.openai.com"),
 
 		LogLevel:  getEnv("KORA_LOG_LEVEL", "info"),
 		LogFormat: getEnv("KORA_LOG_FORMAT", "json"),

@@ -43,19 +43,35 @@ import (
 )
 
 // MemoryService implements the Kora gRPC service. It holds a graph repository
-// for persistent memory storage and traversal, and an optional embedder for
-// generating vector representations used in hybrid search.
+// for persistent memory storage and traversal, an optional embedder for
+// generating vector representations used in hybrid search, and an extractor
+// that turns raw conversations into structured memories.
 type MemoryService struct {
 	pb.UnimplementedKoraServer
-	repo     *graph.AGERepository
-	embedder embedding.Embedder
+	repo      *graph.AGERepository
+	embedder  embedding.Embedder
+	extractor extraction.Extractor
 }
 
 // NewMemoryService creates a new MemoryService with the given graph repository
 // and embedder. The embedder may be nil, in which case vector search is disabled
 // and the service operates in graph-only mode.
+//
+// Extraction defaults to the zero-dependency rule-based scanner. Use
+// NewMemoryServiceWithExtractor to supply another.
 func NewMemoryService(repo *graph.AGERepository, embedder embedding.Embedder) *MemoryService {
-	return &MemoryService{repo: repo, embedder: embedder}
+	return NewMemoryServiceWithExtractor(repo, embedder, extraction.RuleExtractor{})
+}
+
+// NewMemoryServiceWithExtractor is NewMemoryService with an explicit
+// extraction backend. A nil extractor falls back to the rule-based scanner,
+// so a caller that forgets to configure one still gets working extraction
+// rather than a nil dereference on the first Extract call.
+func NewMemoryServiceWithExtractor(repo *graph.AGERepository, embedder embedding.Embedder, extractor extraction.Extractor) *MemoryService {
+	if extractor == nil {
+		extractor = extraction.RuleExtractor{}
+	}
+	return &MemoryService{repo: repo, embedder: embedder, extractor: extractor}
 }
 
 // Store persists a new memory node into the graph. The full pipeline is:
@@ -389,9 +405,10 @@ func (s *MemoryService) GetGraph(ctx context.Context, req *pb.GetGraphRequest) (
 }
 
 // Extract processes a raw conversation string and automatically extracts structured
-// memories from it. The extraction is delegated to the extraction package, which
-// supports both LLM-based and rule-based strategies. Each extracted memory is
-// persisted, embedded, optionally linked to a session, and auto-linked by tags.
+// memories from it. The extraction strategy is whichever Extractor the service
+// was built with: the rule-based scanner by default, or an LLM-backed one when
+// configured. Each extracted memory is persisted, embedded, optionally linked
+// to a session, and auto-linked to related memories.
 func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*pb.ExtractResponse, error) {
 	if req.Conversation == "" {
 		return nil, status.Error(codes.InvalidArgument, "conversation is required")
@@ -400,7 +417,12 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
 
-	extracted := extraction.Extract(req.Conversation)
+	extracted, err := s.extractor.Extract(req.Conversation)
+	if err != nil {
+		// Extractors fall back rather than fail, so this is a programming
+		// error, not a provider outage.
+		return nil, status.Errorf(codes.Internal, "extraction failed: %v", err)
+	}
 	memories := extraction.ToMemories(extracted, req.ProjectId)
 	var pbMemories []*pb.Memory
 	relCount := int32(0)

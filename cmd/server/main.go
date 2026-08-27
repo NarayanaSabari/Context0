@@ -34,6 +34,7 @@ import (
 	"github.com/NarayanaSabari/Kora/internal/auth"
 	"github.com/NarayanaSabari/Kora/internal/config"
 	emb "github.com/NarayanaSabari/Kora/internal/embedding"
+	"github.com/NarayanaSabari/Kora/internal/extraction"
 	"github.com/NarayanaSabari/Kora/internal/graph"
 	"github.com/NarayanaSabari/Kora/internal/logging"
 	"github.com/NarayanaSabari/Kora/internal/metrics"
@@ -119,6 +120,21 @@ func main() {
 	}
 	slog.Info("embedding provider ready", slog.String("provider", cfg.EmbeddingProvider), slog.Int("dimension", embedder.Dimension()))
 
+	// Initialise the extraction backend. Like the embedder, an unusable
+	// configuration is fatal rather than silently downgraded: an operator who
+	// asked for LLM extraction and got the rule-based scanner would see a
+	// healthy server quietly storing lower-quality memories.
+	extractor, err := extraction.NewFromConfig(extraction.ProviderConfig{
+		Provider: cfg.ExtractionProvider,
+		Model:    cfg.ExtractionModel,
+		APIKey:   cfg.ExtractionAPIKey,
+		BaseURL:  cfg.ExtractionBaseURL,
+	})
+	if err != nil {
+		fatal("failed to create extractor", err)
+	}
+	slog.Info("extraction provider ready", slog.String("provider", cfg.ExtractionProvider))
+
 	// Step 4: Create the graph repository and apply schema migrations.
 	repo := graph.NewAGERepository(pool, embedder.Dimension())
 	if err := repo.InitSchema(ctx); err != nil {
@@ -145,7 +161,7 @@ func main() {
 	)
 
 	// Register all service implementations on the gRPC server.
-	memorySvc := service.NewMemoryService(repo, embedder)
+	memorySvc := service.NewMemoryServiceWithExtractor(repo, embedder, extractor)
 	sessionSvc := service.NewSessionService(repo)
 	healthSvc := service.NewHealthService(repo, cfg.Version)
 

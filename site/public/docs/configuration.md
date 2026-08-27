@@ -45,6 +45,32 @@ The rate limit is **per pod, not cluster-wide**: the token buckets live in proce
 
 Changing the provider or dimension on a populated database invalidates the existing embeddings. They are not comparable across models, so plan on re-embedding.
 
+### Extraction
+
+How `POST /v1/memories/extract` turns a raw conversation into memories.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `KORA_EXTRACTION_PROVIDER` | `rule` | `rule` or `llm` |
+| `KORA_EXTRACTION_MODEL` | `gpt-4o-mini` | Chat model, when the provider is `llm` |
+| `KORA_EXTRACTION_API_KEY` | empty | Not needed for a local endpoint such as Ollama |
+| `KORA_EXTRACTION_BASE_URL` | `https://api.openai.com` | Any OpenAI-compatible chat-completions endpoint |
+
+`rule` is the default for the same reason `bag-of-words` is: no network, no API key, no spend. It scans the conversation line by line, which means it transcribes rather than distils. Each utterance becomes its own memory, so pronouns are never resolved and questions and small talk are stored alongside facts. A memory reading `He hates thunderstorms` is useful in context and useless once retrieved on its own.
+
+`llm` sends the conversation to a chat model and asks for standalone facts: pronouns resolved against the speakers, related statements merged, filler dropped. The same five-line exchange yields `Caroline adopted a rescue dog named Biscuit last month` rather than five fragments. It costs one request per conversation.
+
+Any provider speaking the OpenAI chat-completions API works, including Ollama, vLLM, LiteLLM, OpenRouter, and Gemini via its compatibility layer:
+
+```bash
+KORA_EXTRACTION_PROVIDER=llm
+KORA_EXTRACTION_MODEL=gemini-2.5-flash
+KORA_EXTRACTION_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+KORA_EXTRACTION_API_KEY=...
+```
+
+A provider that is unreachable, slow, or returns something unparseable falls back to rule-based extraction for that request. `Extract` is a write path and the caller keeps no copy of the conversation, so degrading beats losing it.
+
 ### Logging
 
 | Variable | Default | Meaning |
