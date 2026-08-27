@@ -260,14 +260,36 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 	// answered by recency and the other retrievers rather than by an empty
 	// result.
 	//
-	// The condition is "keyword retrieval found nothing", not "the caller
-	// supplied no keywords". Those differ, because extractKeywords has its own
-	// stop-word list and PostgreSQL's english dictionary has another: "have",
-	// "being" and "and" survive the first and are removed by the second, so a
-	// query made entirely of them produces keywords that lex to an empty
-	// tsquery. Keying the fallback on the caller's input would skip it for
-	// exactly those queries and return nothing at all.
-	if len(graphResults) == 0 {
+	// The condition is precisely "there was nothing to search for", which is
+	// neither of the two obvious approximations:
+	//
+	//   - "the caller supplied no keywords" misses queries whose every term is
+	//     a stop word to PostgreSQL but not to extractKeywords. "have", "being"
+	//     and "and" survive the first list and are removed by the second, so
+	//     such a query has keywords, lexes to an empty tsquery, and would
+	//     return nothing at all.
+	//   - "keyword retrieval returned nothing" is worse: it cannot tell an
+	//     unsearchable query from a searchable one with no matches, and the
+	//     second is an answer. Falling back there hands the caller a page of
+	//     unrelated memories -- and restores exactly what full-text search was
+	//     adopted to remove, since a query for `go` would again return the
+	//     memory about mangoes.
+	//
+	// So the question is asked of PostgreSQL, whose dictionary owns it.
+	unsearchable := len(filter.Keywords) == 0
+	if !unsearchable && len(graphResults) == 0 {
+		searchable, serr := s.repo.KeywordsAreSearchable(ctx, filter.Keywords)
+		if serr != nil {
+			// Treat it as searchable: a failed check must not turn a precise
+			// empty answer into a page of unrelated memories.
+			logging.FromContext(ctx).Warn("could not determine whether the query has searchable terms; treating it as a real search",
+				slog.Any("error", serr))
+		} else {
+			unsearchable = !searchable
+		}
+	}
+
+	if unsearchable {
 		// Without its keywords: they matched nothing, and QueryMemories filters
 		// on them with CONTAINS, so passing them through makes the fallback
 		// return nothing for exactly the queries that need it. What is wanted

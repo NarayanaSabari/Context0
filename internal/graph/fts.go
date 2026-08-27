@@ -377,3 +377,38 @@ func (r *AGERepository) SearchByText(ctx context.Context, projectID string, keyw
 	}
 	return r.hydrateKeywordHits(ctx, hits)
 }
+
+// KeywordsAreSearchable reports whether the terms lex to anything Postgres can
+// search for.
+//
+// This distinguishes the two reasons keyword retrieval returns nothing, which
+// call for opposite responses:
+//
+//   - The query lexed to an empty tsquery, because every term is a stop word.
+//     Nothing was asked, so nothing could match, and the caller should fall
+//     back to returning what is there.
+//   - The query lexed fine and matched nothing. That is an answer: no memory
+//     mentions this. Falling back would hand the caller a page of unrelated
+//     memories and call them results -- and it would quietly restore the
+//     behaviour full-text search was adopted to remove, since a query for `go`
+//     would once again return the memory about mangoes.
+//
+// The distinction cannot be made in Go, because it belongs to PostgreSQL's
+// dictionary rather than to extractKeywords' stop-word list: "have", "being"
+// and "and" survive the first and are removed by the second.
+//
+// One extra round trip, on the rare path where keyword retrieval found
+// nothing, and it touches no table.
+func (r *AGERepository) KeywordsAreSearchable(ctx context.Context, keywords []string) (bool, error) {
+	if len(keywords) == 0 {
+		return false, nil
+	}
+
+	q := fmt.Sprintf(`WITH %s SELECT EXISTS (SELECT 1 FROM lexed)`, termsCTE)
+
+	var searchable bool
+	if err := r.pool.QueryRow(ctx, q, keywords).Scan(&searchable); err != nil {
+		return false, fmt.Errorf("check searchable keywords: %w", err)
+	}
+	return searchable, nil
+}

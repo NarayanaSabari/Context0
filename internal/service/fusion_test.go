@@ -251,3 +251,50 @@ func TestQuery_StemmingReachesInflectedForms(t *testing.T) {
 			resp.Results[0].Memory.Content)
 	}
 }
+
+// TestQuery_ASearchableQueryWithNoMatchesReturnsNothing is the other half of
+// the fallback, and the one that is easy to get wrong in the direction that
+// silently undoes this whole change.
+//
+// "Nothing to search for" and "searched, found nothing" call for opposite
+// responses. The first is a request for what is there; the second is an
+// answer. Falling back on the second returns a page of unrelated memories and
+// calls them results -- and restores exactly the behaviour full-text search
+// was adopted to remove, since a query for `go` would again return the memory
+// about mangoes.
+//
+// Found by driving the real HTTP API rather than the Go one, which is the only
+// place the two cases were distinguishable.
+func TestQuery_ASearchableQueryWithNoMatchesReturnsNothing(t *testing.T) {
+	svc, _, ctx := consolidationTestService(t)
+	projectID := fmt.Sprintf("fusion-nomatch-%d", time.Now().UnixNano())
+
+	if _, err := svc.Extract(ctx, &pb.ExtractRequest{
+		ProjectId: projectID,
+		Conversation: "Caroline said that she ate a mango while reading about an algorithm.\n" +
+			"Melanie said that the quarterly tax filing deadline is in April.",
+	}); err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+
+	// `go` is a real search term that matches nothing here. Under substring
+	// matching it matched `mango` and `algorithm`; under a fallback keyed on
+	// "returned nothing" it would match everything.
+	resp, err := svc.Query(ctx, &pb.QueryRequest{
+		ProjectId: projectID,
+		Query:     "go",
+		TopK:      5,
+	})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(resp.Results) != 0 {
+		var got []string
+		for _, r := range resp.Results {
+			got = append(got, r.Memory.Content)
+		}
+		t.Errorf("a query for `go` returned %d results: %v. Nothing here is about "+
+			"`go`, and answering with unrelated memories is both wrong and a "+
+			"return of the substring matching this replaced", len(resp.Results), got)
+	}
+}
