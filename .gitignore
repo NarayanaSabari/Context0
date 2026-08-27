@@ -64,3 +64,7 @@ site/.vite/
 # Design swarm working files (concepts, screenshots, harness)
 .design/
 .lavish/
+
+# Local compose override (host port remaps, machine-specific)
+docker-compose.override.yaml
+docker-compose.override.yml
