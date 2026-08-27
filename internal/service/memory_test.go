@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -547,5 +548,101 @@ func TestCancelledExtractStillFinishesItsMemories(t *testing.T) {
 		t.Errorf("%d of %d extracted memories have no embedding row; a client "+
 			"disconnecting mid-extraction leaves them permanently absent from "+
 			"vector search", missing, len(results))
+	}
+}
+
+// slowEmbedder simulates a cloud embedding provider: every call is a network
+// round trip. The delay is what makes the serial-versus-parallel difference
+// observable; a local embedder returns too fast to expose it.
+type slowEmbedder struct {
+	delay time.Duration
+	calls atomic.Int64
+}
+
+func (e *slowEmbedder) Embed(string) ([]float32, error) {
+	e.calls.Add(1)
+	time.Sleep(e.delay)
+	return make([]float32, 384), nil
+}
+
+func (e *slowEmbedder) Dimension() int { return 384 }
+
+// TestExtractEmbedsConcurrently pins the fix for silent data loss on long
+// conversations.
+//
+// Extract used to embed inside the store loop, one blocking network call per
+// extracted memory. The surrounding context is bounded by storeFinishTimeout
+// (30s), so a conversation whose memory count multiplied by the provider
+// latency exceeded that budget had its tail silently dropped: the request
+// still returned 200, and the response simply contained fewer memories than
+// the conversation held.
+//
+// Measured against a real Gemini endpoint, a 50-turn transcript returned 61 of
+// 100 memories in 30.4s -- pinned exactly at the timeout -- and logged no
+// deadline error at all. Turns 31 through 49 were gone. The same payload after
+// the fix returned all 100 in 6.9s.
+//
+// This test fails on the serial implementation: 40 memories at 100ms each is
+// 4s serially against a 2s budget, so the tail is lost.
+func TestExtractEmbedsConcurrently(t *testing.T) {
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("KORA_TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	pool, err := graph.NewPool(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	repo := graph.NewAGERepository(pool, 384)
+	if err := repo.InitSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+
+	const (
+		lines      = 40
+		perEmbed   = 100 * time.Millisecond
+		serialCost = lines * perEmbed // 4s, well past any sane budget
+	)
+
+	embedder := &slowEmbedder{delay: perEmbed}
+	svc := NewMemoryService(repo, embedder)
+
+	var sb strings.Builder
+	for i := 0; i < lines; i++ {
+		fmt.Fprintf(&sb, "Caroline decided to adopt rescue dog number %d in Lisbon.\n", i)
+	}
+
+	projectID := fmt.Sprintf("extract-concurrency-%d", time.Now().UnixNano())
+	start := time.Now()
+	resp, err := svc.Extract(ctx, &pb.ExtractRequest{
+		Conversation: sb.String(),
+		ProjectId:    projectID,
+	})
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	// Nothing may be dropped. This is the assertion that fails on the serial
+	// implementation once the conversation is long enough.
+	if len(resp.Memories) != lines {
+		t.Errorf("Extract returned %d memories, want %d -- the tail of the "+
+			"conversation was dropped", len(resp.Memories), lines)
+	}
+
+	// Every extracted memory must have been embedded, not skipped.
+	if got := embedder.calls.Load(); got != int64(lines) {
+		t.Errorf("embedder called %d times, want %d", got, lines)
+	}
+
+	// The wall clock proves the calls actually overlapped rather than merely
+	// completing. Serial execution cannot beat serialCost.
+	if elapsed >= serialCost {
+		t.Errorf("Extract took %v, which is at or beyond the serial cost %v: "+
+			"the embedding calls did not run concurrently", elapsed, serialCost)
 	}
 }

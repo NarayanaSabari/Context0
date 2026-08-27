@@ -24,6 +24,7 @@ import (
 	"github.com/NarayanaSabari/Kora/internal/logging"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	pb "github.com/NarayanaSabari/Kora/api/gen/kora/v1"
@@ -394,6 +395,14 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 	ctx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), storeFinishTimeout)
 	defer cancelFinish()
 
+	// Embeddings are computed up front and in parallel. A cloud embedder is a
+	// network round trip per memory (~0.5s against Google's API), and a single
+	// conversation extracts dozens: done serially inside the loop below, a
+	// 50-turn transcript took 30s and a full benchmark ingest ran into hours.
+	// The Embedder interface requires implementations to be safe for
+	// concurrent use, so the only cost here is bounded fan-out.
+	vectors := s.embedExtracted(ctx, memories)
+
 	for _, mem := range memories {
 		if err := s.repo.CreateMemory(ctx, mem); err != nil {
 			// Extraction is best-effort per memory: one bad memory must not
@@ -408,11 +417,9 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 
 		// Generate and store embedding.
 		if s.embedder != nil {
-			vec, err := s.embedder.Embed(mem.Content)
-			if err != nil {
-				logging.FromContext(ctx).Error("embedding failed for extracted memory; it will not be vector-searchable",
-					slog.String("memory_id", mem.ID.String()),
-					slog.Any("error", err))
+			if vec := vectors[mem.ID]; vec == nil {
+				// The failure was already logged by embedExtracted, which has
+				// the underlying error; repeating it here would double-count.
 			} else if err := s.repo.StoreEmbedding(ctx, mem.ID, mem.ProjectID, vec); err != nil {
 				logging.FromContext(ctx).Error("storing embedding failed for extracted memory; it will not be vector-searchable",
 					slog.String("memory_id", mem.ID.String()),
@@ -620,6 +627,57 @@ const contradictionCandidates = 50
 // 94k-vertex graph measures ~38ms serially. Both numbers are kept because the
 // second alone would make this constant look unnecessary.
 const autoLinkCandidates = 10
+
+// embedExtractedConcurrency bounds the fan-out in embedExtracted. Cloud
+// embedding APIs rate-limit per key, so a 200-memory conversation must not
+// open 200 simultaneous requests: the burst gets throttled and ends up slower
+// than the serial version it replaced.
+const embedExtractedConcurrency = 8
+
+// embedExtracted computes embeddings for every extracted memory in parallel and
+// returns them keyed by memory ID. Memories whose embedding failed are absent
+// from the map rather than present with a nil value, so the caller can tell
+// "failed" from "no embedder configured".
+//
+// Failures are logged here and not returned: extraction is best-effort per
+// memory, and one embedding failure must not discard a whole conversation. The
+// memory is still stored, it is simply not vector-searchable.
+func (s *MemoryService) embedExtracted(ctx context.Context, memories []model.Memory) map[uuid.UUID][]float32 {
+	if s.embedder == nil || len(memories) == 0 {
+		return nil
+	}
+
+	var (
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		vectors = make(map[uuid.UUID][]float32, len(memories))
+		sem     = make(chan struct{}, embedExtractedConcurrency)
+	)
+
+	for _, mem := range memories {
+		wg.Add(1)
+		go func(mem model.Memory) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			vec, err := s.embedder.Embed(mem.Content)
+			if err != nil {
+				logging.FromContext(ctx).Error("embedding failed for extracted memory; it will not be vector-searchable",
+					slog.String("memory_id", mem.ID.String()),
+					slog.Any("error", err))
+				return
+			}
+
+			mu.Lock()
+			vectors[mem.ID] = vec
+			mu.Unlock()
+		}(mem)
+	}
+
+	wg.Wait()
+	return vectors
+}
 
 // autoLinkByTags finds existing memories in the same project that share at least
 // one tag with the given memory and creates relates_to edges with a default weight
