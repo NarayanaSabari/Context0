@@ -15,6 +15,39 @@ graph memory engine. Two caveats before treating that as the target:
 
 So the honest gap is roughly 57.5 against 71.4, on a tighter retrieval budget.
 
+## Step 0: we are not benchmarking on equal terms
+
+Found while reading how the other providers are wired into the same harness.
+Every provider sets its own retrieval budget in its memorybench adapter:
+
+| Provider | top_k in adapter |
+|----------|------------------|
+| supermemory | 30 |
+| mem0 | 30 |
+| zep | 20 |
+| rag / filesystem | 10 |
+| **kora** | **10** |
+
+We ask for 10 where mem0 asks for 30. Worse, the engine then silently clamps
+anything above 20 in `ParseQuery`, and `memory.proto` documents `top_k` as
+"Maximum number of results to return" with no mention of a cap. A caller asking
+for 50 gets 20 and is never told.
+
+That makes every comparison so far unequal in two independent ways, and the
+undocumented clamp is a genuine API bug regardless of benchmarking.
+
+Two changes, both small:
+
+1. Raise the adapter's default to 30, matching mem0 and supermemory.
+2. Either raise the engine's clamp and document it, or return an error when the
+   caller exceeds it. Silently returning fewer results than requested is the
+   one behaviour that cannot be right.
+
+This has to happen **before** anything below, because it changes the baseline
+every later measurement is compared against. It may also close part of the gap
+on its own: recall@10 is already 0.95, so the ceiling is what reaches the
+answering model, and that is exactly what top_k controls.
+
 ## What the failures actually are
 
 All 17 failures from the 40-question run, categorised by hand:
@@ -118,41 +151,90 @@ cheaper consolidation, smaller vector index. No accuracy claim.
 
 ### 5. Entity extraction and linking
 
-**Targets multi-hop, currently 65%.** Both Mem0 and Zep extract entities as
-first-class objects and link memories through them. Our graph links memory to
-memory by embedding similarity, which clusters paraphrases of the same fact
-rather than connecting `Caroline` to `Biscuit` to `thunderstorms`.
+**Targets multi-hop, currently 65%.** Our graph links memory to memory by
+embedding similarity, which clusters paraphrases of the same fact rather than
+connecting `Caroline` to `Biscuit` to `thunderstorms`.
 
-Mem0's April 2026 release lists entity linking as a headline change. Zep models
-entities as nodes with summaries that evolve.
+Mem0's OSS implementation is worth copying closely, because it is cheaper than
+it sounds. `mem0/utils/entity_extraction.py` uses **spaCy, not an LLM**: it
+takes named entities from spaCy's NER (keeping PERSON, ORG, GPE, LOC, PRODUCT,
+WORK_OF_ART and rejecting DATE, TIME, CARDINAL), quoted strings, and noun
+compounds, then filters them against a list of heads too generic to be useful
+(`thing`, `way`, `time`, `topic`). Entities are embedded and stored in a
+**separate collection**, and `_upsert_entity` links each one to the memories it
+appears in via `linked_memory_ids`, deduplicating by exact normalized text
+first and semantic similarity at 0.95 second.
 
-- Effort: large. New node type, extraction changes, retrieval changes.
-- Risk: high. Touches the schema.
-- Do this only after 1-4, and only if multi-hop is still the weakest category.
+At retrieval, a memory whose entities match the query gets a boost. No LLM call
+on the write path, which matters because our extraction call already costs 8.5s
+per session.
 
-### 6. Real BM25 instead of `CONTAINS`
+Go has no spaCy. The realistic options are a CGo binding (rejected: the project
+is deliberately dependency-light), an LLM pass to name entities as part of the
+existing extraction call (free, since we already make it, and the prompt
+already asks for tags), or a small POS-free heuristic over capitalised spans
+and quoted strings. The middle option is closest to our existing design: extend
+the extraction prompt to return `entities` alongside `content` and `tags`.
+
+- Effort: medium if entities come from the extraction call we already make.
+- Risk: medium. New node type, retrieval changes.
+
+### 6. Real BM25 instead of `CONTAINS`, with fusion
 
 Our keyword retriever uses Cypher `CONTAINS`, which is substring matching with
 no term weighting: `the` counts as much as `zqxjklmw`. Postgres ships
-`ts_rank_cd`, so this is a query change rather than a new dependency.
+`ts_rank_cd`, so this needs no new dependency.
 
-Mem0 fuses semantic, BM25 and entity signals in parallel. We have two of the
-three signals and the keyword one is weak.
+Mem0's fusion is simple enough to copy directly (`mem0/utils/scoring.py`):
+
+```
+combined = (semantic + bm25 + entity_boost) / max_possible
+```
+
+where `max_possible` adapts to which signals are present (1.0 semantic only,
+2.0 with BM25, 2.5 with entity at `ENTITY_BOOST_WEIGHT = 0.5`), the semantic
+threshold gates candidates *before* combining, and raw BM25 is squashed into
+[0,1] by a logistic sigmoid whose midpoint and steepness vary with query length
+(5.0/0.7 for <=3 terms up to 12.0/0.5 for >15).
+
+Two things stand out against our current `RelevanceTier`. Theirs is additive
+where ours is strictly tiered: we rank any lexical match above any
+non-match, which is a stronger claim than the evidence supports. And they
+normalise per query length, which is exactly the calibration problem we hit
+with `relatedStdDevs`.
 
 - Effort: medium.
 - Risk: medium, changes the candidate pool for every query.
-- Expected value here is lower than it looks, because recall@10 is already 0.95.
+- Expected value is lower than it looks, because recall@10 is already 0.95;
+  this mostly helps precision and ordering.
 
 ## Sequencing
 
+**Step 0 first**: equalise `top_k` and fix the undocumented clamp. Until that is
+done, every measured comparison against mem0 is unequal, and the baseline that
+items 1-6 are judged against is wrong.
+
 Items 1-3 are prompt changes targeting 12 of 17 failures, and are worth doing
-first purely on effort-to-evidence ratio. Item 4 is a real engineering problem
+next purely on effort-to-evidence ratio. Item 4 is a real engineering problem
 with no accuracy payoff, so it should be justified by cost rather than score.
 Items 5-6 are architecture, and should wait until the prompt ceiling is known.
 
 Each step gets the same treatment: rerun the same 40 questions, compare
 per-question labels rather than the aggregate, and keep the change only if the
 discordant pairs favour it.
+
+## Reaching 90+
+
+The 90+ target is a separate question from parity, and worth stating plainly:
+Mem0's 92.5 is their managed platform at a top-200 budget, and their own OSS
+number is 71.4. Parity with OSS is the reachable goal from here. Beating it
+means either the same techniques executed better, or accepting the same
+trade-off they made, which is a much larger retrieval budget and more tokens
+sent to the answering model.
+
+Nothing in items 0-6 requires a bigger model or more spend, which is the right
+constraint to hold until the cheap wins are exhausted.
+
 
 ## Measurement caveat
 
