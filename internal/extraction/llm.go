@@ -68,6 +68,11 @@ on its own, months later, with none of this conversation available:
   organisations, dates, and quantities. Never replace a specific with a
   category. "moved from Sweden" must not become "moved from her home country",
   and "read Charlotte's Web" must not become "read a book as a child".
+- Resolve every relative time reference against the date the line was spoken.
+  "yesterday" said on 8 May 2023 becomes "on 7 May 2023"; "last week" becomes
+  "the week before 9 June 2023". Never keep the relative phrase: a memory
+  saying "last week" is unreadable on its own, because whoever reads it later
+  has no idea which week.
 - Keep the qualifiers that make a fact answerable. "counseling for transgender
   people" is a different fact from "counseling".
 - Merge statements that describe one fact into a single memory.

@@ -222,6 +222,9 @@ message QueryRequest {
   string project_id = 2;
 
   // Maximum number of results to return.
+  //
+  // Defaults to 5 when unset or zero, and is clamped to 200. A request above
+  // the maximum returns 200 results rather than an error.
   int32 top_k = 3;
 
   // Maximum graph traversal depth for context edges (0 = no traversal).

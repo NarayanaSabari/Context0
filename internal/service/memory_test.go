@@ -74,11 +74,32 @@ func TestParseQuery_Defaults(t *testing.T) {
 	}
 }
 
+// TestParseQuery_Limits pins the bound on top_k.
+//
+// A cap has to exist: top_k sizes the candidate pools and the hydrated result
+// set, so an unbounded value is a memory-exhaustion vector from an
+// unauthenticated field. But the cap was 20 against a proto that documents
+// top_k only as "Maximum number of results to return", so a caller asking for
+// 50 silently received 20 with no error and no indication. Comparable engines
+// retrieve at 30 or more by default, which made the undocumented clamp a
+// quality ceiling as well as a surprise.
 func TestParseQuery_Limits(t *testing.T) {
-	f := ParseQuery("test", "proj1", nil, 50)
+	if f := ParseQuery("test", "proj1", nil, 50); f.TopK != 50 {
+		t.Errorf("TopK = %d for a request of 50: values within the documented "+
+			"maximum must be honoured, not silently reduced", f.TopK)
+	}
 
-	if f.TopK != 20 {
-		t.Errorf("TopK should be capped at 20, got %d", f.TopK)
+	if f := ParseQuery("test", "proj1", nil, maxTopK); f.TopK != maxTopK {
+		t.Errorf("TopK = %d at the documented maximum of %d", f.TopK, maxTopK)
+	}
+
+	// Beyond the maximum the request is still clamped rather than refused:
+	// ParseQuery has no error return, and the alternative is failing a query
+	// that the engine can serve perfectly well by returning the most it
+	// supports. The bound is documented in memory.proto so this is no longer a
+	// surprise.
+	if f := ParseQuery("test", "proj1", nil, maxTopK+1000); f.TopK != maxTopK {
+		t.Errorf("TopK = %d beyond the maximum, want it clamped to %d", f.TopK, maxTopK)
 	}
 }
 

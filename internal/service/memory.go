@@ -1140,6 +1140,32 @@ func vectorCandidatePool(topK int32) int {
 	return pool
 }
 
+// defaultTopK is how many results a query returns when the caller does not
+// say. Small on purpose: a caller that has not thought about it is better
+// served by a short, precise answer than a long one.
+const defaultTopK = 5
+
+// maxTopK bounds how many results one query may return.
+//
+// A bound is necessary. top_k sizes both candidate pools and the hydrated
+// result set, and it arrives on an unauthenticated request field, so an
+// unbounded value is a memory-exhaustion vector. The candidate pools cap
+// themselves well below this (500 graph, 200 vector), so the cost that scales
+// with top_k is hydration and the context-edge lookup, both of which are
+// bounded per row.
+//
+// It was 20, and nothing said so. memory.proto documents top_k as "Maximum
+// number of results to return", so a caller asking for 50 received 20 with no
+// error, no warning, and no way to discover the limit short of reading the
+// source. That is the part that was wrong: a cap is defensible, a silent one
+// is not. Comparable engines default to retrieving 20-30, which made the
+// undocumented clamp a quality ceiling as well as a surprise.
+//
+// 200 is chosen to sit above any plausible request while staying an order of
+// magnitude below the point where hydration cost matters. The bound is now
+// documented in memory.proto.
+const maxTopK = 200
+
 // ParseQuery converts a raw query string and request parameters into a
 // graph.QueryFilter. It extracts keywords (filtering stop words) and clamps
 // topK to a safe bound.
@@ -1147,10 +1173,10 @@ func ParseQuery(query string, projectID string, types []model.MemoryType, topK i
 	keywords := extractKeywords(query)
 
 	if topK <= 0 {
-		topK = 5
+		topK = defaultTopK
 	}
-	if topK > 20 {
-		topK = 20
+	if topK > maxTopK {
+		topK = maxTopK
 	}
 
 	return graph.QueryFilter{

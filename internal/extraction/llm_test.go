@@ -236,6 +236,11 @@ func TestExtractionPrompt_DemandsSpecifics(t *testing.T) {
 		"Never replace a specific with a",
 		"names of people, places",
 		"Resolve every pronoun",
+		// A memory saying "last week" cannot be read on its own: retrieval
+		// returns it without the conversation that dated it. Observed on
+		// LoCoMo as "gave a talk last week (from 9 June 2023)", against a
+		// ground truth of "The week before 9 June 2023".
+		"Resolve every relative time reference",
 	} {
 		if !strings.Contains(extractionPrompt, want) {
 			t.Errorf("the extraction prompt no longer instructs %q; "+
