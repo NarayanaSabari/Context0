@@ -166,8 +166,14 @@ type AGERepository struct {
 // parameter sets the width of the pgvector column in public.memory_embeddings
 // and must match the Dimension() of the configured Embedder. Common values:
 //   - 384: bag-of-words / all-MiniLM-L6-v2
-//   - 768: nomic-embed-text / text-embedding-004
-//   - 1536: text-embedding-3-small (OpenAI)
+//   - 768: nomic-embed-text
+//   - 1536: text-embedding-3-small (OpenAI), gemini-embedding-001 (Google)
+//
+// Keep this at or below 2000. pgvector's HNSW index refuses anything wider
+// ("column cannot have more than 2000 dimensions", SQLSTATE 54000) and the
+// failure lands on schema init, so the server exits instead of starting
+// degraded. Models that emit more -- Gemini defaults to 3072 -- must be asked
+// to project down at request time.
 //
 // Pass zero to mean "whatever the database already uses". Callers that never
 // produce embeddings -- the consolidation job, for instance -- do that, so they

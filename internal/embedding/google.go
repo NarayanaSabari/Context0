@@ -8,21 +8,26 @@ import (
 
 // NewGoogleEmbedder creates a Google AI embedding provider using Google's
 // Generative AI (generativelanguage.googleapis.com) embedContent endpoint.
-// It supports models like embedding-001 and text-embedding-004.
 //
 // Use this provider when you are already in the Google Cloud ecosystem or
 // prefer Google's embedding models. The API key is passed as a query
 // parameter rather than a Bearer token.
 //
+// The request always sets outputDimensionality. Current Gemini embedding
+// models return 3072 dimensions by default, and pgvector refuses to build an
+// HNSW index above 2000 ("column cannot have more than 2000 dimensions"), so
+// an unconstrained request makes the server fail on schema init. Asking the
+// API to project down keeps the vector indexable.
+//
 // Defaults:
-//   - model: text-embedding-004
-//   - dim: 768
+//   - model: gemini-embedding-001
+//   - dim: 1536 (under pgvector's 2000-dimension HNSW limit)
 func NewGoogleEmbedder(apiKey, model string, dim int) Embedder {
 	if model == "" {
-		model = "text-embedding-004"
+		model = "gemini-embedding-001"
 	}
 	if dim <= 0 {
-		dim = 768
+		dim = 1536
 	}
 
 	url := fmt.Sprintf(
@@ -39,6 +44,7 @@ func NewGoogleEmbedder(apiKey, model string, dim int) Embedder {
 						{"text": text},
 					},
 				},
+				"outputDimensionality": dim,
 			}
 		},
 		decode: decodeGoogleEmbedding,

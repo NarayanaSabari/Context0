@@ -69,8 +69,8 @@ func TestNewFromConfig_Google_WithKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if e.Dimension() != 768 {
-		t.Errorf("google default dim = %d, want 768", e.Dimension())
+	if e.Dimension() != 1536 {
+		t.Errorf("google default dim = %d, want 1536", e.Dimension())
 	}
 }
 

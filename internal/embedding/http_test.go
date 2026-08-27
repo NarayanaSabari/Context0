@@ -293,7 +293,7 @@ func TestProviderDefaults(t *testing.T) {
 	}{
 		{"openai", NewOpenAIEmbedder("", "", "", 0), 1536},
 		{"ollama", NewOllamaEmbedder("", "", 0), 768},
-		{"google", NewGoogleEmbedder("", "", 0), 768},
+		{"google", NewGoogleEmbedder("", "", 0), 1536},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -446,8 +446,8 @@ func TestProviderDefaultModelAndURL(t *testing.T) {
 
 	t.Run("google", func(t *testing.T) {
 		h := NewGoogleEmbedder("", "", 0).(httpEmbedder)
-		if !strings.Contains(h.url, "text-embedding-004") {
-			t.Errorf("default URL = %q, want the text-embedding-004 model", h.url)
+		if !strings.Contains(h.url, "gemini-embedding-001") {
+			t.Errorf("default URL = %q, want the gemini-embedding-001 model", h.url)
 		}
 		if !strings.Contains(h.url, "generativelanguage.googleapis.com") {
 			t.Errorf("default URL = %q, want the Google AI endpoint", h.url)
@@ -654,5 +654,44 @@ func TestAuthorizationHeaderOnlyWhenConfigured(t *testing.T) {
 					"reject that outright, unlike an absent header")
 			}
 		})
+	}
+}
+
+// TestGoogleEmbedderRequestsIndexableDimension guards the pgvector constraint
+// that made the Google provider unusable: gemini-embedding-001 returns 3072
+// dimensions by default, and pgvector refuses to build an HNSW index above
+// 2000 ("column cannot have more than 2000 dimensions", SQLSTATE 54000), so
+// the server died on schema init before serving a single request.
+//
+// Two things have to hold. The default dimension must stay indexable, and the
+// request must actually carry outputDimensionality: without it the API ignores
+// the configured dim and returns 3072 regardless, which is the exact shape of
+// the original failure.
+func TestGoogleEmbedderRequestsIndexableDimension(t *testing.T) {
+	const pgvectorHNSWLimit = 2000
+
+	h := NewGoogleEmbedder("", "", 0).(httpEmbedder)
+	if h.Dimension() > pgvectorHNSWLimit {
+		t.Errorf("default dimension = %d, want <= %d so pgvector can index it",
+			h.Dimension(), pgvectorHNSWLimit)
+	}
+
+	body, err := json.Marshal(h.body("x"))
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	if !strings.Contains(string(body), "outputDimensionality") {
+		t.Errorf("request body = %s, want outputDimensionality so the API "+
+			"projects down instead of returning its 3072-dim default", body)
+	}
+
+	// An explicit dimension must reach the wire, not just the struct field.
+	custom := NewGoogleEmbedder("", "", 768).(httpEmbedder)
+	cb, err := json.Marshal(custom.body("x"))
+	if err != nil {
+		t.Fatalf("marshal custom body: %v", err)
+	}
+	if !strings.Contains(string(cb), "768") {
+		t.Errorf("request body = %s, want the configured dimension 768", cb)
 	}
 }
