@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -1360,6 +1361,27 @@ func (r *AGERepository) GetContextEdges(ctx context.Context, ids []uuid.UUID) (m
 // performs an upsert so re-embedding a memory replaces both the vector and
 // the project_id, repairing any stale scoping from a prior write.
 func (r *AGERepository) StoreEmbedding(ctx context.Context, memoryID uuid.UUID, projectID string, embedding []float32) error {
+	// An all-zero vector has no direction, so pgvector's cosine distance
+	// against it is NaN rather than a low similarity: `1 - ('[0,0,0]' <=>
+	// '[1,2,3]')` returns NaN. One such row does not just fail to match, it
+	// returns a NaN score from every query that scans it, and that NaN then
+	// flows into ranking, into edge weights, and out through the API.
+	//
+	// This is reachable from ordinary input. The bag-of-words embedder yields
+	// a zero vector whenever tokenization leaves nothing behind -- text that
+	// is all stop words or all punctuation -- and sign-hash collisions can
+	// cancel a short text to zero as well. Observed as 57 poisoned rows in a
+	// small corpus, each surfacing later as "json: unsupported value: NaN"
+	// when an edge weight derived from the score was written.
+	//
+	// Refused here rather than in each embedder so that every provider,
+	// including the cloud ones, is covered by one check.
+	if isZeroVector(embedding) {
+		return fmt.Errorf("store embedding for %s: refusing an all-zero vector, "+
+			"which makes cosine similarity undefined (NaN) for every query that reads it",
+			memoryID)
+	}
+
 	// Convert []float32 to pgvector string format: [0.1,0.2,0.3,...]
 	vecStr := float32SliceToVectorString(embedding)
 	_, err := r.pool.Exec(ctx,
@@ -1373,6 +1395,19 @@ func (r *AGERepository) StoreEmbedding(ctx context.Context, memoryID uuid.UUID, 
 	return nil
 }
 
+// isZeroVector reports whether every component is zero, including an empty
+// vector. Compared exactly rather than against an epsilon: pgvector's cosine
+// distance is only undefined at exactly zero, and a near-zero vector is a
+// legitimate, if weak, direction that callers should be free to store.
+func isZeroVector(v []float32) bool {
+	for _, f := range v {
+		if f != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // SearchByVector performs approximate nearest neighbor search against stored
 // embeddings using pgvector's cosine distance operator (<=>). The similarity
 // score is computed as 1 - cosine_distance, yielding values in [0, 1] where
@@ -1382,6 +1417,15 @@ func (r *AGERepository) StoreEmbedding(ctx context.Context, memoryID uuid.UUID, 
 func (r *AGERepository) SearchByVector(ctx context.Context, embedding []float32, projectID string, topK int) ([]model.MemoryWithContext, error) {
 	if topK <= 0 {
 		topK = 10
+	}
+
+	// Same reasoning as StoreEmbedding, from the other side: a zero query
+	// vector makes every comparison NaN, so the whole result set is garbage
+	// rather than empty. Rows written before that guard existed can also still
+	// be zero, which is why scanVectorHits drops NaN similarities too.
+	if isZeroVector(embedding) {
+		return nil, fmt.Errorf("vector search: refusing an all-zero query vector, " +
+			"which makes cosine similarity undefined (NaN) against every stored embedding")
 	}
 
 	vecStr := float32SliceToVectorString(embedding)
@@ -1537,6 +1581,17 @@ func scanVectorHits(rows pgx.Rows) ([]vectorHit, error) {
 		if err != nil {
 			slog.Warn("vector search: dropping a row with an unparseable id",
 				slog.String("memory_id", memID), slog.Any("error", err))
+			continue
+		}
+		// A NaN similarity means the stored vector is all-zero: cosine
+		// distance is undefined against it. StoreEmbedding now refuses those,
+		// but rows written before that guard are still in existing databases,
+		// and a NaN here would sort unpredictably and propagate into ranking
+		// and edge weights. Dropped rather than ranked.
+		if math.IsNaN(similarity) {
+			slog.Warn("vector search: dropping a row whose stored embedding is all-zero, "+
+				"so its similarity is undefined; re-embed this memory to make it searchable",
+				slog.String("memory_id", memID))
 			continue
 		}
 		hits = append(hits, vectorHit{id: id, similarity: similarity})

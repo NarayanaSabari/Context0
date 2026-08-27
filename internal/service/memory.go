@@ -18,6 +18,7 @@ package service
 
 import (
 	"log/slog"
+	"math"
 
 	"context"
 	"fmt"
@@ -115,8 +116,12 @@ func (s *MemoryService) Store(ctx context.Context, req *pb.StoreRequest) (*pb.St
 	// A failure here is not fatal to the write -- the memory is already stored
 	// and remains findable by keyword -- but it silently removes that memory
 	// from vector search forever, so it must be visible rather than dropped.
+	//
+	// Kept in scope below, where auto-linking reuses it to find semantically
+	// related memories rather than embedding the same content a second time.
+	var vec []float32
 	if s.embedder != nil {
-		vec, err := s.embedder.Embed(mem.Content)
+		embedded, err := s.embedder.Embed(mem.Content)
 		switch {
 		case err != nil:
 			logging.FromContext(ctx).Error("embedding failed; memory will not be vector-searchable",
@@ -124,6 +129,7 @@ func (s *MemoryService) Store(ctx context.Context, req *pb.StoreRequest) (*pb.St
 				slog.String("project_id", mem.ProjectID),
 				slog.Any("error", err))
 		default:
+			vec = embedded
 			if err := s.repo.StoreEmbedding(ctx, mem.ID, mem.ProjectID, vec); err != nil {
 				logging.FromContext(ctx).Error("storing embedding failed; memory will not be vector-searchable",
 					slog.String("memory_id", mem.ID.String()),
@@ -147,10 +153,13 @@ func (s *MemoryService) Store(ctx context.Context, req *pb.StoreRequest) (*pb.St
 	// Detect contradictions with existing memories and create supersedes edges.
 	superseded := s.detectAndSupersede(ctx, mem)
 
-	// Auto-link by tags: find existing memories with overlapping tags and create relates_to edges.
-	if len(req.Tags) > 0 {
-		s.autoLinkByTags(ctx, mem, superseded)
-	}
+	// Auto-link: connect this memory to others sharing a tag or close to it in
+	// meaning.
+	//
+	// No longer gated on len(req.Tags). That gate made sense when tag overlap
+	// was the only source of relatedness, but it now skips the semantic pass
+	// too, so an untagged memory -- which is most of them -- would never link.
+	s.autoLinkByTags(ctx, mem, superseded, vec)
 
 	metrics.MemoriesTotal.WithLabelValues(string(memType)).Inc()
 
@@ -467,9 +476,8 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 			}
 		}
 
-		// Auto-link by tags.
-		s.autoLinkByTags(ctx, mem, nil)
-		relCount++ // approximate — autoLinkByTags may create multiple edges
+		// Auto-link by tags and semantic similarity.
+		relCount += int32(s.autoLinkByTags(ctx, mem, nil, vectors[mem.ID]))
 
 		metrics.MemoriesTotal.WithLabelValues(string(mem.Type)).Inc()
 		pbMemories = append(pbMemories, memoryToProto(mem))
@@ -655,6 +663,46 @@ const contradictionCandidates = 50
 // second alone would make this constant look unnecessary.
 const autoLinkCandidates = 10
 
+// relatesTagWeight is the edge weight recorded when two memories share a tag.
+// A tag is a deliberate label rather than an inferred similarity, so it is
+// treated as solid but unquantified evidence: strong enough to beat a marginal
+// embedding match, below a high-confidence one.
+const relatesTagWeight = 0.5
+
+// relatedStdDevs is how far above the mean a candidate's similarity must sit,
+// in standard deviations of the candidate set, to count as related.
+//
+// Neither an absolute nor a proportional threshold works here, because
+// similarity scales are a property of the embedder rather than of the data.
+// Measured on the same four sentences: bag-of-words scores a related pair at
+// 0.55 and unrelated ones at 0.09, while gemini-embedding-2 scores the same
+// related pair at 0.88 and the unrelated ones at 0.64-0.66, because a dense
+// model places everything one person says in roughly the same region. An
+// absolute cut tuned for one embedder is a dense graph or an empty one for the
+// other; a proportional cut fails too, since the unrelated-to-related ratio is
+// 0.16 for bag-of-words and 0.74 for Gemini. The engine supports four
+// providers and operators can point it at any OpenAI-compatible endpoint, so
+// no fixed constant can be right.
+//
+// Dispersion is what both distributions agree on: whatever the scale, a
+// genuinely related memory stands out from that project's own spread of
+// similarities. One standard deviation above the mean separates the two cases
+// cleanly (bag-of-words cuts at 0.55, Gemini at 0.81) and needs no tuning when
+// the embedding provider changes.
+const relatedStdDevs = 1.0
+
+// minRelatedCandidates is the number of candidates below which the dispersion
+// test cannot be applied: a mean and standard deviation over one or two
+// samples describe nothing.
+//
+// Below it, similarity is compared against the whole candidate set's mean
+// instead, which is weaker evidence but still refuses to link a memory that is
+// no closer than average. Skipping the link entirely would make the graph
+// depend on write order -- the first memories written into a project would
+// stay unlinked forever, and within a single Extract call the earliest
+// utterances are exactly the ones later ones should attach to.
+const minRelatedCandidates = 3
+
 // embedExtractedConcurrency bounds the fan-out in embedExtracted. Cloud
 // embedding APIs rate-limit per key, so a 200-memory conversation must not
 // open 200 simultaneous requests: the burst gets throttled and ends up slower
@@ -707,23 +755,31 @@ func (s *MemoryService) embedExtracted(ctx context.Context, memories []model.Mem
 }
 
 // autoLinkByTags finds existing memories in the same project that share at least
-// one tag with the given memory and creates relates_to edges with a default weight
-// of 0.5 to connect them. This builds implicit topic clusters in the graph.
-// Memories already connected to mem by some other edge (e.g. a supersedes edge
-// inferred by detectAndSupersede) are skipped: a generic relates_to edge adds
-// nothing once a more specific relationship has already been recorded between
-// the same pair.
-func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory, connected map[uuid.UUID]bool) {
-	filter := graph.QueryFilter{
-		ProjectID: mem.ProjectID,
-		TopK:      autoLinkCandidates,
-	}
-
-	existing, err := s.repo.QueryMemories(ctx, filter)
-	if err != nil {
-		return
-	}
-
+// one tag with the given memory, or whose meaning is close to it, and creates
+// relates_to edges to connect them. This builds implicit topic clusters in the
+// graph. Memories already connected to mem by some other edge (e.g. a
+// supersedes edge inferred by detectAndSupersede) are skipped: a generic
+// relates_to edge adds nothing once a more specific relationship has already
+// been recorded between the same pair.
+//
+// Relatedness has two sources, and the edge weight records which one fired:
+//
+//   - Shared tags, weight 0.5. A tag is a deliberate label, so an overlap is
+//     the strongest cheap evidence that two memories belong together.
+//   - Embedding similarity above relatedThreshold, weight = the similarity.
+//     This is what makes the graph work outside the extractor's vocabulary.
+//
+// Tag overlap alone used to be the only source, and extractTopics only emits
+// tags for roughly forty hardcoded technical terms. Every conversation outside
+// that vocabulary therefore produced untagged memories that could never share
+// a tag, and so never linked: a LoCoMo benchmark corpus of 6,760 memories held
+// exactly one edge, with 97% of memories untagged. A graph-first engine whose
+// graph only forms for conversations about Kubernetes is not graph-first, so
+// relatedness now also comes from the embeddings the engine already computes.
+//
+// Returns the number of edges actually written, so callers can report a real
+// relationship count rather than assuming the call did something.
+func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory, connected map[uuid.UUID]bool, vector []float32) int {
 	// Which memories this one is already connected to, so a generic relates_to
 	// edge is not added on top of a more specific relationship.
 	//
@@ -732,35 +788,140 @@ func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory, co
 	// rather than re-read. The previous round trip to GetContextEdges was a
 	// significant share of a tagged write's latency, and it queried a node whose
 	// edges this process had itself just created.
-	var edges []model.Edge
-	for _, e := range existing {
-		if e.Memory.ID == mem.ID || connected[e.Memory.ID] {
-			continue
-		}
-		if hasOverlappingTags(mem.Tags, e.Memory.Tags) {
-			edges = append(edges, model.Edge{
-				ID:           uuid.New(),
-				FromID:       mem.ID,
-				ToID:         e.Memory.ID,
-				Relationship: model.RelRelatesTo,
-				Weight:       0.5,
-				CreatedAt:    time.Now().UTC(),
-			})
+	//
+	// candidates is keyed by ID so the tag and vector passes cannot both add an
+	// edge for the same pair.
+	type candidate struct {
+		id     uuid.UUID
+		weight float64
+	}
+	seen := make(map[uuid.UUID]float64)
+
+	skip := func(id uuid.UUID) bool {
+		return id == mem.ID || connected[id]
+	}
+
+	// Pass 1: shared tags among recent memories.
+	filter := graph.QueryFilter{
+		ProjectID: mem.ProjectID,
+		TopK:      autoLinkCandidates,
+	}
+	if existing, err := s.repo.QueryMemories(ctx, filter); err == nil {
+		for _, e := range existing {
+			if skip(e.Memory.ID) {
+				continue
+			}
+			if hasOverlappingTags(mem.Tags, e.Memory.Tags) {
+				seen[e.Memory.ID] = relatesTagWeight
+			}
 		}
 	}
 
-	// Capped for the same reason as detectAndSupersede: unbounded tag linking
+	// Pass 2: nearest neighbours in embedding space.
+	//
+	// Only memories that stand out from this project's own distribution of
+	// similarities are linked. Vector search always returns its k nearest
+	// neighbours however far away they are, so linking without a cut connects
+	// every write to k arbitrary memories: a complete graph in slow motion,
+	// carrying no information and making every later traversal costlier.
+	//
+	// The cut is mean + relatedStdDevs standard deviations over the candidate
+	// set, not a constant, because similarity scales belong to the embedder
+	// rather than to the data. See relatedStdDevs.
+	if vector != nil {
+		neighbours, err := s.repo.SearchByVector(ctx, vector, mem.ProjectID, autoLinkCandidates)
+		if err != nil {
+			logging.FromContext(ctx).Warn("semantic auto-linking skipped: vector search failed",
+				slog.String("memory_id", mem.ID.String()),
+				slog.Any("error", err))
+		} else {
+			scores := make([]float64, 0, len(neighbours))
+			for _, n := range neighbours {
+				if !skip(n.Memory.ID) {
+					scores = append(scores, n.Score)
+				}
+			}
+
+			if len(scores) > 0 {
+				var sum float64
+				for _, s := range scores {
+					sum += s
+				}
+				mean := sum / float64(len(scores))
+
+				// With too few samples the deviation is meaningless, so the
+				// mean alone is the bar. See minRelatedCandidates.
+				floor := mean
+				if len(scores) >= minRelatedCandidates {
+					var variance float64
+					for _, s := range scores {
+						d := s - mean
+						variance += d * d
+					}
+					floor = mean + relatedStdDevs*math.Sqrt(variance/float64(len(scores)))
+				}
+
+				for _, n := range neighbours {
+					if skip(n.Memory.ID) || n.Score < floor {
+						continue
+					}
+					// A tag overlap already scored this pair higher; leave it.
+					if w, ok := seen[n.Memory.ID]; ok && w >= n.Score {
+						continue
+					}
+					seen[n.Memory.ID] = n.Score
+				}
+			}
+		}
+	}
+
+	candidates := make([]candidate, 0, len(seen))
+	for id, w := range seen {
+		candidates = append(candidates, candidate{id: id, weight: w})
+	}
+
+	// Strongest first, so the cap keeps the best evidence rather than whichever
+	// pair the map happened to yield first. The ID is the tie-break: map order
+	// is randomised in Go, and without it the same write could produce
+	// different edges on each run.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].weight != candidates[j].weight {
+			return candidates[i].weight > candidates[j].weight
+		}
+		return candidates[i].id.String() < candidates[j].id.String()
+	})
+
+	// Capped for the same reason as detectAndSupersede: unbounded linking
 	// makes the graph grow with writes x candidates, and every later traversal
 	// over those nodes pays for it.
-	if len(edges) > maxRelatesPerStore {
-		edges = edges[:maxRelatesPerStore]
+	if len(candidates) > maxRelatesPerStore {
+		candidates = candidates[:maxRelatesPerStore]
+	}
+
+	now := time.Now().UTC()
+	edges := make([]model.Edge, 0, len(candidates))
+	for _, c := range candidates {
+		edges = append(edges, model.Edge{
+			ID:           uuid.New(),
+			FromID:       mem.ID,
+			ToID:         c.id,
+			Relationship: model.RelRelatesTo,
+			Weight:       c.weight,
+			CreatedAt:    now,
+		})
 	}
 
 	// One statement rather than a round trip per match, for the same reason as
-	// detectAndSupersede: this runs inline on every tagged Store.
-	if err := s.repo.CreateEdges(ctx, edges); err == nil {
-		metrics.EdgesTotal.WithLabelValues(string(model.RelRelatesTo)).Add(float64(len(edges)))
+	// detectAndSupersede: this runs inline on every Store.
+	if err := s.repo.CreateEdges(ctx, edges); err != nil {
+		logging.FromContext(ctx).Warn("writing relates_to edges failed; the memory stays unlinked",
+			slog.String("memory_id", mem.ID.String()),
+			slog.Int("edge_count", len(edges)),
+			slog.Any("error", err))
+		return 0
 	}
+	metrics.EdgesTotal.WithLabelValues(string(model.RelRelatesTo)).Add(float64(len(edges)))
+	return len(edges)
 }
 
 // --- Converters ---

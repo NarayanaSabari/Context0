@@ -1981,3 +1981,53 @@ func TestQueryMemories_KeywordMatchSurvivesLargeRecencyGap(t *testing.T) {
 		"created_at-ordered pool discards it before ranking runs",
 		len(got), noise+1)
 }
+
+// TestStoreEmbedding_RejectsZeroVector pins that an all-zero embedding is
+// never written.
+//
+// pgvector's cosine distance is undefined for a zero vector: `1 - ('[0,0,0]'
+// <=> '[1,2,3]')` evaluates to NaN, not to a low similarity. A single zero row
+// therefore does not merely fail to match, it poisons every query that scans
+// it with a NaN score, and that NaN propagates into edge weights and out to
+// the API.
+//
+// Zero vectors are reachable in normal use, not just in theory. The
+// bag-of-words embedder returns one for any text that survives tokenization
+// with no tokens left -- all stop words, all punctuation, or all
+// single-character words -- and hash-collision cancellation can produce
+// another. Found when semantic auto-linking started reading these rows back:
+// 57 of them in a small test corpus, each failing an edge write with
+// "json: unsupported value: NaN".
+//
+// Rejecting at the storage boundary covers every embedder, including the cloud
+// ones, rather than fixing one implementation and waiting for the next.
+func TestStoreEmbedding_RejectsZeroVector(t *testing.T) {
+	repo, ctx := testRepo(t)
+	projectID := newProjectID(t)
+
+	mem := storeMemory(t, repo, ctx, newMemory(projectID, "a memory whose embedding came out empty"))
+
+	zero := make([]float32, testEmbeddingDim)
+	if err := repo.StoreEmbedding(ctx, mem.ID, projectID, zero); err == nil {
+		t.Error("storing an all-zero embedding succeeded: it makes cosine distance NaN, " +
+			"which silently corrupts every later similarity query that scans the row")
+	}
+
+	// The row must be absent, not merely reported as an error.
+	var count int
+	if err := repo.pool.QueryRow(ctx,
+		`SELECT count(*) FROM public.memory_embeddings WHERE memory_id = $1`,
+		mem.ID.String()).Scan(&count); err != nil {
+		t.Fatalf("count embeddings: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("a rejected embedding still left %d row(s) behind", count)
+	}
+
+	// A normal vector must still store, so the guard cannot be a blanket refusal.
+	good := make([]float32, testEmbeddingDim)
+	good[0] = 1
+	if err := repo.StoreEmbedding(ctx, mem.ID, projectID, good); err != nil {
+		t.Errorf("storing a valid unit vector failed: %v", err)
+	}
+}

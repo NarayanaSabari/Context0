@@ -661,3 +661,177 @@ func TestExtractEmbedsConcurrently(t *testing.T) {
 			"the embedding calls did not run concurrently", elapsed, serialCost)
 	}
 }
+
+// TestExtractReportsRealRelationshipCount pins that ExtractResponse.
+// RelationshipsCreated is the number of edges actually written to the graph.
+//
+// It was incremented once per stored memory, regardless of whether any edge
+// was created: `s.autoLinkByTags(...); relCount++`. Extract therefore reported
+// a relationship count equal to its memory count on every call. The number was
+// not merely imprecise, it was measuring a different thing, and it is the one
+// signal a caller has for whether the graph is being built at all.
+//
+// Found while investigating why a 6,760-memory benchmark corpus had produced
+// exactly one edge: the API had been reporting thousands of relationships the
+// whole time, which is what kept the dead graph invisible.
+//
+// The conversation below is deliberately non-technical, which is the case that
+// produces no tags and therefore no tag-derived edges.
+func TestExtractReportsRealRelationshipCount(t *testing.T) {
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("KORA_TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	pool, err := graph.NewPool(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	repo := graph.NewAGERepository(pool, 384)
+	if err := repo.InitSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+	svc := NewMemoryService(repo, embedding.NewBagOfWordsEmbedder(384))
+
+	projectID := fmt.Sprintf("relcount-%d", time.Now().UnixNano())
+	resp, err := svc.Extract(ctx, &pb.ExtractRequest{
+		ProjectId: projectID,
+		Conversation: "Caroline said that she moved to Lisbon last spring.\n" +
+			"Caroline said that she eats bacalhau every Friday with her sister.\n" +
+			"Caroline said that she runs along the river each morning.",
+	})
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	if len(resp.Memories) == 0 {
+		t.Fatal("extraction produced no memories; the rest of the test is meaningless")
+	}
+
+	// Count what actually landed in the graph, by asking the graph.
+	ids := make([]uuid.UUID, 0, len(resp.Memories))
+	for _, m := range resp.Memories {
+		id, err := uuid.Parse(m.Id)
+		if err != nil {
+			t.Fatalf("memory id %q is not a uuid: %v", m.Id, err)
+		}
+		ids = append(ids, id)
+	}
+
+	edges, err := repo.GetContextEdges(ctx, ids)
+	if err != nil {
+		t.Fatalf("get context edges: %v", err)
+	}
+	// GetContextEdges is undirected: it returns both the outgoing and incoming
+	// view, so an edge between two memories that are both in ids appears once
+	// from each end. Counted as unique pairs rather than rows, or a correct
+	// implementation would look like double-reporting.
+	unique := make(map[string]bool)
+	for id, list := range edges {
+		for _, e := range list {
+			a, b := id.String(), e.TargetID.String()
+			if a > b {
+				a, b = b, a
+			}
+			unique[a+"|"+b] = true
+		}
+	}
+	actual := len(unique)
+
+	if int(resp.RelationshipsCreated) != actual {
+		t.Errorf("RelationshipsCreated = %d but the graph holds %d edges for these memories: "+
+			"the field must count edges written, not memories processed",
+			resp.RelationshipsCreated, actual)
+	}
+}
+
+// TestExtractLinksSemanticallyRelatedMemories pins that a conversation with no
+// recognised technical vocabulary still produces a connected graph.
+//
+// Relatedness was decided solely by hasOverlappingTags, and tags came from
+// extractTopics, a hardcoded map of roughly forty DevOps terms (postgresql,
+// kubernetes, grpc, oauth and so on). Any conversation outside that vocabulary
+// produced no tags, so no two memories ever shared one, so no relates_to edge
+// was ever created. Measured on a LoCoMo benchmark corpus: 6,760 memories and
+// exactly one edge, with 97% of memories carrying no tags at all.
+//
+// That makes the graph -- the engine's headline feature over flat vector
+// search -- inert for every domain except the one hardcoded here. Relatedness
+// has to come from what the memories mean, which is what the embeddings the
+// engine already computes are for.
+func TestExtractLinksSemanticallyRelatedMemories(t *testing.T) {
+	dsn := os.Getenv("KORA_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("KORA_TEST_DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	pool, err := graph.NewPool(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	repo := graph.NewAGERepository(pool, 384)
+	if err := repo.InitSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+	svc := NewMemoryService(repo, embedding.NewBagOfWordsEmbedder(384))
+
+	projectID := fmt.Sprintf("semlink-%d", time.Now().UnixNano())
+
+	// Deliberately free of any term in extractTopics. The first three lines are
+	// closely related to each other; the fourth is unrelated, and exists so a
+	// passing result cannot come from linking everything to everything.
+	resp, err := svc.Extract(ctx, &pb.ExtractRequest{
+		ProjectId: projectID,
+		Conversation: "Caroline said that she adopted a rescue dog named Biscuit last month.\n" +
+			"Caroline said that Biscuit is a nervous rescue dog who hates thunderstorms.\n" +
+			"Caroline said that she walks her rescue dog Biscuit twice a day.\n" +
+			"Melanie said that the quarterly tax filing deadline is in April.",
+	})
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	if len(resp.Memories) < 4 {
+		t.Fatalf("expected at least 4 memories, got %d", len(resp.Memories))
+	}
+
+	if resp.RelationshipsCreated == 0 {
+		t.Fatalf("a four-line conversation about a dog produced no relationships: "+
+			"relatedness must come from meaning, not from a fixed list of technical terms "+
+			"(got %d memories)", len(resp.Memories))
+	}
+
+	// Linking everything to everything would also satisfy the check above, and
+	// would be worse than no graph: a dense graph carries no information and
+	// makes every traversal expensive. The tax-deadline line shares no subject
+	// with the other three, so it must not be linked to them.
+	var taxID uuid.UUID
+
+	for _, m := range resp.Memories {
+		id, err := uuid.Parse(m.Id)
+		if err != nil {
+			t.Fatalf("memory id %q is not a uuid: %v", m.Id, err)
+		}
+
+		if strings.Contains(m.Content, "tax filing deadline") {
+			taxID = id
+		}
+	}
+	if taxID == uuid.Nil {
+		t.Fatal("the unrelated tax memory was not extracted; the isolation check cannot run")
+	}
+
+	edges, err := repo.GetContextEdges(ctx, []uuid.UUID{taxID})
+	if err != nil {
+		t.Fatalf("get context edges: %v", err)
+	}
+	for _, e := range edges[taxID] {
+		t.Errorf("the tax-deadline memory was linked to %q: "+
+			"linking unrelated memories makes the graph dense and uninformative",
+			e.TargetContent)
+	}
+}
