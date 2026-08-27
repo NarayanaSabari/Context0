@@ -175,7 +175,7 @@ func (s *MemoryService) Store(ctx context.Context, req *pb.StoreRequest) (*pb.St
 	// No longer gated on len(req.Tags). That gate made sense when tag overlap
 	// was the only source of relatedness, but it now skips the semantic pass
 	// too, so an untagged memory -- which is most of them -- would never link.
-	s.autoLinkByTags(ctx, mem, superseded, vec)
+	s.autoLinkByTags(ctx, mem, superseded, s.semanticNeighbours(ctx, mem, vec))
 
 	metrics.MemoriesTotal.WithLabelValues(string(memType)).Inc()
 
@@ -409,6 +409,21 @@ func (s *MemoryService) GetGraph(ctx context.Context, req *pb.GetGraphRequest) (
 // was built with: the rule-based scanner by default, or an LLM-backed one when
 // configured. Each extracted memory is persisted, embedded, optionally linked
 // to a session, and auto-linked to related memories.
+//
+// Memories that restate something already stored are consolidated rather than
+// added, in three stages of increasing cost:
+//
+//  1. Within the conversation, before anything is written or embedded
+//     (extraction.FoldRedundant).
+//  2. Against the project, by exact content hash, in one query for the whole
+//     batch (FindByContentHash).
+//  3. Against the nearest stored memories, by lexical subsumption over the
+//     neighbours the write already fetches (consolidateAgainst).
+//
+// This is a cost fix, not an accuracy fix. Measured on retrieved results, only
+// 1% of retrieval slots were exact duplicates and 2% near duplicates, so
+// ranking already suppressed them; what redundancy cost was 10x the rows, 10x
+// the edges, and 10x the embedding spend at ingest.
 func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*pb.ExtractResponse, error) {
 	if req.Conversation == "" {
 		return nil, status.Error(codes.InvalidArgument, "conversation is required")
@@ -423,9 +438,22 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 		// error, not a provider outage.
 		return nil, status.Errorf(codes.Internal, "extraction failed: %v", err)
 	}
-	memories := extraction.ToMemories(extracted, req.ProjectId)
-	var pbMemories []*pb.Memory
+
+	// Stage 1, and the cheapest by a wide margin: a conversation that states a
+	// fact three times is folded to one before anything is embedded or
+	// written. This is where the 25 copies of `Caroline is transgender.` in
+	// the measured corpus came from.
+	memories := extraction.ToMemories(extraction.FoldRedundant(extracted), req.ProjectId)
 	relCount := int32(0)
+
+	// What the response reports, one slot per surviving extracted memory and
+	// in the order the conversation stated them.
+	//
+	// Indexed rather than appended, because a memory can be resolved at any of
+	// three stages and appending would report them grouped by stage instead:
+	// a conversation of [new, restated, new] would answer [restated, new, new],
+	// which reads as the engine having reordered the transcript.
+	reported := make([]*pb.Memory, len(memories))
 
 	// Detached from the caller for the same reason as Store: each memory here
 	// is committed and then embedded, so a client that hangs up mid-loop would
@@ -435,13 +463,63 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 	ctx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), storeFinishTimeout)
 	defer cancelFinish()
 
+	// Stage 2: everything this conversation restates verbatim from an earlier
+	// one, in a single query rather than a lookup per memory.
+	//
+	// Before the embeddings, deliberately. An exact duplicate needs no vector,
+	// and embedding is the expensive part of ingest -- ~2.06s per single call
+	// against gemini-embedding-2 -- so paying it for a memory that is about to
+	// be discarded is the largest avoidable cost on this path.
+	// pending holds the memories still to be written, paired with the response
+	// slot each one owns. A new slice rather than a filter in place: memories
+	// is the slice the response is indexed against, so reslicing it would make
+	// every later index refer to a different memory.
+	type pendingMemory struct {
+		mem  model.Memory
+		slot int
+	}
+	pending := make([]pendingMemory, 0, len(memories))
+
+	duplicates := s.existingByContent(ctx, req.ProjectId, memories)
+	restated := make([]uuid.UUID, 0, len(duplicates))
+	for i, mem := range memories {
+		existing, ok := duplicates[graph.ContentKey{Hash: model.ContentHash(mem.Content), Type: mem.Type}]
+		if !ok {
+			pending = append(pending, pendingMemory{mem: mem, slot: i})
+			continue
+		}
+		// The caller asked what this conversation says, and it says this.
+		// Returning the stored memory keeps the response honest about the
+		// content while being honest about the id: a second ingest of the same
+		// transcript answers with the rows that already hold those facts.
+		reported[i] = memoryToProto(existing)
+		restated = append(restated, existing.ID)
+		metrics.MemoriesConsolidated.WithLabelValues(extraction.Equivalent.String()).Inc()
+	}
+
+	// A fact being restated is evidence of its importance, and access count is
+	// the signal ranking and decay use for exactly that. Dropping the
+	// restatement silently would make a frequently-repeated fact look
+	// untouched. Batched, because this is already the batch path: one
+	// statement rather than a round trip per duplicate.
+	if err := s.repo.IncrementAccessCounts(ctx, restated); err != nil {
+		logging.FromContext(ctx).Warn("could not record restatements against existing memories; ranking will see them as less used than they are",
+			slog.Int("memory_count", len(restated)),
+			slog.Any("error", err))
+	}
+
+	toWrite := make([]model.Memory, len(pending))
+	for i, p := range pending {
+		toWrite[i] = p.mem
+	}
+
 	// Embeddings are computed up front and in parallel. A cloud embedder is a
 	// network round trip per memory (~0.5s against Google's API), and a single
 	// conversation extracts dozens: done serially inside the loop below, a
 	// 50-turn transcript took 30s and a full benchmark ingest ran into hours.
 	// The Embedder interface requires implementations to be safe for
 	// concurrent use, so the only cost here is bounded fan-out.
-	vectors := s.embedExtracted(ctx, memories)
+	vectors := s.embedExtracted(ctx, toWrite)
 
 	// Parsed once rather than per memory: a malformed id is a property of the
 	// request, and logging it inside the loop would emit one warning for every
@@ -464,7 +542,28 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 		}
 	}
 
-	for _, mem := range memories {
+	for _, p := range pending {
+		mem := p.mem
+
+		// Stage 3: a paraphrase of something already stored. The neighbours
+		// are fetched once here and reused by contradiction detection and
+		// auto-linking below, so consolidation adds no query of its own.
+		//
+		// Fetched before the write rather than after, so a memory that is
+		// about to be folded is never created at all. Doing it afterwards
+		// would leave the row, its embedding and its edges behind, which is
+		// most of the cost this exists to avoid.
+		neighbours := s.semanticNeighbours(ctx, mem, vectors[mem.ID])
+		if existing, verdict, found := s.consolidateAgainst(mem, neighbours); found {
+			// A fold that does not hold -- because another write moved the row
+			// in between -- falls through to storing this memory normally,
+			// rather than dropping a fact nothing else represents.
+			if folded, ok := s.foldInto(ctx, mem, existing, verdict); ok {
+				reported[p.slot] = memoryToProto(folded)
+				continue
+			}
+		}
+
 		if err := s.repo.CreateMemory(ctx, mem); err != nil {
 			// Extraction is best-effort per memory: one bad memory must not
 			// discard the rest of the conversation. But the caller is told how
@@ -499,10 +598,26 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 		}
 
 		// Auto-link by tags and semantic similarity.
-		relCount += int32(s.autoLinkByTags(ctx, mem, nil, vectors[mem.ID]))
+		//
+		// Contradiction detection runs here too, which it did not before: it
+		// was wired into Store alone, so a fact that reversed an earlier one
+		// left both live whenever the conversation came in through Extract --
+		// which is every conversation an agent ingests.
+		superseded := s.detectAndSupersede(ctx, mem)
+		relCount += int32(s.autoLinkByTags(ctx, mem, superseded, neighbours))
 
 		metrics.MemoriesTotal.WithLabelValues(string(mem.Type)).Inc()
-		pbMemories = append(pbMemories, memoryToProto(mem))
+		reported[p.slot] = memoryToProto(mem)
+	}
+
+	// Slots left empty belong to memories that could not be stored at all;
+	// their failures are logged above. Compacting here keeps the response a
+	// list of memories that exist, without disturbing the order of the rest.
+	pbMemories := make([]*pb.Memory, 0, len(reported))
+	for _, m := range reported {
+		if m != nil {
+			pbMemories = append(pbMemories, m)
+		}
 	}
 
 	return &pb.ExtractResponse{
@@ -838,6 +953,191 @@ func (s *MemoryService) embedExtracted(ctx context.Context, memories []model.Mem
 }
 
 // autoLinkByTags finds existing memories in the same project that share at least
+// semanticNeighbours fetches the nearest stored memories to a vector, once per
+// existingByContent looks up which of these memories the project already holds
+// verbatim, keyed by content hash.
+//
+// One query for the whole batch. A lookup per memory would put a round trip
+// per extracted fact on the write path, which is the cost deduplication exists
+// to remove rather than relocate.
+//
+// A failed lookup returns nil and the write proceeds: deduplication is an
+// optimisation, and refusing to store a conversation because the duplicate
+// check could not run would trade a cost problem for a correctness one.
+func (s *MemoryService) existingByContent(ctx context.Context, projectID string, memories []model.Memory) map[graph.ContentKey]model.Memory {
+	if len(memories) == 0 {
+		return nil
+	}
+
+	hashes := make([]string, 0, len(memories))
+	seen := make(map[string]bool, len(memories))
+	for _, mem := range memories {
+		h := model.ContentHash(mem.Content)
+		if h == "" || seen[h] {
+			continue
+		}
+		seen[h] = true
+		hashes = append(hashes, h)
+	}
+
+	existing, err := s.repo.FindByContentHash(ctx, projectID, hashes)
+	if err != nil {
+		logging.FromContext(ctx).Warn("duplicate lookup failed; this conversation may store facts the project already holds",
+			slog.String("project_id", projectID),
+			slog.Any("error", err))
+		return nil
+	}
+	return existing
+}
+
+// foldInto consolidates a new memory into an existing one instead of storing
+// it, and reports the memory the caller should show for it.
+//
+// A false return means the fold did not hold and the caller must store its
+// memory as a new row after all. That happens when another write changed the
+// stored row between this one reading it and writing to it: the row no longer
+// says what the subsumption decision was based on, so treating the new fact as
+// already represented would silently destroy it. Failing closed here is the
+// difference between a redundant row and a lost fact, and only one of those is
+// recoverable.
+//
+// Two things happen even though no row is written. The stored memory's access
+// count is bumped, because a fact being restated is evidence of its importance
+// and is exactly what the ranking and decay signals are meant to capture --
+// silently dropping the restatement would make a frequently-repeated fact look
+// untouched. And when the new memory says strictly more than the stored one,
+// the stored content is replaced in place, keeping the more informative
+// wording on a row that is already embedded and already linked.
+func (s *MemoryService) foldInto(ctx context.Context, mem, existing model.Memory, verdict extraction.Subsumption) (model.Memory, bool) {
+	log := logging.FromContext(ctx)
+
+	if verdict == extraction.NewSubsumesOld {
+		// The new wording carries everything the stored one did and more, so
+		// upgrading the row loses nothing and keeps the qualifier that makes
+		// a fact answerable.
+		//
+		// Conditional on the row still holding the text the decision was based
+		// on. Two conversations consolidating against the same row would
+		// otherwise both write, and the second would erase the first's fact,
+		// which exists nowhere else precisely because consolidation skipped
+		// storing it.
+		updated, err := s.repo.UpdateMemoryContent(ctx, existing.ID,
+			model.ContentHash(existing.Content), mem.Content)
+		switch {
+		case err != nil:
+			log.Warn("could not upgrade a consolidated memory to the fuller wording; storing it as its own memory instead",
+				slog.String("memory_id", existing.ID.String()),
+				slog.Any("error", err))
+			return model.Memory{}, false
+		case !updated:
+			// Another write moved the row. Its content is no longer what the
+			// subsumption verdict was about, so the verdict does not apply.
+			log.Info("a concurrent write changed the memory being consolidated into; storing this one separately",
+				slog.String("memory_id", existing.ID.String()))
+			return model.Memory{}, false
+		}
+
+		// The embedding is refreshed to match, or vector search would keep
+		// scoring the row against text it no longer holds. A failure here is
+		// not worth undoing the update over: the row is correct and findable
+		// by keyword, it is only mis-placed in vector space until it is
+		// re-embedded.
+		if s.embedder != nil {
+			if vec, err := s.embedder.Embed(mem.Content); err != nil {
+				log.Warn("re-embedding a consolidated memory failed; its vector still reflects the old wording",
+					slog.String("memory_id", existing.ID.String()),
+					slog.Any("error", err))
+			} else if err := s.repo.StoreEmbedding(ctx, existing.ID, existing.ProjectID, vec); err != nil {
+				log.Warn("storing the re-embedded vector for a consolidated memory failed",
+					slog.String("memory_id", existing.ID.String()),
+					slog.Any("error", err))
+			}
+		}
+
+		// The caller reports what the store now holds, not what it held when
+		// the candidate was read.
+		existing.Content = mem.Content
+	}
+
+	if err := s.repo.IncrementAccessCounts(ctx, []uuid.UUID{existing.ID}); err != nil {
+		log.Warn("could not record a restatement against the consolidated memory; ranking will see it as less used than it is",
+			slog.String("memory_id", existing.ID.String()),
+			slog.Any("error", err))
+	}
+
+	metrics.MemoriesConsolidated.WithLabelValues(verdict.String()).Inc()
+	return existing, true
+}
+
+// semanticNeighbours fetches the nearest stored memories to a vector, once per
+// write, for the two consumers that need them.
+//
+// Consolidation checks whether a near-identical fact already exists, and
+// auto-linking needs neighbours to link to. Both want the same set, so the
+// search is hoisted here and the result passed to each: adding consolidation
+// without this would have put a second vector search on every extracted
+// memory, on the write path ingest latency is already dominated by.
+//
+// Contradiction detection is deliberately not a consumer. It compares against
+// recent semantic memories via QueryMemories rather than near ones, because a
+// contradiction is a claim about the same subject and need not be close in
+// embedding space -- "the backend uses Go" and "the backend uses Python" are
+// only as similar as the embedder happens to make them.
+//
+// A nil vector or a failed search returns nil, and every consumer degrades to
+// its non-semantic behaviour rather than failing the write.
+func (s *MemoryService) semanticNeighbours(ctx context.Context, mem model.Memory, vector []float32) []model.MemoryWithContext {
+	if vector == nil {
+		return nil
+	}
+	neighbours, err := s.repo.SearchByVector(ctx, vector, mem.ProjectID, autoLinkCandidates)
+	if err != nil {
+		logging.FromContext(ctx).Warn("semantic neighbour lookup failed; this memory will not be consolidated or semantically linked",
+			slog.String("memory_id", mem.ID.String()),
+			slog.Any("error", err))
+		return nil
+	}
+	return neighbours
+}
+
+// consolidateAgainst reports the existing memory a new one should be folded
+// into, or false when the new memory says something not already stored.
+//
+// This is the semantic half of write-time consolidation; FindByContentHash is
+// the exact half. Extract stored every fact it derived with no check against
+// what was already there, so a 40-question LoCoMo corpus grew to 6,010
+// memories expressing 573 distinct facts, with 6,925 edges mostly linking
+// paraphrases of one fact to each other.
+//
+// The candidate set is the embedding's nearest neighbours, but the decision is
+// lexical: extraction.Subsumes requires one memory's content words to appear in
+// the other in order, with matching polarity. Similarity narrows the search;
+// it never decides. That split matters because the two errors are not
+// symmetric -- a missed duplicate costs one row, while a false merge destroys
+// a fact, and dense embeddings place "moved to Sweden" and "moved from Sweden"
+// within a hair of each other. See internal/extraction/dedup.go.
+//
+// When the new memory says strictly more than the stored one, the stored one
+// is superseded rather than deleted: the row is already linked and already
+// embedded, and a supersedes edge is how the rest of the engine already
+// expresses "this fact was replaced".
+func (s *MemoryService) consolidateAgainst(mem model.Memory, neighbours []model.MemoryWithContext) (model.Memory, extraction.Subsumption, bool) {
+	for _, n := range neighbours {
+		if n.Memory.ID == mem.ID || n.Memory.Type != mem.Type {
+			// A different type is a different claim about the fact's nature,
+			// and GetProfile splits static from dynamic on exactly that field.
+			continue
+		}
+		switch verdict := extraction.Subsumes(mem.Content, n.Memory.Content); verdict {
+		case extraction.Equivalent, extraction.OldSubsumesNew, extraction.NewSubsumesOld:
+			return n.Memory, verdict, true
+		case extraction.Distinct:
+		}
+	}
+	return model.Memory{}, extraction.Distinct, false
+}
+
+// autoLinkByTags finds existing memories in the same project that share at least
 // one tag with the given memory, or whose meaning is close to it, and creates
 // relates_to edges to connect them. This builds implicit topic clusters in the
 // graph. Memories already connected to mem by some other edge (e.g. a
@@ -862,7 +1162,13 @@ func (s *MemoryService) embedExtracted(ctx context.Context, memories []model.Mem
 //
 // Returns the number of edges actually written, so callers can report a real
 // relationship count rather than assuming the call did something.
-func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory, connected map[uuid.UUID]bool, vector []float32) int {
+//
+// Neighbours are supplied by the caller rather than fetched here. They are the
+// same nearest-neighbour set write-time consolidation needs, and consolidation
+// has to run before the memory is written while linking runs after, so the
+// search is hoisted to the caller and its result passed to both. See
+// semanticNeighbours.
+func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory, connected map[uuid.UUID]bool, neighbours []model.MemoryWithContext) int {
 	// Which memories this one is already connected to, so a generic relates_to
 	// edge is not added on top of a more specific relationship.
 	//
@@ -911,49 +1217,42 @@ func (s *MemoryService) autoLinkByTags(ctx context.Context, mem model.Memory, co
 	// The cut is mean + relatedStdDevs standard deviations over the candidate
 	// set, not a constant, because similarity scales belong to the embedder
 	// rather than to the data. See relatedStdDevs.
-	if vector != nil {
-		neighbours, err := s.repo.SearchByVector(ctx, vector, mem.ProjectID, autoLinkCandidates)
-		if err != nil {
-			logging.FromContext(ctx).Warn("semantic auto-linking skipped: vector search failed",
-				slog.String("memory_id", mem.ID.String()),
-				slog.Any("error", err))
-		} else {
-			scores := make([]float64, 0, len(neighbours))
-			for _, n := range neighbours {
-				if !skip(n.Memory.ID) {
-					scores = append(scores, n.Score)
+	if len(neighbours) > 0 {
+		scores := make([]float64, 0, len(neighbours))
+		for _, n := range neighbours {
+			if !skip(n.Memory.ID) {
+				scores = append(scores, n.Score)
+			}
+		}
+
+		if len(scores) > 0 {
+			var sum float64
+			for _, s := range scores {
+				sum += s
+			}
+			mean := sum / float64(len(scores))
+
+			// With too few samples the deviation is meaningless, so the
+			// mean alone is the bar. See minRelatedCandidates.
+			floor := mean
+			if len(scores) >= minRelatedCandidates {
+				var variance float64
+				for _, s := range scores {
+					d := s - mean
+					variance += d * d
 				}
+				floor = mean + relatedStdDevs*math.Sqrt(variance/float64(len(scores)))
 			}
 
-			if len(scores) > 0 {
-				var sum float64
-				for _, s := range scores {
-					sum += s
+			for _, n := range neighbours {
+				if skip(n.Memory.ID) || n.Score < floor {
+					continue
 				}
-				mean := sum / float64(len(scores))
-
-				// With too few samples the deviation is meaningless, so the
-				// mean alone is the bar. See minRelatedCandidates.
-				floor := mean
-				if len(scores) >= minRelatedCandidates {
-					var variance float64
-					for _, s := range scores {
-						d := s - mean
-						variance += d * d
-					}
-					floor = mean + relatedStdDevs*math.Sqrt(variance/float64(len(scores)))
+				// A tag overlap already scored this pair higher; leave it.
+				if w, ok := seen[n.Memory.ID]; ok && w >= n.Score {
+					continue
 				}
-
-				for _, n := range neighbours {
-					if skip(n.Memory.ID) || n.Score < floor {
-						continue
-					}
-					// A tag overlap already scored this pair higher; leave it.
-					if w, ok := seen[n.Memory.ID]; ok && w >= n.Score {
-						continue
-					}
-					seen[n.Memory.ID] = n.Score
-				}
+				seen[n.Memory.ID] = n.Score
 			}
 		}
 	}

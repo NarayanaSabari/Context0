@@ -356,6 +356,10 @@ var memoryPropertyIndexes = []struct{ name, property string }{
 	{"memory_id_idx", "id"},
 	// Filters nearly every query; also the tenant boundary.
 	{"memory_project_id_idx", "project_id"},
+	// Read once per extracted memory by FindByContentHash, on the write path.
+	// Without it, deduplicating a conversation's worth of memories is a full
+	// label scan per ingest -- the cost this deduplication exists to avoid.
+	{"memory_content_hash_idx", "content_hash"},
 }
 
 // createPropertyIndexes builds the expression indexes and refreshes planner
@@ -529,21 +533,152 @@ func (r *AGERepository) cypherExec(ctx context.Context, query string, p params) 
 // and metadata properties. Tags are serialized as a JSON string because AGE
 // does not natively support list-typed properties. The initial access_count
 // is 0 and decay_score is 1.0 (no decay).
+//
+// content_hash is derived here rather than taken from the caller. It is the
+// key write-time deduplication looks a memory up by, so a caller that computed
+// it from different text -- or forgot to -- would make the store's idea of
+// "the same fact" disagree with its own content.
 func (r *AGERepository) CreateMemory(ctx context.Context, mem model.Memory) error {
 	tagsJSON, _ := json.Marshal(mem.Tags)
 	const q = `CREATE (m:Memory {id: $id, content: $content, type: $type, project_id: $project_id, ` +
-		`tags: $tags, created_at: $created_at, access_count: 0, decay_score: 1.0}) RETURN m`
+		`tags: $tags, content_hash: $content_hash, created_at: $created_at, ` +
+		`access_count: 0, decay_score: 1.0}) RETURN m`
 	return r.cypherExec(ctx, q, params{
 		"id":         mem.ID.String(),
 		"content":    mem.Content,
 		"type":       string(mem.Type),
 		"project_id": mem.ProjectID,
 		"tags":       string(tagsJSON),
+		// Written on every memory so the lookup in FindByContentHash is an
+		// indexed equality test rather than a scan that normalises content
+		// row by row.
+		"content_hash": model.ContentHash(mem.Content),
 		// Millisecond precision, not second: at second granularity a busy
 		// project puts hundreds of memories on the same timestamp, which makes
 		// any created_at ordering arbitrary within the group.
 		"created_at": mem.CreatedAt.Format(timestampLayout),
 	})
+}
+
+// FindByContentHash returns the memories in a project whose normalised content
+// matches any of the given hashes, keyed by content hash and memory type.
+//
+// This is the cheap half of write-time consolidation. Before the fix this
+// serves, Extract stored every fact it derived with no check against what was
+// already there: a 40-question LoCoMo corpus held 6,010 memories expressing
+// 573 distinct facts, with `Caroline is transgender.` stored 25 times. Each
+// copy carried an embedding, an index entry and a share of the 6,925 edges.
+//
+// Keyed by type as well as content because the type is part of the claim, not
+// metadata about it: GetProfile splits the static layer from the dynamic one
+// on exactly that field, so folding an episodic memory into a semantic row
+// with the same words would move a fact between the two layers. The same
+// guard is applied by FoldRedundant and consolidateAgainst, and this is the
+// one place it could have been skipped.
+//
+// One statement for the whole batch rather than a lookup per memory. Extract
+// processes a conversation's worth of memories at once, and a round trip each
+// would put the deduplication cost squarely on the write path it is meant to
+// make cheaper.
+//
+// Only the first memory found per key is returned. Corpora written before
+// this existed hold duplicates already, and the consolidation job's merge
+// phase is what retires those; the write path only needs to know that a copy
+// exists.
+func (r *AGERepository) FindByContentHash(ctx context.Context, projectID string, hashes []string) (map[ContentKey]model.Memory, error) {
+	found := make(map[ContentKey]model.Memory)
+	if projectID == "" || len(hashes) == 0 {
+		return found, nil
+	}
+
+	list, err := contentHashLiteralList(hashes)
+	if err != nil {
+		return nil, err
+	}
+	if list == "" {
+		return found, nil
+	}
+
+	// The hash list is inlined for the same reason uuidLiteralList inlines
+	// ids: a parameterized IN reaches the expression index only while planner
+	// statistics are fresh, and this runs during bulk ingest, which is exactly
+	// when they are not. Every element is validated as fixed-width hex first,
+	// so no input can close the literal.
+	q := `MATCH (m:Memory) WHERE m.project_id = $project_id AND m.content_hash IN ` + list +
+		` RETURN properties(m)`
+
+	rows, err := r.cypher(ctx, q, params{"project_id": projectID})
+	if err != nil {
+		return nil, fmt.Errorf("find by content hash: %w", err)
+	}
+
+	props, err := scanAgtype[memoryProps](rows)
+	if err != nil {
+		return nil, fmt.Errorf("scan content hash matches: %w", err)
+	}
+	for _, p := range props {
+		mem := p.toModel()
+		// Recomputed rather than read back: a row written before content_hash
+		// existed has an empty property, and keying on that would collapse
+		// every such row onto one bucket.
+		h := model.ContentHash(mem.Content)
+		if h == "" {
+			continue
+		}
+		key := ContentKey{Hash: h, Type: mem.Type}
+		if _, ok := found[key]; !ok {
+			found[key] = mem
+		}
+	}
+
+	return found, nil
+}
+
+// ContentKey identifies a memory by what it says and what kind of claim it is.
+//
+// Both halves are load-bearing for deduplication. Content alone would fold an
+// episodic memory into a semantic one with identical words, which moves the
+// fact between the two layers GetProfile builds.
+type ContentKey struct {
+	// Hash is model.ContentHash of the memory's content.
+	Hash string
+	// Type is the memory's cognitive category.
+	Type model.MemoryType
+}
+
+// contentHashLiteralList renders content hashes as a Cypher list literal.
+//
+// Same narrow exception to parameterisation as uuidLiteralList, and the same
+// guard: every element must be exactly the fixed-width lowercase hex that
+// model.ContentHash produces, so no value can carry a quote, a backslash or a
+// brace into the query text. Anything else is refused rather than escaped.
+//
+// Returns "" when no hash survives validation, so the caller can skip the
+// query rather than emitting `IN []`.
+func contentHashLiteralList(hashes []string) (string, error) {
+	var b strings.Builder
+	b.WriteByte('[')
+	n := 0
+	for _, h := range hashes {
+		if h == "" {
+			continue
+		}
+		if !model.IsContentHash(h) {
+			return "", fmt.Errorf("refusing to inline non-hash content hash %q", h)
+		}
+		if n > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('\'')
+		b.WriteString(h)
+		b.WriteByte('\'')
+		n++
+	}
+	b.WriteByte(']')
+	if n == 0 {
+		return "", nil
+	}
+	return b.String(), nil
 }
 
 // GetMemory retrieves a single memory node by its UUID. Returns an error
@@ -628,6 +763,73 @@ func (r *AGERepository) IncrementAccessCounts(ctx context.Context, ids []uuid.UU
 func (r *AGERepository) UpdateDecayScore(ctx context.Context, id uuid.UUID, score float64) error {
 	const q = `MATCH (m:Memory) WHERE m.id = $id SET m.decay_score = $score RETURN m`
 	return r.cypherExec(ctx, q, params{"id": id.String(), "score": score})
+}
+
+// UpdateMemoryContent replaces a memory's text in place, but only while the
+// row still holds the text the caller based its decision on.
+//
+// Called by write-time consolidation when a new memory says everything a
+// stored one says and more: the fuller wording replaces the shorter one on a
+// row that is already embedded, already linked, and already carries its access
+// history, rather than being stored as a second row saying nearly the same
+// thing.
+//
+// # Why this is a compare-and-set
+//
+// Consolidation reads a candidate, decides the new text subsumes it, and then
+// writes. Between the read and the write another Extract can do the same
+// against the same row. Both see `Caroline adopted a dog`, one writes
+// `...a rescue dog named Biscuit` and the other writes `...a small nervous
+// dog`, and the second silently destroys the first -- neither statement was
+// ever a duplicate of the other, and the losing fact exists nowhere else,
+// because consolidation skipped storing it precisely because it believed the
+// row already covered it.
+//
+// expectedHash is model.ContentHash of the text the caller read. The write
+// applies only if the row still matches, and `updated` reports whether it did.
+// A false return is not an error: it means the row moved, and the caller must
+// fall back to storing its memory as a new row rather than assuming the fact
+// is represented.
+//
+// content_hash is rewritten in the same statement. It is what the duplicate
+// lookup keys on, so leaving it pointing at the old text would make the row
+// findable only by content it no longer holds -- and the next ingest of the
+// new wording would store a second copy, which is precisely what this exists
+// to prevent.
+//
+// The embedding lives in a separate table that AGE knows nothing about, so
+// re-embedding is the caller's job. internal/service does it in foldInto.
+func (r *AGERepository) UpdateMemoryContent(ctx context.Context, id uuid.UUID, expectedHash, content string) (updated bool, err error) {
+	if !model.IsContentHash(expectedHash) {
+		// Without a hash to compare against, this would be a blind overwrite.
+		// Refused rather than defaulted, because the default that "works" is
+		// exactly the lost update above.
+		return false, fmt.Errorf("update memory content for %s: expected hash %q is not a content hash; "+
+			"an unconditional overwrite can destroy a concurrent write", id, expectedHash)
+	}
+
+	// The guard is part of the MATCH, so the read and the write are one
+	// statement and nothing can interleave between them.
+	const q = `MATCH (m:Memory) WHERE m.id = $id AND m.content_hash = $expected_hash ` +
+		`SET m.content = $content, m.content_hash = $content_hash RETURN m.id`
+
+	rows, err := r.cypher(ctx, q, params{
+		"id":            id.String(),
+		"expected_hash": expectedHash,
+		"content":       content,
+		"content_hash":  model.ContentHash(content),
+	})
+	if err != nil {
+		return false, fmt.Errorf("update memory content: %w", err)
+	}
+
+	// A row comes back only when the guard held. No row means another write
+	// changed the content first.
+	_, found, err := scanOne[string](rows)
+	if err != nil {
+		return false, fmt.Errorf("scan updated memory: %w", err)
+	}
+	return found, nil
 }
 
 // --- Edge ---

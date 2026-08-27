@@ -51,6 +51,27 @@ var (
 		[]string{"relationship"},
 	)
 
+	// MemoriesConsolidated counts extracted memories that were folded into an
+	// existing memory instead of being stored as a new row, by how they
+	// related to it.
+	//
+	// Paired with MemoriesTotal this is the ratio that says whether write-time
+	// consolidation is working. It went in alongside the fix for a corpus
+	// holding 6,010 memories for 573 distinct facts, and without a metric the
+	// only way to notice that ratio drifting back is to count rows by hand.
+	//
+	// The verdict label separates the cases operationally: a store that is
+	// almost all Equivalent is ingesting the same transcript repeatedly, while
+	// one that is mostly NewSubsumesOld is being fed progressively more
+	// detailed restatements of the same facts.
+	MemoriesConsolidated = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kora_memories_consolidated_total",
+			Help: "Extracted memories folded into an existing memory rather than stored, by subsumption verdict.",
+		},
+		[]string{"verdict"},
+	)
+
 	// QueryDuration observes the latency of query requests in seconds.
 	QueryDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -196,6 +217,7 @@ func Register() {
 	prometheus.MustRegister(
 		MemoriesTotal,
 		EdgesTotal,
+		MemoriesConsolidated,
 		QueryDuration,
 		StoreDuration,
 		QueryResultsCount,
