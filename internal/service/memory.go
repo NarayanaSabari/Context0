@@ -403,6 +403,27 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 	// concurrent use, so the only cost here is bounded fan-out.
 	vectors := s.embedExtracted(ctx, memories)
 
+	// Parsed once rather than per memory: a malformed id is a property of the
+	// request, and logging it inside the loop would emit one warning for every
+	// extracted memory in the conversation.
+	//
+	// Store rejects a bad session_id outright. Extract only warns, because
+	// failing here would discard an entire conversation over one bad field,
+	// but it must not stay silent: dropping the error meant a typo unlinked
+	// every extracted memory while the response still reported success.
+	var sessionID uuid.UUID
+	haveSession := false
+	if req.SessionId != "" {
+		parsed, err := uuid.Parse(req.SessionId)
+		if err != nil {
+			logging.FromContext(ctx).Warn("session_id is not a valid UUID; extracted memories will not be linked to a session",
+				slog.String("session_id", req.SessionId),
+				slog.Any("error", err))
+		} else {
+			sessionID, haveSession = parsed, true
+		}
+	}
+
 	for _, mem := range memories {
 		if err := s.repo.CreateMemory(ctx, mem); err != nil {
 			// Extraction is best-effort per memory: one bad memory must not
@@ -428,15 +449,12 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 		}
 
 		// Link to session if provided.
-		if req.SessionId != "" {
-			sessID, err := uuid.Parse(req.SessionId)
-			if err == nil {
-				if err := s.repo.LinkMemoryToSession(ctx, sessID, mem.ID); err != nil {
-					logging.FromContext(ctx).Warn("linking extracted memory to session failed",
-						slog.String("memory_id", mem.ID.String()),
-						slog.String("session_id", req.SessionId),
-						slog.Any("error", err))
-				}
+		if haveSession {
+			if err := s.repo.LinkMemoryToSession(ctx, sessionID, mem.ID); err != nil {
+				logging.FromContext(ctx).Warn("linking extracted memory to session failed",
+					slog.String("memory_id", mem.ID.String()),
+					slog.String("session_id", req.SessionId),
+					slog.Any("error", err))
 			}
 		}
 
