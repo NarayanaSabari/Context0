@@ -1,7 +1,59 @@
 # Keyword search cannot be indexed through AGE's `CONTAINS`
 
-Status: investigated and rejected, 2026-08-18. Measured on a live cluster
-holding 44,809 `:Memory` vertices.
+Status: **resolved, 2026-08-27**, by taking option 2 below. Originally
+investigated and rejected 2026-08-18, measured on a live cluster holding 44,809
+`:Memory` vertices.
+
+Keyword retrieval now runs as SQL full-text search against the `Memory` table
+and joins back to the graph by id, in `internal/graph/fts.go`. The findings
+below stand unchanged and are what motivated the move; what follows is what
+actually shipped.
+
+## What shipped
+
+`to_tsvector`/`ts_rank_cd` with a GIN index over the same property-access
+expression this document showed a trigram index could not be used for. Verified
+against a live instance:
+
+- The query plans as a `Bitmap Index Scan on memory_content_fts_idx`, which is
+  exactly what `CONTAINS` could not do at any cost.
+- `go` no longer matches `mango` or `algorithm`, and does match `going`,
+  because `to_tsvector` lexes into words before comparing.
+- Rare terms outweigh common ones, which needed more than `ts_rank_cd`. It
+  measures term frequency and cover density and has **no inverse document
+  frequency at all**: a term appearing in 1 document of the corpus and one
+  appearing in 1,775 both rank 0.1 on an equivalent document. The apparent
+  weighting from a query for `the` is the stop-word dictionary, not weighting,
+  and it says nothing about the ordinary words a question is made of -- `said`
+  appears in 1,775 of 4,638 memories in this corpus and no dictionary removes
+  it. So IDF is computed explicitly, with BM25's
+  `ln(1 + (N - df + 0.5) / (df + 0.5))`, and each term's `ts_rank_cd` is
+  weighted by it. Measured: `biscuit` (386 documents) scores 2.49 against
+  `said` (1,775) at 0.96. Each `df` is one Bitmap Index Scan against the same
+  GIN index.
+- Tags remain searchable. The `CONTAINS` retriever matched `content OR tags`,
+  so the index is built over both; dropping tags would have made a memory
+  findable by every word of its prose but not by the label someone attached to
+  it.
+
+The raw `ts_rank_cd` scale was measured rather than assumed, because it decides
+how the score is normalised. On one document, varying only how many OR-ed query
+terms match:
+
+| terms matched | 1 | 2 | 3 | 5 | 8 | 12 | 20 |
+|---|---|---|---|---|---|---|---|
+| `ts_rank_cd` | 0.1 | 0.2 | 0.3 | 0.5 | 0.8 | 1.2 | 1.7 |
+
+Roughly 0.1 per matched term, so a five-word question scores five times higher
+than a one-word one for the same quality of match. That is why
+`ranking.NormalizeBM25` adapts its sigmoid to the query length, and why Mem0's
+published midpoints of 5.0-12.0 could not be copied: those are for their own
+BM25 implementation, and every real `ts_rank_cd` score would land on the flat
+bottom of that curve.
+
+`QueryMemories` keeps its `CONTAINS` branch. It is no longer the search path,
+but it still serves queries carrying no searchable terms, and profile and
+consolidation enumeration that passes no keywords at all.
 
 ## The problem
 

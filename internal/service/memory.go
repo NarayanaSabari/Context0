@@ -228,20 +228,66 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 	// Parse query into structured form with time filtering.
 	filter := ParseQuery(req.Query, req.ProjectId, types, req.TopK)
 
-	// --- Hybrid retrieval: graph + vector ---
-	graphResults, err := s.repo.QueryMemories(ctx, filter)
+	// --- Keyword retrieval: PostgreSQL full-text search ---
+	//
+	// This was Cypher `CONTAINS`, which is substring matching with no term
+	// weighting: `the` counted exactly as much as `zqxjklmw`, and it matched
+	// inside words, so `go` matched `mango` and `algorithm`. It also could not
+	// be indexed at all -- AGE refuses an index for it even under
+	// `enable_seqscan=off`, which docs/research/keyword-search-indexing.md
+	// establishes is not a costing decision but the absence of any operator
+	// class that could serve the predicate.
+	//
+	// ts_rank_cd grades the match instead of asserting it, which is what lets
+	// the fusion below be additive rather than tiered.
+	graphResults, err := s.repo.SearchByText(ctx, req.ProjectId, filter.Keywords, keywordCandidatePool(filter.TopK))
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "graph query failed: %v", err)
+		return nil, status.Errorf(codes.Internal, "keyword search failed: %v", err)
 	}
 
-	// The graph retriever matches keywords with a boolean CONTAINS, so grade
-	// each hit lexically here to recover a comparable relevance signal.
+	// Raw ts_rank_cd values arrive in Score. Normalising them is a ranking
+	// decision -- the right curve depends on the query's length -- so it
+	// happens here rather than in the repository.
+	//
+	// A query with no searchable terms retrieves nothing by keyword, which is
+	// correct: there is nothing to match. The other two retrievers cover it.
 	for i := range graphResults {
-		graphResults[i].Relevance = ranking.LexicalRelevance(
-			graphResults[i].Memory.Content,
-			graphResults[i].Memory.Tags,
-			filter.Keywords,
-		)
+		graphResults[i].Relevance = ranking.NormalizeBM25(graphResults[i].Score, len(filter.Keywords))
+	}
+
+	// A query with nothing to search for still has to return something, so it
+	// falls back to the plain graph query: a bare "list everything" request is
+	// answered by recency and the other retrievers rather than by an empty
+	// result.
+	//
+	// The condition is "keyword retrieval found nothing", not "the caller
+	// supplied no keywords". Those differ, because extractKeywords has its own
+	// stop-word list and PostgreSQL's english dictionary has another: "have",
+	// "being" and "and" survive the first and are removed by the second, so a
+	// query made entirely of them produces keywords that lex to an empty
+	// tsquery. Keying the fallback on the caller's input would skip it for
+	// exactly those queries and return nothing at all.
+	if len(graphResults) == 0 {
+		// Without its keywords: they matched nothing, and QueryMemories filters
+		// on them with CONTAINS, so passing them through makes the fallback
+		// return nothing for exactly the queries that need it. What is wanted
+		// here is the project's memories by recency, which is what the filter
+		// reduces to once the keywords are gone.
+		fallback := filter
+		fallback.Keywords = nil
+
+		graphResults, err = s.repo.QueryMemories(ctx, fallback)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "graph query failed: %v", err)
+		}
+		for i := range graphResults {
+			// Nothing matched, so no candidate is more relevant than another by
+			// keyword. Relevance is left at zero rather than set to a constant:
+			// these are fallback candidates, and the vector and entity
+			// retrievers' signals should still order them if either has an
+			// opinion. Recency, frequency and type order the rest.
+			graphResults[i].Relevance = 0
+		}
 	}
 
 	var vectorResults []model.MemoryWithContext
@@ -293,7 +339,7 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 	// lexically matched from one the vector retriever surfaced on similarity
 	// alone; the two scores are otherwise not comparable. See
 	// ranking.RelevanceTier.
-	results := mergeResults(graphResults, vectorResults, entityResults, entityOverlap, filter.Keywords)
+	results := mergeResults(graphResults, vectorResults, entityResults, entityOverlap)
 
 	// Rank results using scoring function. This consumes the Relevance set
 	// above, so retrieval quality drives the final order.
@@ -1030,6 +1076,32 @@ const (
 	maxEntityCandidatePool    = 100
 )
 
+// Keyword candidate pool sizing, matching the graph retriever's previous
+// over-fetch. This LIMIT runs before ranking, so it decides what ranking is
+// allowed to consider, and the three retrievers exist to cover each other --
+// a pool that is generous on one side but tight on another leaves the hybrid
+// with fewer working retrievers than it appears to have.
+//
+// The cap is the graph side's, because a keyword hit costs one row and no
+// embedding to hydrate.
+const (
+	graphCandidatePoolFactor = 10
+	maxGraphCandidatePool    = 500
+)
+
+// keywordCandidatePool returns how many keyword hits to fetch for a query
+// asking for topK results.
+func keywordCandidatePool(topK int32) int {
+	pool := int(topK) * graphCandidatePoolFactor
+	if pool > maxGraphCandidatePool {
+		pool = maxGraphCandidatePool
+	}
+	if pool < 1 {
+		pool = 1
+	}
+	return pool
+}
+
 // entityCandidatePool returns how many entity matches to fetch for a query
 // asking for topK results.
 //
@@ -1723,19 +1795,19 @@ func extractKeywords(query string) []string {
 // single deduplicated slice, carrying each candidate's retrieval relevance
 // forward for the ranking layer.
 //
-// Graph hits arrive with a lexical Relevance already assigned by the caller;
-// vector hits carry cosine similarity in Score, which is normalized into
-// Relevance here. When a memory is found by both retrievers the two signals are
-// combined via ranking.CombineRelevance, so cross-strategy agreement raises the
-// memory above what either retriever claimed alone.
+// Each retriever contributes a signal on its own scale, and every candidate is
+// scored on all three whether or not that retriever found it:
 //
-// Entity overlap joins on the lexical side rather than as a separate tier.
-// The two are genuinely comparable -- both are "the fraction of what the query
-// asked for that this memory carries" -- which cosine similarity is not, and
-// that is why cosine needs RelevanceTier and this does not. A memory naming
-// every entity the query names therefore enters the matched tier even when it
-// shares no keyword, which is the entire point: "the dog bolts under the bed"
-// answers "what is Biscuit afraid of?" without containing one query term.
+//   - Keyword hits arrive with a normalised ts_rank_cd in Relevance, set by
+//     the caller because the normalisation depends on the query length.
+//   - Vector hits carry cosine similarity in Score.
+//   - Entity overlap arrives as a map, since a memory the other two retrievers
+//     found is just as much about the query's subject as one this retriever
+//     surfaced.
+//
+// ranking.FuseRelevance combines them additively. That a memory can enter on
+// entity evidence alone is the point: "the dog bolts under the bed" answers
+// "what is Biscuit afraid of?" without sharing one query term.
 //
 // The returned slice is sorted by memory ID. Merging happens through a map, and
 // Go randomizes map iteration, so without this the candidate order (and
@@ -1745,27 +1817,34 @@ func mergeResults(
 	graph, vector []model.MemoryWithContext,
 	entity []model.Memory,
 	entityOverlap map[uuid.UUID]float64,
-	keywords []string,
 ) []model.MemoryWithContext {
 	seen := make(map[uuid.UUID]*model.MemoryWithContext, len(graph)+len(vector)+len(entity))
-	hasKeywords := len(keywords) > 0
 
-	// Track the cosine signal separately from the lexical one. Overwriting a
-	// lexical score with a cosine score, or vice versa, is what let an
-	// unmatched memory outrank a verbatim match.
+	// Which candidates a retriever other than vector search found. The
+	// semantic gate below does not apply to those: they were not rescued by a
+	// weak signal, they were independently retrieved on evidence the gate says
+	// nothing about. See ranking.PassesSemanticGate.
+	otherEvidence := make(map[uuid.UUID]bool, len(graph)+len(entity))
+
+	// Track the cosine signal separately from the keyword one. They are
+	// different kinds of evidence and the fusion below weights them
+	// differently, so overwriting one with the other would silently reweight
+	// the query.
 	cosine := make(map[uuid.UUID]float64, len(vector))
 	for _, r := range vector {
 		cosine[r.Memory.ID] = r.Score
 	}
 
-	// Add all graph results, whose lexical Relevance was set by the caller.
+	// Add all keyword results, whose normalised ts_rank_cd the caller has
+	// already placed in Relevance.
 	for i := range graph {
 		r := graph[i]
 		seen[r.Memory.ID] = &r
+		otherEvidence[r.Memory.ID] = true
 	}
 
-	// Add vector-only results. A memory the graph retriever did not return did
-	// not match any keyword, so it carries no lexical evidence.
+	// Add vector-only results. A memory full-text search did not return
+	// matched none of the query's terms, so it carries no keyword evidence.
 	for i := range vector {
 		r := vector[i]
 		if _, ok := seen[r.Memory.ID]; ok {
@@ -1779,6 +1858,7 @@ func mergeResults(
 	// other retriever reached. Their evidence is applied below.
 	for i := range entity {
 		mem := entity[i]
+		otherEvidence[mem.ID] = true
 		if _, ok := seen[mem.ID]; ok {
 			continue
 		}
@@ -1786,38 +1866,24 @@ func mergeResults(
 		seen[mem.ID] = &r
 	}
 
-	// Entity evidence is folded in before tiering, on the lexical scale, so a
-	// memory found only by entity is judged on what it actually shares with
-	// the query rather than defaulting into the unmatched tier.
+	// Resolve every candidate on one scale, additively.
 	//
-	// The stronger of the two lexical signals wins rather than their sum:
-	// naming the query's subject and containing its words are two readings of
-	// the same evidence, and adding them would let a memory that does both
-	// mildly outrank one that does either well.
-	for id, r := range seen {
-		if e := ranking.EntityRelevance(entityOverlap[id]); e > r.Relevance {
-			r.Relevance = e
-		}
-	}
-
-	// Resolve every candidate on one scale.
-	//
-	// hasKeywords is widened to include entity evidence: a query naming an
-	// entity but carrying no searchable keyword ("Biscuit" alone, after stop
-	// words) still has lexical evidence to prefer, and without this the tier
-	// would collapse to cosine alone and discard it.
-	hasLexicalEvidence := hasKeywords || len(entityOverlap) > 0
-	for id, r := range seen {
-		r.Relevance = ranking.RelevanceTier(r.Relevance, cosine[id], hasLexicalEvidence)
-		// The boost is what orders memories the tier has already placed
-		// together: among candidates the retrievers scored equally, the one
-		// about the query's subject comes first. Sized to break ties rather
-		// than overturn them. See ranking.entityBoost.
-		r.Relevance = ranking.ApplyEntityBoost(r.Relevance, entityOverlap[id])
-	}
-
+	// The semantic gate runs first, and that ordering is the substance of it:
+	// gating after the combine lets keyword overlap alone rescue a candidate
+	// the embedder says is unrelated. It applies only where there is a cosine
+	// score to judge -- a candidate vector search never scored is unmeasured,
+	// not weak, and discarding those would disable keyword and entity
+	// retrieval whenever no embedder is configured.
 	results := make([]model.MemoryWithContext, 0, len(seen))
-	for _, r := range seen {
+	for id, r := range seen {
+		cos, scored := cosine[id]
+		if !ranking.PassesSemanticGate(cos, scored, otherEvidence[id]) {
+			continue
+		}
+		// Additive, not tiered. See ranking.FuseRelevance: the tier ranked any
+		// lexical match above any non-match, which with a graded keyword
+		// signal is a stronger claim than the evidence supports.
+		r.Relevance = ranking.FuseRelevance(r.Relevance, cos, entityOverlap[id])
 		results = append(results, *r)
 	}
 	sort.Slice(results, func(i, j int) bool {

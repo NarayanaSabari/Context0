@@ -144,7 +144,7 @@ func TestMergeResults_CarriesRelevanceForward(t *testing.T) {
 		{Memory: model.Memory{ID: both}, Score: 0.5},
 	}
 
-	merged := mergeResults(graphResults, vectorResults, nil, nil, []string{"kw"})
+	merged := mergeResults(graphResults, vectorResults, nil, nil)
 
 	if len(merged) != 3 {
 		t.Fatalf("expected 3 deduplicated results, got %d", len(merged))
@@ -173,7 +173,7 @@ func TestMergeResults_CarriesRelevanceForward(t *testing.T) {
 	// memory matched lexically alone.
 	lexicalOnly := mergeResults(
 		[]model.MemoryWithContext{{Memory: model.Memory{ID: both}, Relevance: 0.6}},
-		nil, nil, nil, []string{"kw"},
+		nil, nil, nil,
 	)
 	if byID[both].Relevance <= lexicalOnly[0].Relevance {
 		t.Errorf("cross-retriever agreement should boost relevance: %f with agreement vs %f without",
@@ -198,9 +198,9 @@ func TestMergeResults_IsDeterministic(t *testing.T) {
 		})
 	}
 
-	first := mergeResults(graphResults, nil, nil, nil, []string{"kw"})
+	first := mergeResults(graphResults, nil, nil, nil)
 	for i := 0; i < 20; i++ {
-		got := mergeResults(graphResults, nil, nil, nil, []string{"kw"})
+		got := mergeResults(graphResults, nil, nil, nil)
 		for j := range got {
 			if got[j].Memory.ID != first[j].Memory.ID {
 				t.Fatalf("mergeResults order varies between identical calls at %d", j)

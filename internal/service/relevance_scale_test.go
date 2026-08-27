@@ -44,7 +44,6 @@ func TestExactKeywordMatchOutranksVectorOnlyResult(t *testing.T) {
 		[]model.MemoryWithContext{exact},
 		[]model.MemoryWithContext{vectorOnly},
 		nil, nil,
-		[]string{"kjgzoaii"},
 	)
 
 	var exactRel, vectorRel float64

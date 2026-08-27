@@ -164,10 +164,17 @@ func frequencyFactor(accessCount int64) float64 {
 }
 
 // clamp01 constrains a signal to [0, 1]. Retrieval scores arrive from external
-// sources (pgvector cosine distance, lexical overlap ratios) that can drift
-// slightly outside the unit interval through floating-point error.
+// sources (pgvector cosine distance, ts_rank_cd, lexical overlap ratios) that
+// can drift slightly outside the unit interval through floating-point error.
+//
+// NaN maps to 0 rather than passing through. Every comparison against NaN is
+// false, so the two bounds checks below would return it unchanged and it would
+// then contaminate the composite score, any edge weight derived from it, and
+// the JSON response -- which this repository has already seen once, as "json:
+// unsupported value: NaN" from a zero embedding making cosine distance
+// undefined. A signal that is not a number is not evidence, so it scores zero.
 func clamp01(v float64) float64 {
-	if v < 0 {
+	if math.IsNaN(v) || v < 0 {
 		return 0
 	}
 	if v > 1 {

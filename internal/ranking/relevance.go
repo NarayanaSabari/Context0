@@ -1,15 +1,26 @@
 // relevance.go computes the retrieval-stage relevance signal that feeds the
 // composite score in scorer.go.
 //
-// Two retrievers produce candidates, and each needs its match quality expressed
-// on the same [0, 1] scale before the two sets can be merged:
+// # Superseded by bm25.go
 //
-//   - The vector retriever already emits cosine similarity in [0, 1], so it is
-//     used directly.
-//   - The graph retriever matches with Cypher CONTAINS, which is boolean: a
-//     memory either contains a keyword or it does not. LexicalRelevance recovers
-//     a graded score from those boolean matches so that a memory matching every
-//     query term outranks one matching a single term.
+// LexicalRelevance and RelevanceTier are no longer on the query path. They
+// existed because the keyword retriever matched with Cypher CONTAINS, which is
+// boolean -- a memory either contains a term or it does not -- so LexicalRelevance
+// recovered a graded score from those booleans and RelevanceTier ordered that
+// score against cosine similarity, which is on an unrelated scale.
+//
+// Keyword retrieval now uses ts_rank_cd, which grades the match directly, so
+// neither reconstruction is needed and ranking.FuseRelevance combines the
+// signals additively instead.
+//
+// They are kept, and kept tested, for two reasons. The reasoning in
+// RelevanceTier's comment is the record of a real failure -- an unfiltered
+// vector hit at 0.87 cosine displacing a verbatim match -- and that constraint
+// still binds the fusion weights that replaced it. And the tier is the
+// fallback if the full-text path ever has to be reverted, which is a change
+// that touches the database schema and is therefore worth keeping cheap.
+//
+// CombineRelevance and the entity helpers below are live.
 package ranking
 
 import "strings"

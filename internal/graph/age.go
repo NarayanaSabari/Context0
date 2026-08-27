@@ -344,6 +344,14 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 		return err
 	}
 
+	// The full-text index backing keyword retrieval. This one is load-bearing
+	// rather than an optimisation: without it keyword search is a sequential
+	// scan of the whole Memory label, which is the state Cypher CONTAINS was
+	// permanently stuck in.
+	if err := r.initFullTextSchema(ctx); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -1167,6 +1175,26 @@ func (r *AGERepository) LinkMemoryToSession(ctx context.Context, sessionID, memo
 // matching against both content and tags (OR-ed within the keyword group).
 // Results are ordered by how many of the query's keywords each memory matches,
 // then by created_at DESC, and capped at filter.TopK (default 5).
+//
+// # This is no longer the search path
+//
+// Query retrieves keywords through SearchByText, which uses PostgreSQL
+// full-text search: it grades matches with ts_rank_cd instead of asserting
+// them with CONTAINS, it does not match inside words, and it can use an index,
+// which CONTAINS provably cannot (see fts.go and
+// docs/research/keyword-search-indexing.md).
+//
+// What still uses this, and why the keyword branch below is kept:
+//
+//   - Query itself, for a request carrying no searchable terms. Full-text
+//     search has nothing to match on "list everything", so recency ordering is
+//     the answer.
+//   - GetProfile, consolidation, and contradiction detection, which enumerate
+//     a project rather than search it and pass no keywords at all.
+//   - The keyword-ordering behaviour pinned by
+//     TestQueryMemories_KeywordMatchSurvivesTieBreak and
+//     TestQueryMemories_KeywordMatchSurvivesLargeRecencyGap, which remain the
+//     regression tests for candidate selection under created_at ties.
 //
 // Only the shape of the query varies with the filter; every filter value is
 // bound as a parameter. The generated Cypher text therefore depends solely on
