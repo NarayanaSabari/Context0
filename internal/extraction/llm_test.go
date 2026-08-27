@@ -221,3 +221,25 @@ func TestLLMExtractor_SendsTheConversation(t *testing.T) {
 		t.Error("the request carries no model field")
 	}
 }
+
+// TestExtractionPrompt_DemandsSpecifics pins the instruction that keeps named
+// entities out of the generaliser.
+//
+// The prompt is the whole implementation of this extractor, so it is the thing
+// worth testing. Without an explicit rule, models paraphrase specifics into
+// categories: on LoCoMo, "Caroline moved from Sweden" was stored as "Caroline
+// moved from her home country", and the question asking which country became
+// unanswerable from a memory that retrieval had surfaced correctly. Losing a
+// proper noun at write time is unrecoverable, unlike a ranking mistake.
+func TestExtractionPrompt_DemandsSpecifics(t *testing.T) {
+	for _, want := range []string{
+		"Never replace a specific with a",
+		"names of people, places",
+		"Resolve every pronoun",
+	} {
+		if !strings.Contains(extractionPrompt, want) {
+			t.Errorf("the extraction prompt no longer instructs %q; "+
+				"models generalise proper nouns away without it", want)
+		}
+	}
+}

@@ -49,10 +49,14 @@ func (RuleExtractor) Extract(conversation string) ([]ExtractedMemory, error) {
 
 // extractionPrompt instructs the model to distil rather than transcribe.
 //
-// Every rule here corresponds to a failure mode observed in the rule-based
+// Every rule here corresponds to a failure mode observed in real extractor
 // output on LoCoMo data: fragments that cannot be understood alone, pronouns
-// with no referent, questions stored as facts, and speaker attribution lost
-// because the extractor stripped the "Name:" prefix.
+// with no referent, questions stored as facts, speaker attribution lost
+// because the rule-based extractor stripped the "Name:" prefix, and -- from
+// the LLM pass itself -- specifics generalised away, where "moved from Sweden"
+// was stored as "moved from her home country" and the question asking which
+// country became unanswerable from a memory that had just been retrieved
+// correctly.
 const extractionPrompt = `Extract durable memories from this conversation.
 
 Each memory must be a standalone statement that is still meaningful when read
@@ -60,7 +64,12 @@ on its own, months later, with none of this conversation available:
 
 - Name the person. Write "Caroline adopted a dog", never "she adopted a dog".
 - Resolve every pronoun and reference against the conversation.
-- Keep dates and quantities exactly as stated.
+- Keep every specific exactly as stated: names of people, places, books,
+  organisations, dates, and quantities. Never replace a specific with a
+  category. "moved from Sweden" must not become "moved from her home country",
+  and "read Charlotte's Web" must not become "read a book as a child".
+- Keep the qualifiers that make a fact answerable. "counseling for transgender
+  people" is a different fact from "counseling".
 - Merge statements that describe one fact into a single memory.
 - Skip greetings, acknowledgements, questions, and anything with no lasting value.
 - Record what was said as fact, not that a sentence was uttered.
