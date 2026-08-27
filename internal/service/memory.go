@@ -177,6 +177,24 @@ func (s *MemoryService) Store(ctx context.Context, req *pb.StoreRequest) (*pb.St
 	// too, so an untagged memory -- which is most of them -- would never link.
 	s.autoLinkByTags(ctx, mem, superseded, s.semanticNeighbours(ctx, mem, vec))
 
+	// Entities, so a directly-stored memory joins the same graph an extracted
+	// one does. Store and Extract must build one graph, not two: a corpus
+	// written through the API would otherwise be unreachable by entity from a
+	// corpus written through extraction, and nothing would say so.
+	//
+	// Named from the content here rather than taken from the request. The
+	// proto carries no entity field, and inferring them is exactly what
+	// extraction.ExtractEntities does.
+	if names := extraction.ExtractEntities(mem.Content); len(names) > 0 {
+		if linked, err := s.repo.LinkEntities(ctx, mem, names); err != nil {
+			logging.FromContext(ctx).Warn("linking a stored memory to its entities failed; it will not be reachable through them",
+				slog.String("memory_id", mem.ID.String()),
+				slog.Any("error", err))
+		} else {
+			metrics.EdgesTotal.WithLabelValues(string(model.RelMentions)).Add(float64(linked))
+		}
+	}
+
 	metrics.MemoriesTotal.WithLabelValues(string(memType)).Inc()
 
 	return &pb.StoreResponse{
@@ -250,11 +268,32 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 		}
 	}
 
-	// Merge: deduplicate by ID, boosting memories both retrievers agree on.
-	// Keywords are passed so the merge can tell a candidate that lexically
-	// matched from one the vector retriever surfaced on similarity alone; the
-	// two scores are otherwise not comparable. See ranking.RelevanceTier.
-	results := mergeResults(graphResults, vectorResults, filter.Keywords)
+	// --- Entity retrieval: the second hop ---
+	//
+	// A third source, and the only one that can reach a memory sharing neither
+	// words nor phrasing with the query. "What is Biscuit afraid of?" and "the
+	// dog hates thunderstorms" have no keyword in common and need not be close
+	// in embedding space, but both are about Biscuit, and the graph knows it.
+	//
+	// This is what multi-hop questions were missing. They were the weakest
+	// LoCoMo category at 65% because the graph clustered paraphrases of one
+	// fact rather than connecting things to each other.
+	//
+	// Run before the merge, not after, because the merge is where the three
+	// signals are put on one scale. Adding entity hits afterwards left them at
+	// zero relevance in RelevanceTier's unmatched tier, permanently below any
+	// memory containing any query word however common -- which made the recall
+	// half of this feature unreachable in every project with more than a
+	// handful of keyword matches.
+	entityResults, entityOverlap := s.entityMatches(ctx, req.ProjectId, req.Query, filter.TopK,
+		graphResults, vectorResults)
+
+	// Merge: deduplicate by ID, and put the three retrievers' signals on one
+	// scale. Keywords are passed so the merge can tell a candidate that
+	// lexically matched from one the vector retriever surfaced on similarity
+	// alone; the two scores are otherwise not comparable. See
+	// ranking.RelevanceTier.
+	results := mergeResults(graphResults, vectorResults, entityResults, entityOverlap, filter.Keywords)
 
 	// Rank results using scoring function. This consumes the Relevance set
 	// above, so retrieval quality drives the final order.
@@ -443,8 +482,19 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 	// fact three times is folded to one before anything is embedded or
 	// written. This is where the 25 copies of `Caroline is transgender.` in
 	// the measured corpus came from.
-	memories := extraction.ToMemories(extraction.FoldRedundant(extracted), req.ProjectId)
+	folded := extraction.FoldRedundant(extracted)
+	memories := extraction.ToMemories(folded, req.ProjectId)
 	relCount := int32(0)
+
+	// Entities travel alongside the memories rather than on them: ToMemories
+	// produces model.Memory values, and an entity is a node in its own right
+	// rather than a property of the memory that names it.
+	//
+	// Indexed by position, which ToMemories preserves one-for-one.
+	entities := make([][]string, len(folded))
+	for i, e := range folded {
+		entities[i] = e.Entities
+	}
 
 	// What the response reports, one slot per surviving extracted memory and
 	// in the order the conversation stated them.
@@ -475,8 +525,9 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 	// is the slice the response is indexed against, so reslicing it would make
 	// every later index refer to a different memory.
 	type pendingMemory struct {
-		mem  model.Memory
-		slot int
+		mem      model.Memory
+		entities []string
+		slot     int
 	}
 	pending := make([]pendingMemory, 0, len(memories))
 
@@ -485,7 +536,7 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 	for i, mem := range memories {
 		existing, ok := duplicates[graph.ContentKey{Hash: model.ContentHash(mem.Content), Type: mem.Type}]
 		if !ok {
-			pending = append(pending, pendingMemory{mem: mem, slot: i})
+			pending = append(pending, pendingMemory{mem: mem, entities: entities[i], slot: i})
 			continue
 		}
 		// The caller asked what this conversation says, and it says this.
@@ -605,6 +656,24 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 		// which is every conversation an agent ingests.
 		superseded := s.detectAndSupersede(ctx, mem)
 		relCount += int32(s.autoLinkByTags(ctx, mem, superseded, neighbours))
+
+		// Entities are what make the second hop possible: two memories about
+		// the same person or place are one edge apart through a shared node,
+		// however differently they are worded. Embedding similarity cannot do
+		// this -- it clusters memories that resemble each other, and two facts
+		// about the same dog need not resemble each other at all.
+		//
+		// Counted as relationships because they are edges in the graph the
+		// caller is told about, and they are frequently the only edges an
+		// untagged, semantically-isolated memory gets.
+		if linked, err := s.repo.LinkEntities(ctx, mem, p.entities); err != nil {
+			logging.FromContext(ctx).Warn("linking a memory to its entities failed; it will not be reachable through them",
+				slog.String("memory_id", mem.ID.String()),
+				slog.Any("error", err))
+		} else {
+			relCount += int32(linked)
+			metrics.EdgesTotal.WithLabelValues(string(model.RelMentions)).Add(float64(linked))
+		}
 
 		metrics.MemoriesTotal.WithLabelValues(string(mem.Type)).Inc()
 		reported[p.slot] = memoryToProto(mem)
@@ -954,6 +1023,125 @@ func (s *MemoryService) embedExtracted(ctx context.Context, memories []model.Mem
 
 // autoLinkByTags finds existing memories in the same project that share at least
 // semanticNeighbours fetches the nearest stored memories to a vector, once per
+// entityCandidatePoolFactor and maxEntityCandidatePool size the entity
+// retriever's candidate pool. See entityCandidatePool.
+const (
+	entityCandidatePoolFactor = 5
+	maxEntityCandidatePool    = 100
+)
+
+// entityCandidatePool returns how many entity matches to fetch for a query
+// asking for topK results.
+//
+// Sized against topK rather than fixed, and capped, for the same reason as
+// vectorCandidatePool: this limit runs before ranking, so it decides what
+// ranking is allowed to consider. The cap matters more here than for the other
+// retrievers, because an entity naming the corpus's own subject is mentioned
+// by most of it -- "Caroline" appears in nearly every memory of a corpus about
+// Caroline, so an unbounded entity match is a full table scan wearing a
+// traversal's clothes.
+func entityCandidatePool(topK int32) int {
+	pool := int(topK) * entityCandidatePoolFactor
+	if pool > maxEntityCandidatePool {
+		pool = maxEntityCandidatePool
+	}
+	if pool < 1 {
+		pool = 1
+	}
+	return pool
+}
+
+// entityMatches finds memories naming the same entities as the query, and
+// reports how much of the query's entity set every candidate names.
+//
+// Two distinct jobs, and both matter:
+//
+//   - Recall. A memory sharing no keyword and no close embedding with the
+//     query is unreachable by the other two retrievers, and a memory about the
+//     same thing is exactly the case they miss.
+//   - Ordering. Among memories the other retrievers found, the ones about the
+//     query's subject are more likely to answer it.
+//
+// The overlap map covers every candidate, not only the ones this found: a
+// memory the keyword retriever already had is just as much about Biscuit, and
+// rewarding only the new ones would rank a weak entity-only hit above a strong
+// hit naming the same entity.
+//
+// A failure degrades to the results the other retrievers produced. The graph
+// is supplementary here, so losing it makes the answer quietly worse rather
+// than wrong.
+func (s *MemoryService) entityMatches(
+	ctx context.Context,
+	projectID, query string,
+	topK int32,
+	existing ...[]model.MemoryWithContext,
+) ([]model.Memory, map[uuid.UUID]float64) {
+	// Entities are scoped per project, and an unscoped query has no project to
+	// traverse. Cross-project entity matching would breach the tenant boundary
+	// every other retriever respects.
+	if projectID == "" || query == "" {
+		return nil, nil
+	}
+
+	// The query is a sentence, so it is read for entities the same way a
+	// memory is. That symmetry is the point: the query names Biscuit, the
+	// memory names Biscuit, and they meet at one node.
+	queryEntities := make([]string, 0, 4)
+	for _, e := range extraction.ExtractEntities(query) {
+		if n := model.NormalizeEntity(e); n != "" {
+			queryEntities = append(queryEntities, n)
+		}
+	}
+	if len(queryEntities) == 0 {
+		return nil, nil
+	}
+
+	log := logging.FromContext(ctx)
+
+	matches, err := s.repo.FindMemoriesByEntities(ctx, projectID, queryEntities, entityCandidatePool(topK))
+	if err != nil {
+		log.Warn("entity retrieval failed; results come from keyword and vector search only",
+			slog.String("project_id", projectID),
+			slog.Any("error", err))
+		return nil, nil
+	}
+
+	// Every candidate is scored, including the ones the other retrievers
+	// found, so the signal orders the whole set rather than only its own hits.
+	ids := make([]uuid.UUID, 0, len(matches))
+	seen := make(map[uuid.UUID]bool, len(matches))
+	for _, group := range existing {
+		for _, r := range group {
+			if !seen[r.Memory.ID] {
+				seen[r.Memory.ID] = true
+				ids = append(ids, r.Memory.ID)
+			}
+		}
+	}
+	for _, m := range matches {
+		if !seen[m.ID] {
+			seen[m.ID] = true
+			ids = append(ids, m.ID)
+		}
+	}
+
+	byMemory, err := s.repo.GetMemoryEntities(ctx, ids)
+	if err != nil {
+		log.Warn("loading entities for ranking failed; results are ordered without the entity signal",
+			slog.Int("result_count", len(ids)),
+			slog.Any("error", err))
+		return matches, nil
+	}
+
+	overlap := make(map[uuid.UUID]float64, len(ids))
+	for _, id := range ids {
+		if o := ranking.EntityOverlap(byMemory[id], queryEntities); o > 0 {
+			overlap[id] = o
+		}
+	}
+	return matches, overlap
+}
+
 // existingByContent looks up which of these memories the project already holds
 // verbatim, keyed by content hash.
 //
@@ -1531,7 +1719,7 @@ func extractKeywords(query string) []string {
 	return keywords
 }
 
-// mergeResults combines graph-retrieved and vector-retrieved results into a
+// mergeResults combines graph-, vector- and entity-retrieved results into a
 // single deduplicated slice, carrying each candidate's retrieval relevance
 // forward for the ranking layer.
 //
@@ -1541,12 +1729,25 @@ func extractKeywords(query string) []string {
 // combined via ranking.CombineRelevance, so cross-strategy agreement raises the
 // memory above what either retriever claimed alone.
 //
+// Entity overlap joins on the lexical side rather than as a separate tier.
+// The two are genuinely comparable -- both are "the fraction of what the query
+// asked for that this memory carries" -- which cosine similarity is not, and
+// that is why cosine needs RelevanceTier and this does not. A memory naming
+// every entity the query names therefore enters the matched tier even when it
+// shares no keyword, which is the entire point: "the dog bolts under the bed"
+// answers "what is Biscuit afraid of?" without containing one query term.
+//
 // The returned slice is sorted by memory ID. Merging happens through a map, and
 // Go randomizes map iteration, so without this the candidate order (and
 // therefore the resolution of any score tie downstream) would vary between
 // identical queries.
-func mergeResults(graph, vector []model.MemoryWithContext, keywords []string) []model.MemoryWithContext {
-	seen := make(map[uuid.UUID]*model.MemoryWithContext, len(graph)+len(vector))
+func mergeResults(
+	graph, vector []model.MemoryWithContext,
+	entity []model.Memory,
+	entityOverlap map[uuid.UUID]float64,
+	keywords []string,
+) []model.MemoryWithContext {
+	seen := make(map[uuid.UUID]*model.MemoryWithContext, len(graph)+len(vector)+len(entity))
 	hasKeywords := len(keywords) > 0
 
 	// Track the cosine signal separately from the lexical one. Overwriting a
@@ -1574,9 +1775,45 @@ func mergeResults(graph, vector []model.MemoryWithContext, keywords []string) []
 		seen[r.Memory.ID] = &r
 	}
 
-	// Resolve every candidate on one scale.
+	// Add entity-only results: memories about the right thing that neither
+	// other retriever reached. Their evidence is applied below.
+	for i := range entity {
+		mem := entity[i]
+		if _, ok := seen[mem.ID]; ok {
+			continue
+		}
+		r := model.MemoryWithContext{Memory: mem}
+		seen[mem.ID] = &r
+	}
+
+	// Entity evidence is folded in before tiering, on the lexical scale, so a
+	// memory found only by entity is judged on what it actually shares with
+	// the query rather than defaulting into the unmatched tier.
+	//
+	// The stronger of the two lexical signals wins rather than their sum:
+	// naming the query's subject and containing its words are two readings of
+	// the same evidence, and adding them would let a memory that does both
+	// mildly outrank one that does either well.
 	for id, r := range seen {
-		r.Relevance = ranking.RelevanceTier(r.Relevance, cosine[id], hasKeywords)
+		if e := ranking.EntityRelevance(entityOverlap[id]); e > r.Relevance {
+			r.Relevance = e
+		}
+	}
+
+	// Resolve every candidate on one scale.
+	//
+	// hasKeywords is widened to include entity evidence: a query naming an
+	// entity but carrying no searchable keyword ("Biscuit" alone, after stop
+	// words) still has lexical evidence to prefer, and without this the tier
+	// would collapse to cosine alone and discard it.
+	hasLexicalEvidence := hasKeywords || len(entityOverlap) > 0
+	for id, r := range seen {
+		r.Relevance = ranking.RelevanceTier(r.Relevance, cosine[id], hasLexicalEvidence)
+		// The boost is what orders memories the tier has already placed
+		// together: among candidates the retrievers scored equally, the one
+		// about the query's subject comes first. Sized to break ties rather
+		// than overturn them. See ranking.entityBoost.
+		r.Relevance = ranking.ApplyEntityBoost(r.Relevance, entityOverlap[id])
 	}
 
 	results := make([]model.MemoryWithContext, 0, len(seen))

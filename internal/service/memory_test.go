@@ -144,7 +144,7 @@ func TestMergeResults_CarriesRelevanceForward(t *testing.T) {
 		{Memory: model.Memory{ID: both}, Score: 0.5},
 	}
 
-	merged := mergeResults(graphResults, vectorResults, []string{"kw"})
+	merged := mergeResults(graphResults, vectorResults, nil, nil, []string{"kw"})
 
 	if len(merged) != 3 {
 		t.Fatalf("expected 3 deduplicated results, got %d", len(merged))
@@ -173,7 +173,7 @@ func TestMergeResults_CarriesRelevanceForward(t *testing.T) {
 	// memory matched lexically alone.
 	lexicalOnly := mergeResults(
 		[]model.MemoryWithContext{{Memory: model.Memory{ID: both}, Relevance: 0.6}},
-		nil, []string{"kw"},
+		nil, nil, nil, []string{"kw"},
 	)
 	if byID[both].Relevance <= lexicalOnly[0].Relevance {
 		t.Errorf("cross-retriever agreement should boost relevance: %f with agreement vs %f without",
@@ -198,9 +198,9 @@ func TestMergeResults_IsDeterministic(t *testing.T) {
 		})
 	}
 
-	first := mergeResults(graphResults, nil, []string{"kw"})
+	first := mergeResults(graphResults, nil, nil, nil, []string{"kw"})
 	for i := 0; i < 20; i++ {
-		got := mergeResults(graphResults, nil, []string{"kw"})
+		got := mergeResults(graphResults, nil, nil, nil, []string{"kw"})
 		for j := range got {
 			if got[j].Memory.ID != first[j].Memory.ID {
 				t.Fatalf("mergeResults order varies between identical calls at %d", j)
@@ -760,6 +760,19 @@ func TestExtractReportsRealRelationshipCount(t *testing.T) {
 		}
 	}
 	actual := len(unique)
+
+	// Entity edges are counted separately because GetContextEdges only
+	// traverses memory-to-memory patterns, so a mentions edge is invisible to
+	// it. They are reported to the caller like any other relationship, and
+	// for an untagged, semantically-isolated memory they are frequently the
+	// only edges it gets.
+	entities, err := repo.GetMemoryEntities(ctx, ids)
+	if err != nil {
+		t.Fatalf("get memory entities: %v", err)
+	}
+	for _, names := range entities {
+		actual += len(names)
+	}
 
 	if int(resp.RelationshipsCreated) != actual {
 		t.Errorf("RelationshipsCreated = %d but the graph holds %d edges for these memories: "+

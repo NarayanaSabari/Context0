@@ -125,3 +125,114 @@ func CombineRelevance(a, b float64) float64 {
 	}
 	return clamp01(strong + agreementBoost*weak*(1-strong))
 }
+
+// entityBoost is how far a memory may rise for naming the same entity the
+// query does.
+//
+// Sized so it breaks ties rather than overturning them, which is the same
+// arithmetic the ranking weights use: relevance carries weight 0.75 in the
+// composite score, so a relevance bonus of b can only reorder memories whose
+// relevance differs by less than b. At 0.05 that is a genuine tie.
+//
+// Deliberately far below Mem0's ENTITY_BOOST_WEIGHT of 0.5, because their
+// fusion divides by an adaptive max_possible and ours adds into an already
+// normalised score. A boost of their magnitude here would put any memory
+// naming the query's subject above every memory that actually answers it, and
+// the subject is named by most of a project's memories -- "Caroline" appears
+// in nearly every memory of a corpus about Caroline.
+//
+// Both directions are pinned: TestEntityBoost_BreaksTiesBetweenEqualMatches
+// and TestEntityBoost_CannotOverturnARealRelevanceDifference.
+const entityBoost = 0.05
+
+// entityMatchRelevance is the lexical-equivalent strength of naming every
+// entity the query names.
+//
+// This is the value that decides whether entity retrieval does anything at
+// all. A candidate only entity retrieval found has no lexical score and no
+// cosine score, so entering at zero puts it in RelevanceTier's unmatched tier,
+// permanently below every memory containing any query word however common --
+// and the whole recall half of the feature is then unreachable in any project
+// with more than a handful of keyword matches. Measured before this constant
+// existed: a query for "What is Biscuit's greatest fear?" returned three
+// memories about pet noise studies and not the one about Biscuit.
+//
+// So an entity match is treated as what it is: evidence that the memory is
+// about the thing the question asks about. 0.5 places a full entity match
+// inside the matched tier, above a memory that happens to contain one common
+// query word (one of three keywords tiers to ~0.63) and below one that matches
+// the query properly (~0.88 and up). That ordering is the claim -- naming the
+// subject is necessary but not sufficient, so it beats a weak lexical match
+// and loses to a strong one.
+//
+// Both directions are pinned by TestEntityMatch_BeatsAWeakLexicalMatch and
+// TestEntityMatch_LosesToAStrongLexicalMatch.
+const entityMatchRelevance = 0.5
+
+// EntityRelevance converts entity overlap into a value on the same scale as
+// LexicalRelevance, so the two can be compared before tiering.
+//
+// They are genuinely comparable, which is why this is not the tier problem
+// cosine has: both are "the fraction of what the query asked for that this
+// memory carries". A cosine score is a statement about direction in an
+// embedding space and cannot be calibrated against either.
+func EntityRelevance(overlap float64) float64 {
+	return clamp01(entityMatchRelevance * clamp01(overlap))
+}
+
+// EntityOverlap reports the share of the query's entities a memory names, in
+// [0, 1].
+//
+// Entity match is evidence of a different kind from either retriever's:
+// lexical matching says the words line up and cosine similarity says the
+// meanings do, while a shared entity says the two are about the same thing in
+// the world. A memory can be about Biscuit without containing the word --
+// "the dog hates thunderstorms" -- which is exactly the case both retrievers
+// miss and the graph exists to catch.
+//
+// Comparison is on normalized names, which the caller supplies already
+// normalized from the store. An empty query entity set returns 0 rather than
+// 1: with nothing to match, no memory has earned anything, and returning 1
+// would hand every candidate the full boost and cancel it out.
+func EntityOverlap(memoryEntities, queryEntities []string) float64 {
+	if len(queryEntities) == 0 || len(memoryEntities) == 0 {
+		return 0
+	}
+
+	have := make(map[string]bool, len(memoryEntities))
+	for _, e := range memoryEntities {
+		have[e] = true
+	}
+
+	matched, distinct := 0, 0
+	seen := make(map[string]bool, len(queryEntities))
+	for _, q := range queryEntities {
+		if q == "" || seen[q] {
+			continue
+		}
+		seen[q] = true
+		distinct++
+		if have[q] {
+			matched++
+		}
+	}
+	if distinct == 0 {
+		return 0
+	}
+	return float64(matched) / float64(distinct)
+}
+
+// ApplyEntityBoost raises a memory's relevance in proportion to how much of
+// the query's entity set it names.
+//
+// Additive rather than tiered, unlike RelevanceTier. The tier there exists
+// because lexical and cosine scores are not on a comparable scale, and a
+// verbatim match must never lose to a confident embedding. Entity overlap has
+// no such problem: it is already a proportion in [0, 1], so it can simply
+// contribute, and contributing a small amount is what keeps it a tie-break.
+//
+// Clamped, so the boost can never push a candidate past the top of the scale
+// and flatten the ordering among the memories that were already strongest.
+func ApplyEntityBoost(relevance, overlap float64) float64 {
+	return clamp01(clamp01(relevance) + entityBoost*clamp01(overlap))
+}

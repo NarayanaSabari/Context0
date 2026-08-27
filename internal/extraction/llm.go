@@ -84,8 +84,20 @@ Classify each memory:
 - "episodic": events that happened at a particular time
 - "procedural": habits, routines, how someone does something
 
+Also name the entities each memory is about, so memories about the same person
+or place can be connected:
+
+- People, animals, places, organisations, products, events, and titles of
+  works. Write each one as it appears: "Caroline", "Biscuit", "Sweden",
+  "Charlotte's Web".
+- Never dates, times, quantities, money, or percentages. "Monday" and "April"
+  are not entities: nearly every memory mentions one, so they connect
+  everything to everything and carry no information.
+- Only entities the memory is actually about. At most six.
+- Omit the field entirely when the memory names nothing.
+
 Return ONLY a JSON array, no prose and no code fence:
-[{"content": "...", "type": "semantic", "tags": ["topic"]}]
+[{"content": "...", "type": "semantic", "tags": ["topic"], "entities": ["Caroline"]}]
 
 Return [] if the conversation contains nothing worth remembering.
 
@@ -168,9 +180,10 @@ type chatResponse struct {
 // string rather than model.MemoryType because it is untrusted input: it is
 // validated in toExtracted before it becomes a domain value.
 type llmMemory struct {
-	Content string   `json:"content"`
-	Type    string   `json:"type"`
-	Tags    []string `json:"tags"`
+	Content  string   `json:"content"`
+	Type     string   `json:"type"`
+	Tags     []string `json:"tags"`
+	Entities []string `json:"entities"`
 }
 
 // Extract asks the model for standalone memories, falling back to rule-based
@@ -270,9 +283,51 @@ func parseExtracted(content string) ([]ExtractedMemory, error) {
 			Content: content,
 			Type:    parseMemoryType(m.Type),
 			Tags:    m.Tags,
+			// The model's entities are cleaned through the same filters the
+			// heuristic extractor uses, and fall back to it when the model
+			// returns none.
+			//
+			// Not trusted verbatim, because a model that has been told six
+			// times to omit dates will still return "April" -- and an entity
+			// nearly every memory mentions connects everything to everything,
+			// which is worse than no graph at all. The filters are cheap and
+			// the failure they prevent is not.
+			Entities: reconcileEntities(m.Entities, content),
 		})
 	}
 	return memories, nil
+}
+
+// reconcileEntities validates the model's entities and falls back to the
+// heuristic extractor when it returned nothing usable.
+//
+// The fallback matters because entities are what make multi-hop traversal
+// work: a model that quietly stops returning the field would disable the
+// feature with no other symptom, and the heuristic is free.
+func reconcileEntities(fromModel []string, content string) []string {
+	out := make([]string, 0, len(fromModel))
+	seen := make(map[string]bool, len(fromModel))
+
+	for _, e := range fromModel {
+		e = strings.TrimSpace(e)
+		if !isPlausibleEntity(e) {
+			continue
+		}
+		key := NormalizeEntity(e)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, e)
+	}
+
+	if len(out) == 0 {
+		return ExtractEntities(content)
+	}
+	if len(out) > maxEntitiesPerMemory {
+		out = out[:maxEntitiesPerMemory]
+	}
+	return out
 }
 
 // parseMemoryType maps the model's type string onto the engine's vocabulary.

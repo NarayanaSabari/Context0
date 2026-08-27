@@ -338,6 +338,12 @@ func (r *AGERepository) InitSchema(ctx context.Context) error {
 		return err
 	}
 
+	// Entity nodes and their indexes, for the same reason: entity lookup runs
+	// on both the write path (once per extracted memory) and the read path.
+	if err := r.initEntitySchema(ctx); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -713,6 +719,12 @@ func (r *AGERepository) GetMemory(ctx context.Context, id uuid.UUID) (model.Memo
 // The embedding is deleted first. If the graph delete then fails, the memory
 // simply loses vector searchability and can be re-embedded; the reverse order
 // would leave an orphan pointing at a node that no longer exists.
+//
+// Entity nodes are the same problem in the graph. DETACH DELETE removes the
+// mentions edges but leaves the entities themselves, so a store that deletes
+// and re-ingests -- which consolidation's prune phase does continuously --
+// accumulates nodes nothing points at. They are cleaned up after the memory
+// is gone, when their degree is known to be final.
 func (r *AGERepository) DeleteMemory(ctx context.Context, id uuid.UUID) error {
 	if _, err := r.pool.Exec(ctx,
 		`DELETE FROM public.memory_embeddings WHERE memory_id = $1`, id.String(),
@@ -720,8 +732,66 @@ func (r *AGERepository) DeleteMemory(ctx context.Context, id uuid.UUID) error {
 		return fmt.Errorf("delete embedding: %w", err)
 	}
 
+	// Read before the delete, because afterwards there is no edge left to say
+	// which entities this memory was the last mention of.
+	entities, eerr := r.GetMemoryEntities(ctx, []uuid.UUID{id})
+	if eerr != nil {
+		// Not fatal: an orphaned entity node is inert, whereas refusing the
+		// delete would leave the memory itself in place.
+		slog.Warn("could not read a memory's entities before deleting it; "+
+			"any entity it was the last mention of will be left orphaned",
+			slog.String("memory_id", id.String()), slog.Any("error", eerr))
+	}
+
 	const q = `MATCH (m:Memory) WHERE m.id = $id DETACH DELETE m`
-	return r.cypherExec(ctx, q, params{"id": id.String()})
+	if err := r.cypherExec(ctx, q, params{"id": id.String()}); err != nil {
+		return err
+	}
+
+	if names := entities[id]; len(names) > 0 {
+		r.deleteOrphanedEntities(ctx, names)
+	}
+	return nil
+}
+
+// deleteOrphanedEntities removes entity nodes that no memory mentions any
+// more.
+//
+// Scoped to the names just orphaned rather than sweeping the whole label: a
+// full scan on every delete would make pruning cost grow with the size of the
+// graph, and the only entities whose degree can have changed are the ones the
+// deleted memory named.
+//
+// Failures are logged rather than returned. An orphaned entity is inert -- it
+// matches no query, since every lookup traverses a mentions edge -- so this is
+// housekeeping, and the memory is already gone by the time it runs.
+func (r *AGERepository) deleteOrphanedEntities(ctx context.Context, normalized []string) {
+	p := params{}
+	placeholders := make([]string, 0, len(normalized))
+	for i, n := range normalized {
+		if n == "" {
+			continue
+		}
+		name := fmt.Sprintf("en%d", i)
+		placeholders = append(placeholders, "$"+name)
+		p[name] = n
+	}
+	if len(placeholders) == 0 {
+		return
+	}
+
+	// `NOT (e)<-[:mentions]-()` is the degree test: an entity with no incoming
+	// mention is unreachable, because every read path arrives through one.
+	q := fmt.Sprintf(
+		`MATCH (e:Entity) WHERE e.normalized_name IN [%s] `+
+			`AND NOT (e)<-[:%s]-() DELETE e`,
+		strings.Join(placeholders, ","), string(model.RelMentions),
+	)
+	if err := r.cypherExec(ctx, q, p); err != nil {
+		slog.Warn("could not delete orphaned entity nodes; they are inert but "+
+			"accumulate", slog.Int("candidate_count", len(placeholders)),
+			slog.Any("error", err))
+	}
 }
 
 // IncrementAccessCount atomically increases a memory's access_count by 1.

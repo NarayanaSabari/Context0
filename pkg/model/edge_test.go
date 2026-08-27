@@ -14,6 +14,7 @@ import "testing"
 func TestValidAcceptsExactlyTheDefinedTypes(t *testing.T) {
 	defined := []RelationshipType{
 		RelBelongsTo, RelContains, RelRelatesTo, RelSupersedes, RelCausedBy,
+		RelMentions,
 	}
 	for _, r := range defined {
 		if !r.Valid() {

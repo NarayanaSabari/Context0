@@ -43,6 +43,7 @@ func TestExactKeywordMatchOutranksVectorOnlyResult(t *testing.T) {
 	merged := mergeResults(
 		[]model.MemoryWithContext{exact},
 		[]model.MemoryWithContext{vectorOnly},
+		nil, nil,
 		[]string{"kjgzoaii"},
 	)
 

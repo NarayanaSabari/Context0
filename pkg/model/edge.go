@@ -40,6 +40,7 @@ var relationshipTypes = map[RelationshipType]bool{
 	RelRelatesTo:  true,
 	RelSupersedes: true,
 	RelCausedBy:   true,
+	RelMentions:   true,
 }
 
 // Valid reports whether the relationship is one of the defined edge types.

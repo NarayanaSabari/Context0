@@ -23,6 +23,16 @@ type ExtractedMemory struct {
 	Content string           `json:"content"`
 	Type    model.MemoryType `json:"type"`
 	Tags    []string         `json:"tags"`
+
+	// Entities are the people, places, organisations and works this memory is
+	// about. They become first-class nodes, so two memories mentioning the
+	// same entity are one hop apart regardless of how differently they are
+	// worded.
+	//
+	// Distinct from Tags, which are topic labels from a fixed vocabulary and
+	// exist to group memories by subject area. An entity is a thing the world
+	// contains; a tag is a category this engine recognises.
+	Entities []string `json:"entities,omitempty"`
 }
 
 // Extract processes each line of a conversation independently. For each line it:
@@ -144,9 +154,10 @@ func classifyLine(content string) *ExtractedMemory {
 	for _, p := range prefPatterns {
 		if strings.Contains(lower, p) {
 			return &ExtractedMemory{
-				Content: content,
-				Type:    model.MemoryTypeSemantic,
-				Tags:    append(extractTopics(content), "preference"),
+				Content:  content,
+				Type:     model.MemoryTypeSemantic,
+				Tags:     append(extractTopics(content), "preference"),
+				Entities: ExtractEntities(content),
 			}
 		}
 	}
@@ -156,9 +167,10 @@ func classifyLine(content string) *ExtractedMemory {
 	for _, p := range procPatterns {
 		if strings.Contains(lower, p) {
 			return &ExtractedMemory{
-				Content: content,
-				Type:    model.MemoryTypeProcedural,
-				Tags:    append(extractTopics(content), "workflow"),
+				Content:  content,
+				Type:     model.MemoryTypeProcedural,
+				Tags:     append(extractTopics(content), "workflow"),
+				Entities: ExtractEntities(content),
 			}
 		}
 	}
@@ -168,9 +180,10 @@ func classifyLine(content string) *ExtractedMemory {
 	for _, p := range eventPatterns {
 		if strings.Contains(lower, p) {
 			return &ExtractedMemory{
-				Content: content,
-				Type:    model.MemoryTypeEpisodic,
-				Tags:    append(extractTopics(content), "event"),
+				Content:  content,
+				Type:     model.MemoryTypeEpisodic,
+				Tags:     append(extractTopics(content), "event"),
+				Entities: ExtractEntities(content),
 			}
 		}
 	}
@@ -180,9 +193,10 @@ func classifyLine(content string) *ExtractedMemory {
 	for _, p := range factPatterns {
 		if strings.Contains(lower, p) {
 			return &ExtractedMemory{
-				Content: content,
-				Type:    model.MemoryTypeSemantic,
-				Tags:    extractTopics(content),
+				Content:  content,
+				Type:     model.MemoryTypeSemantic,
+				Tags:     extractTopics(content),
+				Entities: ExtractEntities(content),
 			}
 		}
 	}
@@ -190,9 +204,10 @@ func classifyLine(content string) *ExtractedMemory {
 	// If nothing matches but it's substantial content, store as episodic.
 	if len(content) > 30 {
 		return &ExtractedMemory{
-			Content: content,
-			Type:    model.MemoryTypeEpisodic,
-			Tags:    extractTopics(content),
+			Content:  content,
+			Type:     model.MemoryTypeEpisodic,
+			Tags:     extractTopics(content),
+			Entities: ExtractEntities(content),
 		}
 	}
 
