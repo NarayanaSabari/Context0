@@ -205,7 +205,16 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 	if s.embedder != nil && req.Query != "" {
 		if queryVec, err := s.embedder.Embed(req.Query); err == nil {
 			var verr error
-			vectorResults, verr = s.repo.SearchByVector(ctx, queryVec, req.ProjectId, int(filter.TopK)*2)
+			// The vector retriever gets the same candidate pool size as the
+			// graph one, for the same reason: this LIMIT runs before ranking,
+			// so it decides what ranking is allowed to consider.
+			//
+			// It was topK*2, which is far too tight to act as the safety net
+			// for the keyword retriever. The two retrievers exist to cover each
+			// other -- a paraphrased query that shares no keyword with the
+			// answer is exactly what vector search is for -- and a pool of 20
+			// cannot do that in a project holding thousands of memories.
+			vectorResults, verr = s.repo.SearchByVector(ctx, queryVec, req.ProjectId, vectorCandidatePool(filter.TopK))
 			if verr != nil {
 				// The query still returns keyword results, so the caller sees a
 				// quietly worse answer rather than an error. Record it.
@@ -861,6 +870,32 @@ func protoToRelType(r pb.RelationshipType) (model.RelationshipType, error) {
 	}
 }
 
+// Vector candidate pool sizing, mirroring the graph retriever's over-fetch in
+// internal/graph. Both LIMITs run before ranking, so both decide what the
+// ranking layer is allowed to see, and a pool that is generous on one side but
+// tight on the other leaves the hybrid with only one working retriever.
+//
+// The cap is lower than the graph side's 500 because each vector candidate
+// carries an embedding to hydrate, so the memory cost per row is far higher.
+// 200 still comfortably exceeds any plausible topK.
+const (
+	vectorCandidatePoolFactor = 10
+	maxVectorCandidatePool    = 200
+)
+
+// vectorCandidatePool returns how many nearest neighbours to fetch for a query
+// asking for topK results.
+func vectorCandidatePool(topK int32) int {
+	pool := int(topK) * vectorCandidatePoolFactor
+	if pool > maxVectorCandidatePool {
+		pool = maxVectorCandidatePool
+	}
+	if pool < 1 {
+		pool = 1
+	}
+	return pool
+}
+
 // ParseQuery converts a raw query string and request parameters into a
 // graph.QueryFilter. It extracts keywords (filtering stop words) and clamps
 // topK to a safe bound.
@@ -904,6 +939,18 @@ func extractKeywords(query string) []string {
 		"project": true,
 	}
 	for _, w := range words {
+		// Strip surrounding punctuation before anything else. Keywords are
+		// matched with CONTAINS against stored content, so a token carrying
+		// its sentence punctuation can never match: "group?" is not a
+		// substring of "...support group yesterday". Questions are the normal
+		// way a memory engine is queried, and the "?" attaches to the last
+		// word, which is often the most specific one in the query.
+		//
+		// Trimmed only at the edges, so identifiers keep the punctuation that
+		// is part of them: "api-key", "node.js" and "user's" survive intact.
+		// A token that was nothing but punctuation trims to empty and is then
+		// dropped by the length check below.
+		w = strings.Trim(w, `.,;:!?"'()[]{}<>-`)
 		if len(w) < 2 {
 			continue
 		}

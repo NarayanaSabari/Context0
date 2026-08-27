@@ -18,9 +18,13 @@ func TestRecencyFactor(t *testing.T) {
 		wantMax   float64
 	}{
 		{"just created", now, 0.99, 1.01},
-		{"1 day ago", now.Add(-24 * time.Hour), 0.85, 1.0},
-		{"7 days ago (half-life)", now.Add(-7 * 24 * time.Hour), 0.45, 0.55},
-		{"30 days ago", now.Add(-30 * 24 * time.Hour), 0.0, 0.1},
+		{"1 day ago", now.Add(-24 * time.Hour), 0.98, 1.0},
+		{"90 days ago (half-life)", now.Add(-90 * 24 * time.Hour), 0.45, 0.55},
+		{"180 days ago", now.Add(-180 * 24 * time.Hour), 0.2, 0.3},
+		// The point of the 90-day half-life: a memory a month old is still a
+		// live candidate. At the previous 7-day half-life this was ~0.05,
+		// which is indistinguishable from a year-old memory.
+		{"30 days ago is still substantial", now.Add(-30 * 24 * time.Hour), 0.7, 0.85},
 	}
 
 	for _, tt := range tests {
@@ -80,5 +84,119 @@ func TestRankResults(t *testing.T) {
 	// First result should have the highest score.
 	if ranked[0].Score < ranked[1].Score {
 		t.Errorf("results not properly ranked: first=%.3f, second=%.3f", ranked[0].Score, ranked[1].Score)
+	}
+}
+
+// TestScore_RelevanceOutweighsRecency pins the property that makes this a
+// memory engine rather than a feed: a memory that actually answers the query
+// must outrank a poor match that happens to be newer.
+//
+// This did not hold. With recencyWeight at 0.25 and a 7-day half-life, recency
+// swung the composite by a quarter of its full range while relevance spanned
+// only 0.55, so a perfect match a month old scored 0.663 against 0.680 for a
+// weak match stored today, and lost. Found while running the LoCoMo benchmark,
+// where every memory is ingested seconds apart and the correct answers are the
+// oldest rows.
+//
+// The numbers below are deliberately a worst case: the strongest possible
+// relevance gap against the largest plausible age gap.
+func TestScore_RelevanceOutweighsRecency(t *testing.T) {
+	now := time.Now().UTC()
+
+	perfectButOld := model.MemoryWithContext{
+		Memory: model.Memory{
+			ID:        uuid.New(),
+			Type:      model.MemoryTypeSemantic,
+			CreatedAt: now.Add(-30 * 24 * time.Hour),
+		},
+		Relevance: 1.0,
+	}
+
+	weakButNew := model.MemoryWithContext{
+		Memory: model.Memory{
+			ID:        uuid.New(),
+			Type:      model.MemoryTypeSemantic,
+			CreatedAt: now,
+		},
+		Relevance: 0.6,
+	}
+
+	old, fresh := Score(perfectButOld, now), Score(weakButNew, now)
+	if old <= fresh {
+		t.Errorf("a perfect match 30 days old (%.4f) must outrank a weak match stored today (%.4f): "+
+			"recency is a tie-break, not a substitute for answering the query", old, fresh)
+	}
+}
+
+// TestScore_RecencyStillBreaksTies is the guard on the other side: relevance
+// dominating must not make recency inert. Two memories that match the query
+// equally well should still be ordered newest-first, which is what makes an
+// updated fact supersede the stale version of itself.
+func TestScore_RecencyStillBreaksTies(t *testing.T) {
+	now := time.Now().UTC()
+
+	newer := model.MemoryWithContext{
+		Memory:    model.Memory{ID: uuid.New(), Type: model.MemoryTypeSemantic, CreatedAt: now},
+		Relevance: 0.8,
+	}
+	older := model.MemoryWithContext{
+		Memory:    model.Memory{ID: uuid.New(), Type: model.MemoryTypeSemantic, CreatedAt: now.Add(-60 * 24 * time.Hour)},
+		Relevance: 0.8,
+	}
+
+	if Score(newer, now) <= Score(older, now) {
+		t.Errorf("at equal relevance the newer memory (%.4f) must outrank the older one (%.4f)",
+			Score(newer, now), Score(older, now))
+	}
+}
+
+// TestScore_RelevanceOutweighsTypePriority pins that the static type prior
+// cannot overturn a relevance difference, for the same reason recency cannot.
+//
+// TypePriority ranks episodic memories at 0.6 against semantic at 1.0, on the
+// theory that stable facts are more reusable than raw events. That is a
+// reasonable prior for breaking a tie and a bad reason to lose a match: the
+// answer to "when did X happen?" is an event, so the question type most in need
+// of episodic memories was the one that systematically discarded them.
+//
+// Measured on LoCoMo: the memory holding the ground-truth answer led on
+// relevance by 0.008 and lost 0.040 to the type prior, a five-fold override.
+func TestScore_RelevanceOutweighsTypePriority(t *testing.T) {
+	now := time.Now().UTC()
+
+	betterEpisodic := model.MemoryWithContext{
+		Memory:    model.Memory{ID: uuid.New(), Type: model.MemoryTypeEpisodic, CreatedAt: now},
+		Relevance: 0.92,
+	}
+	worseSemantic := model.MemoryWithContext{
+		Memory:    model.Memory{ID: uuid.New(), Type: model.MemoryTypeSemantic, CreatedAt: now},
+		Relevance: 0.91,
+	}
+
+	episodic, semantic := Score(betterEpisodic, now), Score(worseSemantic, now)
+	if episodic <= semantic {
+		t.Errorf("the more relevant episodic memory (%.4f) must outrank the less relevant "+
+			"semantic one (%.4f): type is a prior, not a veto over answering the query",
+			episodic, semantic)
+	}
+}
+
+// TestScore_TypeStillBreaksTies is the guard on the other side: at equal
+// relevance a stable fact should still be preferred to a one-off event.
+func TestScore_TypeStillBreaksTies(t *testing.T) {
+	now := time.Now().UTC()
+
+	semantic := model.MemoryWithContext{
+		Memory:    model.Memory{ID: uuid.New(), Type: model.MemoryTypeSemantic, CreatedAt: now},
+		Relevance: 0.8,
+	}
+	episodic := model.MemoryWithContext{
+		Memory:    model.Memory{ID: uuid.New(), Type: model.MemoryTypeEpisodic, CreatedAt: now},
+		Relevance: 0.8,
+	}
+
+	if Score(semantic, now) <= Score(episodic, now) {
+		t.Errorf("at equal relevance the semantic memory (%.4f) must outrank the episodic one (%.4f)",
+			Score(semantic, now), Score(episodic, now))
 	}
 }

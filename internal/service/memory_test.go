@@ -30,6 +30,21 @@ func TestExtractKeywords(t *testing.T) {
 		{"with keywords", "what database does this project use", []string{"database"}},
 		{"multiple keywords", "postgres database migration", []string{"postgres", "database", "migration"}},
 		{"short words filtered", "a b cd ef", []string{"cd", "ef"}},
+		// Keyword matching is CONTAINS against stored content, so punctuation
+		// carried into a keyword can never match: "group?" is not a substring
+		// of "...support group yesterday". Questions are the normal way users
+		// query a memory engine, and the trailing "?" attaches to the last and
+		// often most specific word, so this silently dropped the best keyword
+		// in the query. Found via the LoCoMo benchmark.
+		{"trailing question mark stripped", "when did Caroline go to the LGBTQ support group?",
+			[]string{"caroline", "go", "lgbtq", "support", "group"}},
+		{"internal punctuation stripped", "what about the postgres, database; migration!",
+			[]string{"about", "postgres", "database", "migration"}},
+		// Punctuation inside a token is meaningful and must survive: these are
+		// real identifiers, not sentence punctuation.
+		{"intra-word punctuation kept", "the user's api-key and node.js setup",
+			[]string{"user's", "api-key", "and", "node.js", "setup"}},
+		{"punctuation-only tokens dropped", "deploy -- now", []string{"deploy", "now"}},
 	}
 
 	for _, tt := range tests {

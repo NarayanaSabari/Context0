@@ -64,6 +64,11 @@ const defaultEmbeddingDim = 384
 // database decide which memories the ranking layer is even allowed to see.
 // Over-fetching by this factor gives ranking a real pool to choose from, capped
 // so a large topK cannot pull an unbounded result set into memory.
+//
+// The pool is only as good as the order it is drawn in: see the ORDER BY in
+// QueryMemories, which ranks by keyword-match count before recency. A pool
+// drawn purely by recency discards old-but-relevant memories no matter how
+// large it is, because in a conversational store the answer is usually old.
 const (
 	candidatePoolFactor = 10
 	maxCandidatePool    = 500
@@ -887,14 +892,8 @@ func (r *AGERepository) LinkMemoryToSession(ctx context.Context, sessionID, memo
 // Filter conditions are AND-ed: project_id, memory types, and keywords.
 // Keywords use Cypher's toLower() + CONTAINS for case-insensitive substring
 // matching against both content and tags (OR-ed within the keyword group).
-// Results are ordered by created_at DESC and capped at filter.TopK (default 5).
-// Each result gets a placeholder Score of 1.0; real scoring is deferred to
-// the ranking layer.
-// QueryMemories builds a dynamic Cypher MATCH query from the given filter.
-// Filter conditions are AND-ed: project_id, memory types, and keywords.
-// Keywords use Cypher's toLower() + CONTAINS for case-insensitive substring
-// matching against both content and tags (OR-ed within the keyword group).
-// Results are ordered by created_at DESC and capped at filter.TopK (default 5).
+// Results are ordered by how many of the query's keywords each memory matches,
+// then by created_at DESC, and capped at filter.TopK (default 5).
 //
 // Only the shape of the query varies with the filter; every filter value is
 // bound as a parameter. The generated Cypher text therefore depends solely on
@@ -923,16 +922,28 @@ func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) (
 	// Keyword search via CONTAINS on content and tags. Each keyword gets its
 	// own numbered parameter; only the placeholder names are built into the
 	// query text.
+	//
+	// matchCount sums how many distinct keywords a memory contains, and is what
+	// the candidate pool is ordered by. A memory matching every keyword is a
+	// better candidate than one matching a single common word, and that has to
+	// be decided here: the LIMIT below runs before the ranking layer exists.
+	var matchCount string
 	if len(filter.Keywords) > 0 {
 		var keywordConds []string
+		var matchTerms []string
 		for i, kw := range filter.Keywords {
 			name := fmt.Sprintf("kw%d", i)
 			keywordConds = append(keywordConds, fmt.Sprintf(
 				`(toLower(m.content) CONTAINS $%s OR toLower(m.tags) CONTAINS $%s)`, name, name,
 			))
+			matchTerms = append(matchTerms, fmt.Sprintf(
+				`(CASE WHEN toLower(m.content) CONTAINS $%s OR toLower(m.tags) CONTAINS $%s THEN 1 ELSE 0 END)`,
+				name, name,
+			))
 			p[name] = strings.ToLower(kw)
 		}
 		conditions = append(conditions, "("+strings.Join(keywordConds, " OR ")+")")
+		matchCount = strings.Join(matchTerms, " + ")
 	}
 
 	topK := filter.TopK
@@ -962,11 +973,39 @@ func (r *AGERepository) QueryMemories(ctx context.Context, filter QueryFilter) (
 	}
 	p["top_k"] = candidateLimit
 
-	q := `MATCH (m:Memory) RETURN properties(m) ORDER BY m.created_at DESC LIMIT $top_k`
+	// Order the candidate pool by keyword-match count first, recency second.
+	//
+	// Recency alone is wrong here, and a bigger pool does not save it. Every
+	// memory in a project can match a keyword, in which case ordering is the
+	// only thing deciding what ranking is allowed to see, and `created_at DESC`
+	// then means "the most recently written", not "the most relevant". A
+	// conversational store is ingested oldest-first, so the answer to "when did
+	// X happen?" is typically among the oldest rows and is dropped.
+	//
+	// Found by running the LoCoMo benchmark against the engine: 357 memories
+	// matched a keyword, the memory holding the ground-truth answer sat at
+	// position 346 by created_at DESC, and the pool held 100. Vector search
+	// ranked that same memory first at 0.82 cosine similarity, so only
+	// candidate selection was at fault. See
+	// TestQueryMemories_KeywordMatchSurvivesLargeRecencyGap.
+	//
+	// created_at DESC remains the tie-break, which is what keeps the older
+	// TestQueryMemories_KeywordMatchSurvivesTieBreak case working, and stays
+	// the sole ordering when the query carries no keywords to count.
+	//
+	// The count is an ORDER BY expression rather than a returned column on
+	// purpose: cypherSQL declares exactly one output column (`result agtype`),
+	// so projecting a second one fails at the SQL level.
+	orderBy := `m.created_at DESC`
+	if matchCount != "" {
+		orderBy = fmt.Sprintf(`(%s) DESC, m.created_at DESC`, matchCount)
+	}
+
+	q := fmt.Sprintf(`MATCH (m:Memory) RETURN properties(m) ORDER BY %s LIMIT $top_k`, orderBy)
 	if len(conditions) > 0 {
 		q = fmt.Sprintf(
-			`MATCH (m:Memory) WHERE %s RETURN properties(m) ORDER BY m.created_at DESC LIMIT $top_k`,
-			strings.Join(conditions, " AND "),
+			`MATCH (m:Memory) WHERE %s RETURN properties(m) ORDER BY %s LIMIT $top_k`,
+			strings.Join(conditions, " AND "), orderBy,
 		)
 	}
 

@@ -1918,3 +1918,66 @@ func TestCountsMatchTheCypherForm(t *testing.T) {
 			"nodes=%d edges=%d", gotNodes, gotEdges)
 	}
 }
+
+// TestQueryMemories_KeywordMatchSurvivesLargeRecencyGap is a correctness
+// regression test for a retrieval failure found by running the LoCoMo
+// benchmark (supermemory's memorybench) against the engine.
+//
+// TestQueryMemories_KeywordMatchSurvivesTieBreak, above, covers the case where
+// candidates share one timestamp. This covers the opposite arrangement, which
+// the over-fetch pool does not save: timestamps are all distinct, many
+// memories match a keyword, and the one that actually answers the query is
+// among the OLDEST. `ORDER BY created_at DESC LIMIT poolSize` then selects the
+// most recently written candidates, and the answer is discarded before ranking
+// runs -- no scoring weight can recover a row that was never fetched.
+//
+// Measured on LoCoMo conversation 26: 357 memories matched a query keyword,
+// the memory containing the ground-truth answer sat at position 346 by
+// created_at DESC, and the pool held 100. Vector search ranked that same
+// memory first at 0.82 cosine similarity, so the data and the embeddings were
+// both fine; only candidate selection was wrong.
+//
+// This is the ordinary shape of a conversational memory store: history is
+// ingested oldest-first, so the answer to "when did X happen?" is usually old.
+func TestQueryMemories_KeywordMatchSurvivesLargeRecencyGap(t *testing.T) {
+	repo, ctx := testRepo(t)
+	projectID := newProjectID(t)
+
+	// The needle is written first and therefore oldest. Every filler also
+	// matches the query keyword, so keyword filtering alone cannot narrow the
+	// pool: ordering is what decides, which is exactly the bug.
+	base := time.Now().UTC().Add(-30 * 24 * time.Hour)
+
+	needleMem := newMemory(projectID, "Caroline went to the zqxjklmw support group yesterday", "needle")
+	needleMem.CreatedAt = base
+	needle := storeMemory(t, repo, ctx, needleMem)
+
+	// Comfortably more than candidatePoolFactor * topK, so the needle falls
+	// outside the pool rather than merely near its edge.
+	const noise = 200
+	for i := 0; i < noise; i++ {
+		m := newMemory(projectID, fmt.Sprintf("Caroline mentioned zqxjklmw in passing, note %d", i), "filler")
+		m.CreatedAt = base.Add(time.Duration(i+1) * time.Minute)
+		storeMemory(t, repo, ctx, m)
+	}
+
+	got, err := repo.QueryMemories(ctx, QueryFilter{
+		ProjectID: projectID,
+		Keywords:  []string{"zqxjklmw", "support", "group"},
+		TopK:      10,
+		OverFetch: true,
+	})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+
+	for _, r := range got {
+		if r.Memory.ID == needle.ID {
+			return
+		}
+	}
+	t.Errorf("the memory matching every query keyword was not in the candidate pool "+
+		"(got %d results): it is the oldest of %d keyword matches, so a "+
+		"created_at-ordered pool discards it before ranking runs",
+		len(got), noise+1)
+}
