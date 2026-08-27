@@ -13,7 +13,7 @@ type ProviderConfig struct {
 	//   "google"  - Google Generative AI API
 	Provider string
 	// Model is the provider-specific model name (e.g. "nomic-embed-text",
-	// "text-embedding-3-small", "gemini-embedding-001"). Empty means use default.
+	// "text-embedding-3-small", "gemini-embedding-2"). Empty means use default.
 	Model string
 	// APIKey is required for cloud providers (openai, google). Set via
 	// KORA_EMBEDDING_API_KEY environment variable.

@@ -446,8 +446,8 @@ func TestProviderDefaultModelAndURL(t *testing.T) {
 
 	t.Run("google", func(t *testing.T) {
 		h := NewGoogleEmbedder("", "", 0).(httpEmbedder)
-		if !strings.Contains(h.url, "gemini-embedding-001") {
-			t.Errorf("default URL = %q, want the gemini-embedding-001 model", h.url)
+		if !strings.Contains(h.url, "gemini-embedding-2") {
+			t.Errorf("default URL = %q, want the gemini-embedding-2 model", h.url)
 		}
 		if !strings.Contains(h.url, "generativelanguage.googleapis.com") {
 			t.Errorf("default URL = %q, want the Google AI endpoint", h.url)
