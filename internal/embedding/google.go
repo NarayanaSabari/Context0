@@ -29,6 +29,12 @@ import (
 // against ~2.4s for -2. Prefer -001 when embedding latency is on the critical
 // path, such as bulk ingest or a latency-scored benchmark.
 func NewGoogleEmbedder(apiKey, model string, dim int) Embedder {
+	return newGoogleEmbedderWithBase("https://generativelanguage.googleapis.com", apiKey, model, dim)
+}
+
+// newGoogleEmbedderWithBase is NewGoogleEmbedder with the API host injected,
+// so tests can point it at a stub without reaching the network.
+func newGoogleEmbedderWithBase(base, apiKey, model string, dim int) Embedder {
 	if model == "" {
 		model = "gemini-embedding-2"
 	}
@@ -36,26 +42,66 @@ func NewGoogleEmbedder(apiKey, model string, dim int) Embedder {
 		dim = 1536
 	}
 
-	url := fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/%s:embedContent?key=%s",
-		model, apiKey,
-	)
+	url := fmt.Sprintf("%s/v1beta/models/%s:embedContent?key=%s", base, model, apiKey)
+	batchURL := fmt.Sprintf("%s/v1beta/models/%s:batchEmbedContents?key=%s", base, model, apiKey)
 
-	return httpEmbedder{
-		url: url,
-		body: func(text string) any {
-			return map[string]any{
-				"content": map[string]any{
-					"parts": []map[string]string{
-						{"text": text},
+	// Google's batch endpoint requires each sub-request to name the model
+	// again, fully qualified, even though the URL already identifies it.
+	qualified := "models/" + model
+
+	return batchHTTPEmbedder{
+		httpEmbedder: httpEmbedder{
+			url: url,
+			body: func(text string) any {
+				return map[string]any{
+					"content": map[string]any{
+						"parts": []map[string]string{
+							{"text": text},
+						},
 					},
-				},
-				"outputDimensionality": dim,
-			}
+					"outputDimensionality": dim,
+				}
+			},
+			decode: decodeGoogleEmbedding,
+			dim:    dim,
 		},
-		decode: decodeGoogleEmbedding,
-		dim:    dim,
+		batchURL: batchURL,
+		batchBody: func(texts []string) any {
+			requests := make([]map[string]any, len(texts))
+			for i, text := range texts {
+				requests[i] = map[string]any{
+					"model": qualified,
+					"content": map[string]any{
+						"parts": []map[string]string{
+							{"text": text},
+						},
+					},
+					"outputDimensionality": dim,
+				}
+			}
+			return map[string]any{"requests": requests}
+		},
+		decodeBatch: decodeGoogleBatch,
 	}
+}
+
+func decodeGoogleBatch(r io.Reader) ([][]float64, error) {
+	var result struct {
+		Embeddings []struct {
+			Values []float64 `json:"values"`
+		} `json:"embeddings"`
+	}
+	if err := json.NewDecoder(r).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	// Google returns embeddings positionally, with no index field, so arrival
+	// order is the only mapping back to the inputs.
+	out := make([][]float64, len(result.Embeddings))
+	for i, e := range result.Embeddings {
+		out[i] = e.Values
+	}
+	return out, nil
 }
 
 func decodeGoogleEmbedding(r io.Reader) ([]float64, error) {

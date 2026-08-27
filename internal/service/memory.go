@@ -731,6 +731,19 @@ const minRelatedCandidates = 3
 // than the serial version it replaced.
 const embedExtractedConcurrency = 8
 
+// embedBatchSize is how many memories go into one provider request when the
+// embedder supports batching.
+//
+// Measured against gemini-embedding-2 at 1536 dimensions: a single embed takes
+// ~2.06s, and a batch of 32 takes 4.17s, or 0.13s per text. Larger batches
+// keep improving throughput but make each failure more expensive and each
+// request slower, which matters because embedExtracted runs inside the
+// caller's Extract. 32 sits where the per-text cost has already flattened.
+//
+// Kept below internal/embedding's own maxBatchSize of 100, which is the
+// provider-side limit rather than a latency choice.
+const embedBatchSize = 32
+
 // embedExtracted computes embeddings for every extracted memory in parallel and
 // returns them keyed by memory ID. Memories whose embedding failed are absent
 // from the map rather than present with a nil value, so the caller can tell
@@ -739,9 +752,31 @@ const embedExtractedConcurrency = 8
 // Failures are logged here and not returned: extraction is best-effort per
 // memory, and one embedding failure must not discard a whole conversation. The
 // memory is still stored, it is simply not vector-searchable.
+//
+// Texts are embedded in batches where the provider supports it. This was one
+// request per memory at a fan-out of embedExtractedConcurrency, which is the
+// wrong shape for bulk ingest: measured against gemini-embedding-2, a single
+// embed costs ~2.06s while a batch of 32 costs 4.17s, so a 2,894-memory corpus
+// spent roughly 745s embedding where batching costs ~94s. The request count
+// matters as much as the latency, because cloud providers rate-limit per key
+// and thousands of requests is where throttling starts.
+//
+// Batches are still issued concurrently: one batch call is not free, and a
+// long conversation produces several.
 func (s *MemoryService) embedExtracted(ctx context.Context, memories []model.Memory) map[uuid.UUID][]float32 {
 	if s.embedder == nil || len(memories) == 0 {
 		return nil
+	}
+
+	// Chunked so that several batch requests can be in flight at once, and so
+	// one failing chunk costs only its own memories rather than the whole
+	// conversation.
+	chunkSize := embedBatchSize
+	if _, ok := s.embedder.(embedding.BatchEmbedder); !ok {
+		// A provider without a batch API embeds one text per call inside the
+		// helper, so large chunks would serialise the whole conversation.
+		// One memory per unit of work preserves the previous concurrency.
+		chunkSize = 1
 	}
 
 	var (
@@ -751,25 +786,51 @@ func (s *MemoryService) embedExtracted(ctx context.Context, memories []model.Mem
 		sem     = make(chan struct{}, embedExtractedConcurrency)
 	)
 
-	for _, mem := range memories {
+	for start := 0; start < len(memories); start += chunkSize {
+		end := start + chunkSize
+		if end > len(memories) {
+			end = len(memories)
+		}
+		chunk := memories[start:end]
+
 		wg.Add(1)
-		go func(mem model.Memory) {
+		go func(chunk []model.Memory) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			vec, err := s.embedder.Embed(mem.Content)
+			texts := make([]string, len(chunk))
+			for i, mem := range chunk {
+				texts[i] = mem.Content
+			}
+
+			vecs, err := embedding.EmbedBatch(s.embedder, texts)
 			if err != nil {
-				logging.FromContext(ctx).Error("embedding failed for extracted memory; it will not be vector-searchable",
-					slog.String("memory_id", mem.ID.String()),
+				// Logged per chunk rather than per memory: a failing provider
+				// would otherwise emit one identical line per memory in the
+				// conversation.
+				logging.FromContext(ctx).Error("embedding failed for extracted memories; they will not be vector-searchable",
+					slog.Int("memory_count", len(chunk)),
+					slog.String("first_memory_id", chunk[0].ID.String()),
 					slog.Any("error", err))
+				return
+			}
+			if len(vecs) != len(chunk) {
+				// EmbedBatch already guarantees this, so reaching it means a
+				// provider implementation is wrong. Dropping the chunk is the
+				// safe response: assigning misaligned vectors would attach
+				// embeddings to the wrong memories silently.
+				logging.FromContext(ctx).Error("embedding returned the wrong number of vectors; the chunk is skipped",
+					slog.Int("want", len(chunk)), slog.Int("got", len(vecs)))
 				return
 			}
 
 			mu.Lock()
-			vectors[mem.ID] = vec
+			for i, mem := range chunk {
+				vectors[mem.ID] = vecs[i]
+			}
 			mu.Unlock()
-		}(mem)
+		}(chunk)
 	}
 
 	wg.Wait()

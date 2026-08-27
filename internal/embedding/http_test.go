@@ -149,11 +149,11 @@ func TestGoogleEmbedderDoesNotLeakAPIKeyIntoErrors(t *testing.T) {
 
 	// Point the embedder at a port with nothing listening, which is what a
 	// misconfigured or down provider looks like.
-	e := NewGoogleEmbedder(secret, "text-embedding-004", 768).(httpEmbedder)
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	closedURL := srv.URL
 	srv.Close()
-	e.url = closedURL + "/v1beta/models/text-embedding-004:embedContent?key=" + secret
+
+	e := newGoogleEmbedderWithBase(closedURL, secret, "text-embedding-004", 768)
 
 	_, err := e.Embed("some text")
 	if err == nil {
@@ -216,7 +216,7 @@ func TestHTTPEmbedderHasARequestTimeout(t *testing.T) {
 	defer srv.Close()
 	defer close(blocked)
 
-	e := NewOpenAIEmbedder(srv.URL, "k", "m", 3).(httpEmbedder)
+	e := mustHTTPEmbedder(t, NewOpenAIEmbedder(srv.URL, "k", "m", 3))
 	e.client = &http.Client{Timeout: 150 * time.Millisecond}
 
 	done := make(chan error, 1)
@@ -300,7 +300,7 @@ func TestProviderDefaults(t *testing.T) {
 			if got := tc.got.Dimension(); got != tc.dim {
 				t.Errorf("default dimension = %d, want %d", got, tc.dim)
 			}
-			h, ok := tc.got.(httpEmbedder)
+			h, ok := asHTTPEmbedder(tc.got)
 			if !ok {
 				t.Fatalf("provider is not an httpEmbedder")
 			}
@@ -321,7 +321,7 @@ func TestProviderExplicitValuesOverrideDefaults(t *testing.T) {
 	if got := e.Dimension(); got != 42 {
 		t.Errorf("dimension = %d, want the configured 42", got)
 	}
-	h := e.(httpEmbedder)
+	h := mustHTTPEmbedder(t, e)
 	if !strings.HasPrefix(h.url, "https://example.invalid/v1") {
 		t.Errorf("url = %q, want the configured base URL", h.url)
 	}
@@ -417,7 +417,7 @@ func TestBagOfWordsHandlesEmptyAndUnnormalisableInput(t *testing.T) {
 // Google and part of the body for the others, so both are checked.
 func TestProviderDefaultModelAndURL(t *testing.T) {
 	t.Run("openai", func(t *testing.T) {
-		h := NewOpenAIEmbedder("", "", "", 0).(httpEmbedder)
+		h := mustHTTPEmbedder(t, NewOpenAIEmbedder("", "", "", 0))
 		if !strings.HasPrefix(h.url, "https://api.openai.com/v1") {
 			t.Errorf("default URL = %q, want the OpenAI API base", h.url)
 		}
@@ -431,7 +431,7 @@ func TestProviderDefaultModelAndURL(t *testing.T) {
 	})
 
 	t.Run("ollama", func(t *testing.T) {
-		h := NewOllamaEmbedder("", "", 0).(httpEmbedder)
+		h := mustHTTPEmbedder(t, NewOllamaEmbedder("", "", 0))
 		if !strings.HasPrefix(h.url, "http://localhost:11434") {
 			t.Errorf("default URL = %q, want the local Ollama endpoint", h.url)
 		}
@@ -445,7 +445,7 @@ func TestProviderDefaultModelAndURL(t *testing.T) {
 	})
 
 	t.Run("google", func(t *testing.T) {
-		h := NewGoogleEmbedder("", "", 0).(httpEmbedder)
+		h := mustHTTPEmbedder(t, NewGoogleEmbedder("", "", 0))
 		if !strings.Contains(h.url, "gemini-embedding-2") {
 			t.Errorf("default URL = %q, want the gemini-embedding-2 model", h.url)
 		}
@@ -460,21 +460,21 @@ func TestProviderDefaultModelAndURL(t *testing.T) {
 // default while its config says otherwise.
 func TestProviderConfiguredModelReachesTheProvider(t *testing.T) {
 	t.Run("openai", func(t *testing.T) {
-		h := NewOpenAIEmbedder("", "", "my-model", 0).(httpEmbedder)
+		h := mustHTTPEmbedder(t, NewOpenAIEmbedder("", "", "my-model", 0))
 		body, _ := json.Marshal(h.body("x"))
 		if !strings.Contains(string(body), "my-model") {
 			t.Errorf("request body = %s, want the configured model", body)
 		}
 	})
 	t.Run("ollama", func(t *testing.T) {
-		h := NewOllamaEmbedder("", "my-model", 0).(httpEmbedder)
+		h := mustHTTPEmbedder(t, NewOllamaEmbedder("", "my-model", 0))
 		body, _ := json.Marshal(h.body("x"))
 		if !strings.Contains(string(body), "my-model") {
 			t.Errorf("request body = %s, want the configured model", body)
 		}
 	})
 	t.Run("google", func(t *testing.T) {
-		h := NewGoogleEmbedder("", "my-model", 0).(httpEmbedder)
+		h := mustHTTPEmbedder(t, NewGoogleEmbedder("", "my-model", 0))
 		if !strings.Contains(h.url, "my-model") {
 			t.Errorf("URL = %q, want the configured model", h.url)
 		}
@@ -486,7 +486,7 @@ func TestProviderConfiguredModelReachesTheProvider(t *testing.T) {
 // yields an empty vector rather than an error, so the memory is stored with a
 // zero embedding and matches nothing.
 func TestGoogleDecoderReadsTheDocumentedShape(t *testing.T) {
-	h := NewGoogleEmbedder("k", "m", 2).(httpEmbedder)
+	h := mustHTTPEmbedder(t, NewGoogleEmbedder("k", "m", 2))
 
 	got, err := h.decode(strings.NewReader(`{"embedding":{"values":[0.5,0.25]}}`))
 	if err != nil {
@@ -670,7 +670,7 @@ func TestAuthorizationHeaderOnlyWhenConfigured(t *testing.T) {
 func TestGoogleEmbedderRequestsIndexableDimension(t *testing.T) {
 	const pgvectorHNSWLimit = 2000
 
-	h := NewGoogleEmbedder("", "", 0).(httpEmbedder)
+	h := mustHTTPEmbedder(t, NewGoogleEmbedder("", "", 0))
 	if h.Dimension() > pgvectorHNSWLimit {
 		t.Errorf("default dimension = %d, want <= %d so pgvector can index it",
 			h.Dimension(), pgvectorHNSWLimit)
@@ -686,7 +686,7 @@ func TestGoogleEmbedderRequestsIndexableDimension(t *testing.T) {
 	}
 
 	// An explicit dimension must reach the wire, not just the struct field.
-	custom := NewGoogleEmbedder("", "", 768).(httpEmbedder)
+	custom := mustHTTPEmbedder(t, NewGoogleEmbedder("", "", 768))
 	cb, err := json.Marshal(custom.body("x"))
 	if err != nil {
 		t.Fatalf("marshal custom body: %v", err)
