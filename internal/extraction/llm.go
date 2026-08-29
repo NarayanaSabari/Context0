@@ -75,6 +75,11 @@ on its own, months later, with none of this conversation available:
   has no idea which week.
 - Keep the qualifiers that make a fact answerable. "counseling for transgender
   people" is a different fact from "counseling".
+- When a line says what kind, style or type of something someone does, makes or
+  likes, state that directly: "Caroline makes abstract art", not "Caroline has
+  been trying out abstract painting recently". The kind is the answerable part,
+  and burying it in how it was said leaves a memory that is about the right
+  subject and answers nothing.
 - Merge statements that describe one fact into a single memory.
 - Skip greetings, acknowledgements, questions, and anything with no lasting value.
 - Record what was said as fact, not that a sentence was uttered.
