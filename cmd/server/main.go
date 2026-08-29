@@ -135,6 +135,25 @@ func main() {
 	}
 	slog.Info("extraction provider ready", slog.String("provider", cfg.ExtractionProvider))
 
+	// Both providers on their defaults is a supported configuration and a quiet
+	// one: the engine starts, answers, and retrieves paraphrases far worse than
+	// the same corpus would with a real embedding model. Nothing fails, so
+	// nothing would otherwise say so, and the first symptom is a benchmark
+	// number or a user wondering why a question they can answer from the
+	// transcript comes back empty.
+	//
+	// Not fatal, and not a "degraded" health status: no network egress on a
+	// fresh install is the right default, and paging on it would be wrong.
+	// Loud once, at startup, where an operator is looking.
+	providers := service.Providers{Embedding: cfg.EmbeddingProvider, Extraction: cfg.ExtractionProvider}
+	if providers.ZeroDependencyDefaults() {
+		slog.Warn("running on zero-dependency defaults: hashed bag-of-words embeddings and rule-based extraction",
+			slog.String("embedding_provider", cfg.EmbeddingProvider),
+			slog.String("extraction_provider", cfg.ExtractionProvider),
+			slog.String("effect", "retrieval finds paraphrases poorly and extraction cannot merge facts across turns"),
+			slog.String("fix", "set KORA_EMBEDDING_PROVIDER and KORA_EXTRACTION_PROVIDER, or install the chart with charts/kora/values-quality.yaml"))
+	}
+
 	// Step 4: Create the graph repository and apply schema migrations.
 	repo := graph.NewAGERepository(pool, embedder.Dimension())
 	if err := repo.InitSchema(ctx); err != nil {
@@ -163,7 +182,7 @@ func main() {
 	// Register all service implementations on the gRPC server.
 	memorySvc := service.NewMemoryServiceWithExtractor(repo, embedder, extractor)
 	sessionSvc := service.NewSessionService(repo)
-	healthSvc := service.NewHealthService(repo, cfg.Version)
+	healthSvc := service.NewHealthService(repo, cfg.Version, providers)
 
 	pb.RegisterKoraServer(grpcServer, memorySvc)
 	pb.RegisterSessionServiceServer(grpcServer, sessionSvc)

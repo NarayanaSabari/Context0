@@ -75,9 +75,29 @@ type HealthResponse struct {
 	// Total number of memory nodes currently stored in the graph.
 	NodeCount int64 `protobuf:"varint,3,opt,name=node_count,json=nodeCount,proto3" json:"node_count,omitempty"`
 	// Total number of edges currently stored in the graph.
-	EdgeCount     int64 `protobuf:"varint,4,opt,name=edge_count,json=edgeCount,proto3" json:"edge_count,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	EdgeCount int64 `protobuf:"varint,4,opt,name=edge_count,json=edgeCount,proto3" json:"edge_count,omitempty"`
+	// Embedding backend in use, as configured: "bag-of-words", "ollama",
+	// "openai" or "google".
+	//
+	// Reported because the default is "bag-of-words", a hashed bag-of-words with
+	// no notion of meaning. It is the right default -- no network egress on a
+	// fresh install -- but a deployment running it retrieves paraphrases far
+	// worse than one with a real model, and nothing else says so.
+	EmbeddingProvider string `protobuf:"bytes,5,opt,name=embedding_provider,json=embeddingProvider,proto3" json:"embedding_provider,omitempty"`
+	// Extraction backend in use: "rule" or "llm".
+	//
+	// The default "rule" classifies line by line and cannot merge facts spread
+	// across turns. Same reasoning as embedding_provider: a caller comparing two
+	// deployments should be able to see which one is answering.
+	ExtractionProvider string `protobuf:"bytes,6,opt,name=extraction_provider,json=extractionProvider,proto3" json:"extraction_provider,omitempty"`
+	// True when both providers are the zero-dependency defaults, so retrieval
+	// quality is a floor rather than a measure of what the engine can do.
+	//
+	// A field rather than a status of "degraded": the engine is healthy, and a
+	// monitoring system that pages on this would be wrong.
+	ZeroDependencyDefaults bool `protobuf:"varint,7,opt,name=zero_dependency_defaults,json=zeroDependencyDefaults,proto3" json:"zero_dependency_defaults,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *HealthResponse) Reset() {
@@ -138,19 +158,43 @@ func (x *HealthResponse) GetEdgeCount() int64 {
 	return 0
 }
 
+func (x *HealthResponse) GetEmbeddingProvider() string {
+	if x != nil {
+		return x.EmbeddingProvider
+	}
+	return ""
+}
+
+func (x *HealthResponse) GetExtractionProvider() string {
+	if x != nil {
+		return x.ExtractionProvider
+	}
+	return ""
+}
+
+func (x *HealthResponse) GetZeroDependencyDefaults() bool {
+	if x != nil {
+		return x.ZeroDependencyDefaults
+	}
+	return false
+}
+
 var File_kora_v1_health_proto protoreflect.FileDescriptor
 
 const file_kora_v1_health_proto_rawDesc = "" +
 	"\n" +
 	"\x14kora/v1/health.proto\x12\akora.v1\x1a\x1cgoogle/api/annotations.proto\"\x0f\n" +
-	"\rHealthRequest\"\x80\x01\n" +
+	"\rHealthRequest\"\x9a\x02\n" +
 	"\x0eHealthResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1d\n" +
 	"\n" +
 	"node_count\x18\x03 \x01(\x03R\tnodeCount\x12\x1d\n" +
 	"\n" +
-	"edge_count\x18\x04 \x01(\x03R\tedgeCount2^\n" +
+	"edge_count\x18\x04 \x01(\x03R\tedgeCount\x12-\n" +
+	"\x12embedding_provider\x18\x05 \x01(\tR\x11embeddingProvider\x12/\n" +
+	"\x13extraction_provider\x18\x06 \x01(\tR\x12extractionProvider\x128\n" +
+	"\x18zero_dependency_defaults\x18\a \x01(\bR\x16zeroDependencyDefaults2^\n" +
 	"\rHealthService\x12M\n" +
 	"\x06Health\x12\x16.kora.v1.HealthRequest\x1a\x17.kora.v1.HealthResponse\"\x12\x82\xd3\xe4\x93\x02\f\x12\n" +
 	"/v1/healthB7Z5github.com/NarayanaSabari/Kora/api/gen/kora/v1;korav1b\x06proto3"

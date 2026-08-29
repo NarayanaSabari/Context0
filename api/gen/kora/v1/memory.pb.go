@@ -625,6 +625,9 @@ type QueryRequest struct {
 	// Project to search within.
 	ProjectId string `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
 	// Maximum number of results to return.
+	//
+	// Defaults to 5 when unset or zero, and is clamped to 200. A request above
+	// the maximum returns 200 results rather than an error.
 	TopK int32 `protobuf:"varint,3,opt,name=top_k,json=topK,proto3" json:"top_k,omitempty"`
 	// Maximum graph traversal depth for context edges (0 = no traversal).
 	MaxDepth int32 `protobuf:"varint,4,opt,name=max_depth,json=maxDepth,proto3" json:"max_depth,omitempty"`

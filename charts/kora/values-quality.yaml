@@ -1,0 +1,54 @@
+# Quality profile: real embeddings and LLM extraction, still inside the cluster.
+#
+#   helm install kora ./charts/kora -n kora --create-namespace \
+#     -f ./charts/kora/values-quality.yaml \
+#     --set postgres.password=... --set auth.apiKeys=...
+#
+# The chart's defaults are the zero-dependency ones, so a fresh install makes
+# no network call and stores nothing outside the cluster. They also retrieve
+# paraphrases poorly: hashed bag-of-words vectors score token overlap, not
+# meaning, and the rule-based extractor cannot merge a fact stated across two
+# turns. The engine warns about this at startup and reports both providers on
+# /v1/health.
+#
+# This file changes both, pointing at an Ollama you run yourself. That keeps
+# the property the defaults exist to protect -- nothing leaves the cluster --
+# while giving retrieval a model that understands that "abstract painting" and
+# "art" are related.
+#
+# It assumes Ollama is reachable at ollama.ollama.svc.cluster.local:11434 with
+# the two models pulled:
+#
+#   ollama pull nomic-embed-text
+#   ollama pull llama3.1
+#
+# For a hosted provider instead, set embedding.provider to "openai" or
+# "google", leave baseUrl empty, and point existingSecret at a Secret holding
+# the key. Note that this sends memory content to that provider, which is the
+# trade the defaults exist to avoid making silently.
+
+embedding:
+  provider: "ollama"
+  model: "nomic-embed-text"
+  baseUrl: "http://ollama.ollama.svc.cluster.local:11434"
+  # nomic-embed-text is 768-wide. Set explicitly rather than auto-detected,
+  # because the embeddings column is created at the width first seen and a
+  # surprise here means a re-embed rather than an error.
+  dim: 768
+
+extraction:
+  provider: "llm"
+  model: "llama3.1"
+  # Ollama serves an OpenAI-compatible API at /v1, which is what the extractor
+  # speaks. No API key: a local Ollama does not ask for one.
+  baseUrl: "http://ollama.ollama.svc.cluster.local:11434/v1"
+
+# Extraction runs a model call per session on the write path, so ingest is
+# slower and the pool holds connections longer. Measured on LoCoMo transcripts:
+# roughly 25 seconds per session against a local model, against milliseconds
+# for the rule-based scanner.
+api:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi

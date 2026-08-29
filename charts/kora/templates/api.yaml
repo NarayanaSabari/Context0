@@ -96,6 +96,47 @@ spec:
             # value times .Values.api.replicas.
             - name: KORA_RATE_LIMIT_PER_MINUTE
               value: {{ .Values.api.rateLimitPerMinute | quote }}
+            # Retrieval backends. Always set, including at their defaults, so
+            # `kubectl describe` answers "what is this deployment actually
+            # running" without a chart lookup.
+            - name: KORA_EMBEDDING_PROVIDER
+              value: {{ .Values.embedding.provider | quote }}
+            {{- if .Values.embedding.model }}
+            - name: KORA_EMBEDDING_MODEL
+              value: {{ .Values.embedding.model | quote }}
+            {{- end }}
+            {{- if .Values.embedding.baseUrl }}
+            - name: KORA_EMBEDDING_BASE_URL
+              value: {{ .Values.embedding.baseUrl | quote }}
+            {{- end }}
+            {{- if .Values.embedding.dim }}
+            - name: KORA_EMBEDDING_DIM
+              value: {{ .Values.embedding.dim | quote }}
+            {{- end }}
+            {{- if .Values.embedding.existingSecret }}
+            - name: KORA_EMBEDDING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.embedding.existingSecret }}
+                  key: {{ .Values.embedding.existingSecretKey }}
+            {{- end }}
+            - name: KORA_EXTRACTION_PROVIDER
+              value: {{ .Values.extraction.provider | quote }}
+            {{- if .Values.extraction.model }}
+            - name: KORA_EXTRACTION_MODEL
+              value: {{ .Values.extraction.model | quote }}
+            {{- end }}
+            {{- if .Values.extraction.baseUrl }}
+            - name: KORA_EXTRACTION_BASE_URL
+              value: {{ .Values.extraction.baseUrl | quote }}
+            {{- end }}
+            {{- if .Values.extraction.existingSecret }}
+            - name: KORA_EXTRACTION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.extraction.existingSecret }}
+                  key: {{ .Values.extraction.existingSecretKey }}
+            {{- end }}
             - name: KORA_LOG_LEVEL
               value: {{ .Values.api.logLevel | quote }}
             - name: KORA_LOG_FORMAT

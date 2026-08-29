@@ -56,10 +56,34 @@ type healthRepo interface {
 }
 
 // HealthService implements the HealthService gRPC service.
+// Providers names the backends the engine is actually running, for reporting.
+//
+// Reported because the defaults are the zero-dependency ones -- hashed
+// bag-of-words embeddings and a line-by-line rule extractor -- and a
+// deployment running them retrieves paraphrases far worse than one with a real
+// model. That is the right default, since a fresh install should make no
+// network call, but it should not be invisible: the same corpus scores very
+// differently depending on which of these is in use, and someone comparing two
+// deployments needs to know which they are looking at.
+type Providers struct {
+	Embedding  string
+	Extraction string
+}
+
+// ZeroDependencyDefaults reports whether both providers are the offline
+// defaults. Empty counts as default, because that is what an unset environment
+// variable produces.
+func (p Providers) ZeroDependencyDefaults() bool {
+	embedding := p.Embedding == "" || p.Embedding == "bag-of-words" || p.Embedding == "bow"
+	extraction := p.Extraction == "" || p.Extraction == "rule"
+	return embedding && extraction
+}
+
 type HealthService struct {
 	pb.UnimplementedHealthServiceServer
-	repo    healthRepo
-	version string
+	repo      healthRepo
+	version   string
+	providers Providers
 
 	// group collapses concurrent recomputes into one. Without it, N clients
 	// arriving on an expired cache each launch their own pair of full scans,
@@ -81,8 +105,8 @@ type graphStats struct {
 
 // NewHealthService creates a new HealthService with the given graph repository
 // and server version string. The version is returned verbatim in responses.
-func NewHealthService(repo *graph.AGERepository, version string) *HealthService {
-	return &HealthService{repo: repo, version: version}
+func NewHealthService(repo *graph.AGERepository, version string, providers Providers) *HealthService {
+	return &HealthService{repo: repo, version: version, providers: providers}
 }
 
 // Health reports service status and graph statistics.
@@ -114,10 +138,13 @@ func (s *HealthService) Health(ctx context.Context, _ *pb.HealthRequest) (*pb.He
 	}
 
 	return &pb.HealthResponse{
-		Status:    "ok",
-		Version:   s.version,
-		NodeCount: stats.nodes,
-		EdgeCount: stats.edges,
+		Status:                 "ok",
+		Version:                s.version,
+		NodeCount:              stats.nodes,
+		EdgeCount:              stats.edges,
+		EmbeddingProvider:      s.providers.Embedding,
+		ExtractionProvider:     s.providers.Extraction,
+		ZeroDependencyDefaults: s.providers.ZeroDependencyDefaults(),
 	}, nil
 }
 
