@@ -1,4 +1,11 @@
-.PHONY: build test test-integration lint clean docker-build proto-gen run kind-up kind-down deploy
+.PHONY: build test test-integration test-golden postgres-up lint clean docker-build proto-gen run kind-up kind-down deploy
+
+# Compose refuses to start without credentials, so .env always holds a
+# generated password. The integration targets below have to use that same
+# value: they were written with a literal "kora", which only ever worked on a
+# machine whose .env happened to contain it.
+POSTGRES_PASSWORD := $(shell grep -E '^POSTGRES_PASSWORD=' .env 2>/dev/null | cut -d= -f2-)
+TEST_DATABASE_URL := postgres://kora:$(POSTGRES_PASSWORD)@localhost:5432/kora?sslmode=disable
 
 # Variables
 BINARY_SERVER = bin/kora-server
@@ -22,11 +29,21 @@ test:
 # real Apache AGE instance, which is the only way to catch queries that compile
 # in Go but are malformed openCypher. Skipped by `make test`, which stays
 # hermetic.
-test-integration:
+test-integration: postgres-up
+	KORA_TEST_DATABASE_URL="$(TEST_DATABASE_URL)" \
+		go test ./internal/graph/... -count=1 -race -v
+
+# The retrieval regression suite: a fixed corpus, fixed queries, and committed
+# floors on recall@10 and MRR. Run it before and after any change to ranking,
+# extraction, or the graph. Unlike the benchmark, it needs no credentials and
+# no network, and it is deterministic.
+test-golden: postgres-up
+	KORA_TEST_DATABASE_URL="$(TEST_DATABASE_URL)" \
+		go test ./test/golden/... -count=1 -race -v
+
+postgres-up:
 	docker compose up -d postgres
 	@until docker compose exec -T postgres pg_isready -U kora >/dev/null 2>&1; do sleep 1; done
-	KORA_TEST_DATABASE_URL="postgres://kora:kora@localhost:5432/kora?sslmode=disable" \
-		go test ./internal/graph/... -count=1 -race -v
 
 test-coverage:
 	go test ./... -coverprofile=coverage.out -covermode=atomic

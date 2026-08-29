@@ -61,10 +61,13 @@ known=$(
         grep -rhoE 'KORA_[A-Z0-9_]+' internal/ cmd/ --include='*.go'
         grep -rhoE 'KORA_[A-Z0-9_]+' mcp-server/ scripts/ --include='*.py' 2>/dev/null
         grep -rhoE 'KORA_[A-Z0-9_]+' scripts/ --include='*.sh' 2>/dev/null
-        # Documented as a prefix in the rename guard, not a literal read.
-        echo KORA_E2E_API_KEY
-        echo KORA_E2E_HTTP
-        echo KORA_E2E_ENDPOINT
+        # Test-only settings are read by tests, which are code: the E2E
+        # endpoint and key, the integration DSN, and the golden suite's
+        # embedder override. These were three hardcoded echoes until the
+        # golden suite added three more, which is the signal that listing them
+        # by hand was the wrong shape -- a documented setting is not unread
+        # merely because the reader is a test.
+        grep -rhoE 'KORA_[A-Z0-9_]+' test/ --include='*.go' 2>/dev/null
     } | sort -u
 )
 

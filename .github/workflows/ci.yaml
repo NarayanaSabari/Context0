@@ -111,33 +111,49 @@ jobs:
         with:
           go-version: "1.26"
 
-      # docker-compose requires credentials to be supplied rather than shipping
-      # defaults, so generate them per run. A fixed value in a public workflow
-      # is a published credential even when it only reaches an ephemeral runner.
-      - name: Generate compose credentials
-        run: |
-          {
-            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
-            echo "KORA_API_KEYS=ctx0_$(openssl rand -hex 6)_$(openssl rand -hex 24)"
-          } > .env
-          # Exported for the test DSN below, which must match.
-          grep POSTGRES_PASSWORD .env >> "$GITHUB_ENV"
-
       - name: Start PostgreSQL + AGE + pgvector
-        run: |
-          docker compose up -d postgres
-          for _ in $(seq 1 60); do
-            if docker compose exec -T postgres pg_isready -U kora >/dev/null 2>&1; then
-              echo "postgres ready"; exit 0
-            fi
-            sleep 2
-          done
-          echo "postgres did not become ready"; docker compose logs postgres; exit 1
+        id: db
+        uses: ./.github/actions/postgres
 
       - name: Run graph integration tests
         env:
-          KORA_TEST_DATABASE_URL: postgres://kora:${{ env.POSTGRES_PASSWORD }}@localhost:5432/kora?sslmode=disable
+          KORA_TEST_DATABASE_URL: ${{ steps.db.outputs.database-url }}
         run: go test ./internal/graph/... -race -count=1 -v
+
+      - name: Stop services
+        if: always()
+        run: docker compose down -v
+
+  # ── Retrieval Regression ──────────────────────────────
+  # Ranking, extraction and graph changes used to be judged only by an
+  # out-of-tree benchmark run by hand, at n=40, through a non-deterministic
+  # judge. Nothing in CI could tell that a change made retrieval worse.
+  #
+  # This job answers exactly that: a fixed corpus, fixed queries, committed
+  # floors on recall@10 and MRR. It is deterministic (ten runs, identical
+  # numbers) and needs no credentials, because it uses the offline
+  # bag-of-words embedder and no LLM.
+  golden:
+    name: Retrieval Regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+
+      - name: Start PostgreSQL + AGE + pgvector
+        id: db
+        uses: ./.github/actions/postgres
+
+      # -v unconditionally: the per-case rank table is the useful output when
+      # this fails, and a failing aggregate on its own does not say which
+      # query moved.
+      - name: Run the golden retrieval suite
+        env:
+          KORA_TEST_DATABASE_URL: ${{ steps.db.outputs.database-url }}
+        run: go test ./test/golden/... -race -count=1 -v
 
       - name: Stop services
         if: always()

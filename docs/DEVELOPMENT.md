@@ -285,7 +285,16 @@ kubectl label namespace kora \
 - pnpm -C web test (when we add frontend tests)
 ```
 
-#### Job 3: Build
+#### Job 3: Retrieval Regression
+```yaml
+- docker compose up -d postgres   # via .github/actions/postgres
+- go test ./test/golden/... -race -count=1 -v
+```
+A fixed corpus and fixed queries with committed floors on recall@10 and MRR.
+The only job that can tell that a ranking, extraction, or graph change made
+retrieval worse.
+
+#### Job 4: Build
 ```yaml
 - go build ./cmd/server ./cmd/consolidate ./cmd/cli
 - docker build -t kora/kora:ci .
@@ -294,7 +303,7 @@ kubectl label namespace kora \
 - helm lint ./charts/kora
 ```
 
-#### Job 4: E2E Tests (on main only, not every PR)
+#### Job 5: E2E Tests (on main only, not every PR)
 ```yaml
 - Create kind cluster
 - Deploy all components
@@ -302,7 +311,7 @@ kubectl label namespace kora \
 - Teardown
 ```
 
-#### Job 5: Security Scan
+#### Job 6: Security Scan
 ```yaml
 - gosec ./...
 - trivy image kora/kora:ci
@@ -349,7 +358,7 @@ steps:
 ╱──────────────────╲
 ```
 
-Counting them: `go test ./... -list '.*'` reports 239 Go tests, of which 56
+Counting them: `go test ./... -list '.*'` reports 368 Go tests, of which 129
 skip unless `KORA_TEST_DATABASE_URL` points at a real Postgres with AGE and
 pgvector. The Python SDK adds 28 end-to-end tests against a live engine.
 
@@ -364,6 +373,7 @@ than no number at all.
 | **Unit** | `*_test.go` in each package | Pure logic: ranking, parsing, extraction, auth, config | Every PR | 80%+ |
 | **Integration** | `internal/graph/age_test.go` | Real PostgreSQL + AGE: graph CRUD, Cypher injection resistance, vector search, schema init | Every PR (with DB service) | 60%+ |
 | **E2E** | `test/e2e/` | Full system on kind: store → extract → query → profile flow | Main branch + release | All API endpoints covered |
+| **Retrieval regression** | `test/golden/` | A fixed corpus and fixed queries, with committed floors on recall@10 and MRR | Every PR (with DB service) | Not a coverage measure |
 
 ### Running the integration tests
 
@@ -386,6 +396,42 @@ KORA_TEST_DATABASE_URL="postgres://kora:kora@localhost:5432/kora?sslmode=disable
 Without `KORA_TEST_DATABASE_URL` the suite skips, so plain `go test ./...`
 needs no database. Each test scopes its data to a unique project id and cleans
 up after itself, so runs are repeatable against a persistent database.
+
+### Running the retrieval regression suite
+
+Changes to ranking, extraction, or the graph can make retrieval quietly worse
+without breaking a single unit test. This suite is the tripwire for that: it
+stores a fixed corpus through the real `Store` path, runs fixed queries through
+the real `Query` path, and fails when recall@10 or MRR falls below the floors
+committed in `test/golden/golden_test.go`.
+
+```bash
+make test-golden
+```
+
+It is deterministic: ten consecutive runs produce identical numbers, because
+every retriever's candidate pool is larger than the corpus, so ranking never
+has to break a tie on the arbitrary order AGE returns rows in.
+
+It uses the offline bag-of-words embedder, so it needs no credentials and makes
+no network call. That makes its numbers a floor, not a measure of quality: on
+this corpus full-text search answers nearly everything, and disabling vector or
+entity retrieval barely moves the result. Point it at a real embedder when the
+question is quality rather than regression:
+
+```bash
+KORA_TEST_EMBEDDING_PROVIDER=ollama KORA_TEST_EMBEDDING_MODEL=nomic-embed-text \
+KORA_TEST_EMBEDDING_DIM=768 \
+KORA_TEST_DATABASE_URL="postgres://kora:$POSTGRES_PASSWORD@localhost:5432/kora?sslmode=disable" \
+  go test ./test/golden/... -count=1 -v
+```
+
+A provider whose dimension differs from the default 384 needs its own database:
+the embedding column is created at the width first seen.
+
+When a change legitimately improves retrieval, raise the floors in the same
+commit, so the gain cannot be given back silently later. When a change lowers
+them, the commit message has to say which behaviour was traded away and why.
 
 ### Benchmarking
 
@@ -554,7 +600,8 @@ kora/
 │   ├── verify_install.sh        # The documented install paths work
 │   └── teardown.sh              # Cleanup
 ├── test/
-│   └── e2e/                     # E2E tests (build tag: e2e)
+│   ├── e2e/                     # E2E tests (build tag: e2e)
+│   └── golden/                  # Retrieval regression suite (fixed corpus + floors)
 ├── web/                         # React web UI
 ├── .gitignore
 ├── ARCHITECTURE.md
