@@ -373,9 +373,24 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 		pbMemories = append(pbMemories, memoryToProto(stored[i]))
 	}
 
+	// Narrowed with an explicit bound rather than min(), which gosec cannot see
+	// through: the proto field is int32 and nothing caps how many edges one
+	// conversation can produce. Clamped rather than wrapped, so an
+	// implausible count reports the largest number it can instead of a
+	// negative one.
+	var relationships int32
+	switch {
+	case relCount < 0:
+		relationships = 0
+	case relCount > math.MaxInt32:
+		relationships = math.MaxInt32
+	default:
+		relationships = int32(relCount)
+	}
+
 	return &pb.ExtractResponse{
 		Memories:             pbMemories,
-		RelationshipsCreated: int32(min(relCount, math.MaxInt32)),
+		RelationshipsCreated: relationships,
 	}, nil
 }
 
