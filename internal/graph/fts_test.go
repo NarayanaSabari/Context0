@@ -5,6 +5,7 @@ package graph
 // search configuration does to a word, neither of which a mock can tell you.
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -496,5 +497,114 @@ func TestSearchByText_MatchesTags(t *testing.T) {
 	// The memory's tags survive the round trip, so the caller still sees them.
 	if len(got) > 0 && len(got[0].Memory.Tags) != 2 {
 		t.Errorf("the hydrated memory has %d tags, want 2", len(got[0].Memory.Tags))
+	}
+}
+
+// The cost of a keyword search must not scale with how many memories match it.
+//
+// This is the defect that took query latency from 8.9ms to 237.8ms in CI and
+// left main red for two days, and neither the unit tests nor the golden
+// retrieval suite could see it: the query returned exactly the right rows the
+// whole time. Only the plan says which.
+//
+// Two scalar facts about the corpus -- its size, and each term's document
+// frequency -- were written as ordinary CTEs. PostgreSQL inlines a CTE
+// referenced once, so the planner hung them off the join over matching rows
+// and re-executed both per candidate. Measured at 4,000 memories: 266
+// candidates, 266 executions of each, 489ms for one query.
+//
+// The assertion is on loop counts rather than on elapsed time, because a
+// timing threshold on a shared CI runner is a flake generator, and because the
+// number of executions is the actual claim: constant work per query, not work
+// per matching row.
+func TestSearchByKeywords_CostDoesNotScaleWithMatchCount(t *testing.T) {
+	repo, ctx := testRepo(t)
+	projectID := newProjectID(t)
+
+	// Enough matches that a per-row re-execution is unmistakable in the loop
+	// counts, while staying small enough to seed quickly.
+	const matches = 60
+	for i := 0; i < matches; i++ {
+		storeMemory(t, repo, ctx, newMemory(projectID,
+			fmt.Sprintf("release %d shipped the kubernetes rollout and the postgres migration", i)))
+	}
+	if _, err := repo.pool.Exec(ctx, fmt.Sprintf(`ANALYZE %s."Memory"`, GraphName)); err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+
+	sql, args := keywordSearchQuery(projectID, []string{"kubernetes", "postgres", "migration"}, 100)
+
+	// enable_seqscan=off for the same reason TestSearchByText_UsesTheFullTextIndex
+	// uses it: at test size a sequential scan is genuinely the cheapest plan, so
+	// seeing one proves nothing. Under this setting a sequential scan means no
+	// index can serve the predicate at all, which is the claim being tested.
+	// Materialisation is unaffected by the setting, so the loop counts below are
+	// measured on the same plan.
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
+		t.Fatalf("disable seqscan: %v", err)
+	}
+
+	var plan string
+	row := tx.QueryRow(ctx,
+		`EXPLAIN (ANALYZE, FORMAT JSON, TIMING OFF, SUMMARY OFF) `+sql, args...)
+	if err := row.Scan(&plan); err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+
+	// Loop counts for the nodes that read the Memory label, flattened. The
+	// planner is free to reshape the query, so the test asserts a property of
+	// whatever plan it chose rather than the shape of one particular plan.
+	//
+	// Restricted to nodes touching Memory on purpose. A healthy plan re-enters
+	// the single-row `corpus` CTE once per output row, which is free and says
+	// nothing; work against the label is what has to stay bounded.
+	var maxLoops float64
+	var walk func(node map[string]any)
+	walk = func(node map[string]any) {
+		if node["Relation Name"] == "Memory" {
+			if loops, ok := node["Actual Loops"].(float64); ok && loops > maxLoops {
+				maxLoops = loops
+			}
+		}
+		if children, ok := node["Plans"].([]any); ok {
+			for _, c := range children {
+				if child, ok := c.(map[string]any); ok {
+					walk(child)
+				}
+			}
+		}
+	}
+	var parsed []map[string]any
+	if err := json.Unmarshal([]byte(plan), &parsed); err != nil {
+		t.Fatalf("parse plan: %v", err)
+	}
+	for _, p := range parsed {
+		if node, ok := p["Plan"].(map[string]any); ok {
+			walk(node)
+		}
+	}
+
+	// One execution per query term is expected and bounded by the query, not
+	// by the data. Anything approaching the match count is the defect.
+	const perTermCeiling = 10
+	if maxLoops > perTermCeiling {
+		t.Errorf("a scan of the Memory label ran %v times for a query with 3 terms and %d matching memories; "+
+			"the cost of a keyword search is scaling with how many rows match, "+
+			"which is the defect MATERIALIZED exists to prevent:\n%s",
+			maxLoops, matches, plan)
+	}
+
+	// The project filter has its own index precisely because the SQL spells it
+	// with a ::text cast that the agtype-form index cannot serve. Without it
+	// the corpus count sequential-scans the whole label, which no loop count
+	// would reveal.
+	if strings.Contains(plan, `"Node Type": "Seq Scan"`) {
+		t.Errorf("the keyword search sequential-scans the Memory label:\n%s\n"+
+			"the project filter's index is missing or spelled differently from the query", plan)
 	}
 }

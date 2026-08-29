@@ -94,6 +94,24 @@ const idExpr = `(ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"
 // projectExpr is the same, for project_id.
 const projectExpr = `(ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"project_id"'::ag_catalog.agtype]))::text`
 
+// projectTextIndexName is the btree index over the project filter *as this
+// file's SQL spells it*.
+//
+// createPropertyIndexes already indexes project_id, in the agtype form Cypher
+// produces. The SQL here compares `(...)::text = $2`, and an index built over
+// the uncast expression cannot serve a predicate on the cast one: they are
+// different expressions, however identical they look. The result was a
+// sequential scan of the whole Memory label inside the corpus count on every
+// keyword search -- measured at 4,000 memories as a 200-row scan the planner
+// re-entered per candidate, and linear in the label thereafter.
+//
+// Two indexes on one property is the price of two query languages reaching the
+// same data. The alternative -- comparing in agtype form so the existing index
+// applies -- means building an agtype literal from a caller-supplied project
+// id, which is exactly the string-into-query shape this package works hard to
+// avoid.
+const projectTextIndexName = "memory_project_id_text_idx"
+
 // initFullTextSchema builds the GIN index backing keyword retrieval.
 // Idempotent, and called from InitSchema on every startup.
 func (r *AGERepository) initFullTextSchema(ctx context.Context) error {
@@ -108,6 +126,14 @@ func (r *AGERepository) initFullTextSchema(ctx context.Context) error {
 	)
 	if _, err := r.pool.Exec(ctx, stmt); err != nil {
 		return fmt.Errorf("create full-text index: %w", err)
+	}
+
+	projectIdx := fmt.Sprintf(
+		`CREATE INDEX IF NOT EXISTS %s ON %s."Memory" ((%s))`,
+		projectTextIndexName, GraphName, projectExpr,
+	)
+	if _, err := r.pool.Exec(ctx, projectIdx); err != nil {
+		return fmt.Errorf("create project text index: %w", err)
 	}
 
 	// A GIN index over an expression has no statistics until ANALYZE runs, and
@@ -188,28 +214,27 @@ const termsCTE = `terms AS (
 // standard BM25 IDF. See termsCTE.
 const idfExpr = `ln(1 + (corpus.n - df.d + 0.5) / (df.d + 0.5))`
 
-// SearchByKeywords ranks memories by full-text relevance to the query terms.
+// keywordSearchQuery builds the SQL and arguments for SearchByKeywords.
 //
-// The score is the IDF-weighted sum of each term's ts_rank_cd against the
-// memory: sum over terms of idf(term) * ts_rank_cd(memory, term). That is the
-// shape of BM25 -- a per-term relevance weighted by the term's rarity -- built
-// from the two pieces Postgres provides separately.
+// Split out from the call so a test can EXPLAIN exactly what runs. The plan is
+// the thing worth asserting here: this query has been correct and 50x too slow
+// at the same time, and only the plan says which.
 //
-// Terms are OR-ed, so a memory matching any of them is a candidate and the
-// weighted sum decides how good a one. AND would be wrong here: this is the
-// recall-oriented retriever in a hybrid, and requiring every term turns a
-// five-word question into a near-empty result set.
+// MATERIALIZED on corpus and df is load-bearing, not decoration.
 //
-// Returns raw scores. Normalising them is the ranking layer's job, because the
-// right normalisation depends on the query length and the ranking layer is
-// where that decision is documented and tested.
+// Both are scalar facts about the corpus: one row each, the same value for
+// every candidate. Left as ordinary CTEs, PostgreSQL 12 and later inline a CTE
+// referenced once, and the planner then hangs them off the join over matching
+// rows -- so both were re-executed once per candidate row rather than once per
+// query. Measured on 4,000 memories with a three-term query: 266 candidates,
+// 266 executions of each, 489ms. The same query with these two keywords:
+// 9.9ms, and 2.9ms once the project filter had an index it could use.
 //
-// An empty result is not an error: a query whose terms are all stop words has
-// nothing to match.
-func (r *AGERepository) SearchByKeywords(ctx context.Context, projectID string, keywords []string, limit int) ([]KeywordHit, error) {
-	if len(keywords) == 0 || limit <= 0 {
-		return nil, nil
-	}
+// The cost model is worth stating because it is what makes this a correctness
+// question rather than a tuning one: without materialisation the query's cost
+// scales with how many memories match, which is precisely the property
+// scripts/verify_perf.sh asserts keyword search does not have.
+func keywordSearchQuery(projectID string, keywords []string, limit int) (string, []any) {
 
 	// Every value is a parameter; only GraphName and the text search
 	// configuration are interpolated, and both are compile-time constants of
@@ -234,8 +259,8 @@ func (r *AGERepository) SearchByKeywords(ctx context.Context, projectID string, 
 	if projectID == "" {
 		sql = fmt.Sprintf(`
 WITH %s,
-corpus AS (SELECT GREATEST(count(*), 1)::float8 AS n FROM %s."Memory"),
-df AS (
+corpus AS MATERIALIZED (SELECT GREATEST(count(*), 1)::float8 AS n FROM %s."Memory"),
+df AS MATERIALIZED (
 	SELECT lexed.q, GREATEST((
 		SELECT count(*) FROM %s."Memory" m
 		WHERE to_tsvector('%s', %s) @@ lexed.q
@@ -259,8 +284,8 @@ GROUP BY id ORDER BY rank DESC LIMIT $2`,
 	} else {
 		sql = fmt.Sprintf(`
 WITH %s,
-corpus AS (SELECT GREATEST(count(*), 1)::float8 AS n FROM %s."Memory" WHERE %s = $2),
-df AS (
+corpus AS MATERIALIZED (SELECT GREATEST(count(*), 1)::float8 AS n FROM %s."Memory" WHERE %s = $2),
+df AS MATERIALIZED (
 	SELECT lexed.q, GREATEST((
 		SELECT count(*) FROM %s."Memory" m
 		WHERE %s = $2 AND to_tsvector('%s', %s) @@ lexed.q
@@ -282,6 +307,34 @@ GROUP BY id ORDER BY rank DESC LIMIT $3`,
 		)
 		args = []any{keywords, projectID, limit}
 	}
+
+	return sql, args
+}
+
+// SearchByKeywords ranks memories by full-text relevance to the query terms.
+//
+// The score is the IDF-weighted sum of each term's ts_rank_cd against the
+// memory: sum over terms of idf(term) * ts_rank_cd(memory, term). That is the
+// shape of BM25 -- a per-term relevance weighted by the term's rarity -- built
+// from the two pieces Postgres provides separately.
+//
+// Terms are OR-ed, so a memory matching any of them is a candidate and the
+// weighted sum decides how good a one. AND would be wrong here: this is the
+// recall-oriented retriever in a hybrid, and requiring every term turns a
+// five-word question into a near-empty result set.
+//
+// Returns raw scores. Normalising them is the ranking layer's job, because the
+// right normalisation depends on the query length and the ranking layer is
+// where that decision is documented and tested.
+//
+// An empty result is not an error: a query whose terms are all stop words has
+// nothing to match.
+func (r *AGERepository) SearchByKeywords(ctx context.Context, projectID string, keywords []string, limit int) ([]KeywordHit, error) {
+	if len(keywords) == 0 || limit <= 0 {
+		return nil, nil
+	}
+
+	sql, args := keywordSearchQuery(projectID, keywords, limit)
 
 	rows, err := r.pool.Query(ctx, sql, args...)
 	if err != nil {
