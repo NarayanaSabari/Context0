@@ -129,11 +129,23 @@ class KoraClient:
         self,
         project_id: str,
         query: str = "",
+        max_memories: int = 0,
+        recency_days: int = 0,
     ) -> dict[str, Any]:
-        """GET /v1/profiles/{project_id} — get user/project profile."""
+        """GET /v1/profiles/{project_id} — get user/project profile.
+
+        max_memories and recency_days are optional. Zero means the engine's
+        documented defaults (200 memories, a 7-day window for what counts as
+        current); the engine clamps rather than refusing values above its
+        maximum, so an ambitious number is served at the maximum.
+        """
         params: dict[str, Any] = {}
         if query:
             params["query"] = query
+        if max_memories:
+            params["maxMemories"] = max_memories
+        if recency_days:
+            params["recencyDays"] = recency_days
         r = await self._client.get(f"/v1/profiles/{project_id}", params=params)
         r.raise_for_status()
         return r.json()

@@ -209,6 +209,30 @@ jobs:
             --set postgres.existingSecret=my-pg \
             --set auth.existingSecret=my-keys > /dev/null
 
+          # The quality profile is a supported install path, so it has to keep
+          # rendering. It was added with only a hand-run `helm template`
+          # behind it, which is exactly how a values file rots: nothing
+          # references it until someone tries it.
+          helm template kora ./charts/kora -f ./charts/kora/values-quality.yaml \
+            --set postgres.password=ci-render-only \
+            --set auth.apiKeys=ctx0_ci_render_only > /tmp/quality.yaml
+
+          # Rendering is not enough. The point of that file is that both
+          # backends stop being the zero-dependency defaults, and a typo in a
+          # values key renders happily while changing nothing.
+          for setting in \
+            'KORA_EMBEDDING_PROVIDER' 'KORA_EMBEDDING_MODEL' 'KORA_EMBEDDING_DIM' \
+            'KORA_EXTRACTION_PROVIDER' 'KORA_EXTRACTION_MODEL' 'KORA_EXTRACTION_BASE_URL'; do
+            grep -q "$setting" /tmp/quality.yaml || {
+              echo "::error::the quality profile renders without $setting; a values key no longer matches the template"
+              exit 1
+            }
+          done
+          grep -q 'value: "bag-of-words"' /tmp/quality.yaml && {
+            echo "::error::the quality profile still selects the default embedder"
+            exit 1
+          }
+
           # And the guard itself must hold: a credential-less install has to
           # fail loudly rather than quietly shipping an empty password.
           if helm template kora ./charts/kora > /dev/null 2>&1; then
