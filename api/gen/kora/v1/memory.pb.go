@@ -1211,7 +1211,25 @@ type GetProfileRequest struct {
 	// Required. Organises retrieval rather than isolating it: see SECURITY.md.
 	ProjectId string `protobuf:"bytes,1,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
 	// Optional query string to filter the profile by relevance.
-	Query         string `protobuf:"bytes,2,opt,name=query,proto3" json:"query,omitempty"`
+	Query string `protobuf:"bytes,2,opt,name=query,proto3" json:"query,omitempty"`
+	// How many of the project's memories to build the profile from.
+	//
+	// Defaults to 200 when unset or zero, and is clamped to 1000. A request
+	// above the maximum returns a profile built from 1000 memories rather than
+	// an error, the same contract as QueryRequest.top_k.
+	//
+	// Memories are taken by the graph query's own order, so raising this widens
+	// the profile rather than reordering it.
+	MaxMemories int32 `protobuf:"varint,3,opt,name=max_memories,json=maxMemories,proto3" json:"max_memories,omitempty"`
+	// How recent a memory must be to count as current rather than settled.
+	//
+	// Defaults to 7 days when unset or zero, and is clamped to 365. Episodic
+	// memories inside the window form the dynamic profile; everything else that
+	// is episodic falls outside it and appears in neither half.
+	//
+	// Parameterised because "recent" is a claim about someone else's product: a
+	// support bot and a coding assistant do not agree on it.
+	RecencyDays   int32 `protobuf:"varint,4,opt,name=recency_days,json=recencyDays,proto3" json:"recency_days,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1258,6 +1276,20 @@ func (x *GetProfileRequest) GetQuery() string {
 		return x.Query
 	}
 	return ""
+}
+
+func (x *GetProfileRequest) GetMaxMemories() int32 {
+	if x != nil {
+		return x.MaxMemories
+	}
+	return 0
+}
+
+func (x *GetProfileRequest) GetRecencyDays() int32 {
+	if x != nil {
+		return x.RecencyDays
+	}
+	return 0
 }
 
 // ProfileFact is a single distilled fact in a user/project profile,
@@ -1475,11 +1507,13 @@ const file_kora_v1_memory_proto_rawDesc = "" +
 	"session_id\x18\x03 \x01(\tR\tsessionId\"s\n" +
 	"\x0fExtractResponse\x12+\n" +
 	"\bmemories\x18\x01 \x03(\v2\x0f.kora.v1.MemoryR\bmemories\x123\n" +
-	"\x15relationships_created\x18\x02 \x01(\x05R\x14relationshipsCreated\"H\n" +
+	"\x15relationships_created\x18\x02 \x01(\x05R\x14relationshipsCreated\"\x8e\x01\n" +
 	"\x11GetProfileRequest\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x14\n" +
-	"\x05query\x18\x02 \x01(\tR\x05query\"\x84\x01\n" +
+	"\x05query\x18\x02 \x01(\tR\x05query\x12!\n" +
+	"\fmax_memories\x18\x03 \x01(\x05R\vmaxMemories\x12!\n" +
+	"\frecency_days\x18\x04 \x01(\x05R\vrecencyDays\"\x84\x01\n" +
 	"\vProfileFact\x12\x18\n" +
 	"\acontent\x18\x01 \x01(\tR\acontent\x12'\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x13.kora.v1.MemoryTypeR\x04type\x12\x1e\n" +

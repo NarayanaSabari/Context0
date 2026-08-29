@@ -700,3 +700,50 @@ func TestExtractLinksSemanticallyRelatedMemories(t *testing.T) {
 			e.TargetContent)
 	}
 }
+
+// A profile's size and its notion of "recent" are the caller's to choose.
+//
+// Both were hardcoded at 200 memories and 7 days, which made this engine's
+// opinion about how long something stays current into everyone's. The clamps
+// follow the contract top_k settled on: a request above the maximum is served
+// at the maximum rather than refused, because a profile is a convenience view
+// and failing one over an ambitious number helps nobody.
+func TestProfileSizing(t *testing.T) {
+	memories := []struct {
+		name      string
+		requested int32
+		want      int32
+	}{
+		{"unset falls back to the documented default", 0, defaultProfileMemories},
+		{"negative is treated as unset, not as an error", -1, defaultProfileMemories},
+		{"a modest request is honoured exactly", 50, 50},
+		{"the maximum is honoured exactly", maxProfileMemories, maxProfileMemories},
+		{"above the maximum is served at the maximum", maxProfileMemories + 5000, maxProfileMemories},
+	}
+	for _, tt := range memories {
+		t.Run("budget/"+tt.name, func(t *testing.T) {
+			if got := profileMemoryBudget(tt.requested); got != tt.want {
+				t.Errorf("profileMemoryBudget(%d) = %d, want %d", tt.requested, got, tt.want)
+			}
+		})
+	}
+
+	days := []struct {
+		name      string
+		requested int32
+		want      int
+	}{
+		{"unset falls back to a week", 0, defaultProfileRecencyDays},
+		{"negative is treated as unset", -30, defaultProfileRecencyDays},
+		{"a day is a legitimate window", 1, 1},
+		{"a year is the maximum", maxProfileRecencyDays, maxProfileRecencyDays},
+		{"beyond a year is served at a year", 4000, maxProfileRecencyDays},
+	}
+	for _, tt := range days {
+		t.Run("recency/"+tt.name, func(t *testing.T) {
+			if got := profileRecencyDays(tt.requested); got != tt.want {
+				t.Errorf("profileRecencyDays(%d) = %d, want %d", tt.requested, got, tt.want)
+			}
+		})
+	}
+}

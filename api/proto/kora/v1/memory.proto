@@ -352,6 +352,26 @@ message GetProfileRequest {
 
   // Optional query string to filter the profile by relevance.
   string query = 2;
+
+  // How many of the project's memories to build the profile from.
+  //
+  // Defaults to 200 when unset or zero, and is clamped to 1000. A request
+  // above the maximum returns a profile built from 1000 memories rather than
+  // an error, the same contract as QueryRequest.top_k.
+  //
+  // Memories are taken by the graph query's own order, so raising this widens
+  // the profile rather than reordering it.
+  int32 max_memories = 3;
+
+  // How recent a memory must be to count as current rather than settled.
+  //
+  // Defaults to 7 days when unset or zero, and is clamped to 365. Episodic
+  // memories inside the window form the dynamic profile; everything else that
+  // is episodic falls outside it and appears in neither half.
+  //
+  // Parameterised because "recent" is a claim about someone else's product: a
+  // support bot and a coding assistant do not agree on it.
+  int32 recency_days = 4;
 }
 
 // ProfileFact is a single distilled fact in a user/project profile,

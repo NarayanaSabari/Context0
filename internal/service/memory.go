@@ -649,18 +649,60 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 // GetProfile builds a user/project profile by splitting all project memories into
 // two layers:
 //   - Static profile: semantic facts and procedural knowledge that are stable over time.
-//   - Dynamic profile: episodic memories from the last 7 days representing recent activity.
+//   - Dynamic profile: episodic memories inside the recency window, defaulting
+//     to the last 7 days, representing recent activity.
 //
 // Each fact carries the memory's current decay score as a confidence indicator.
+// Profile sizing. Both were hardcoded, which made "recent" a claim this engine
+// imposed on every caller: a support bot and a coding assistant do not agree
+// on how long ago something stops being current.
+//
+// The clamps follow the contract top_k settled on -- a request above the
+// maximum is served at the maximum rather than refused -- because a profile is
+// a convenience view and failing one over an ambitious number helps nobody.
+// The maxima exist because both bound real work: the memory budget is a graph
+// query's LIMIT, and a 365-day window with a large budget is the widest profile
+// anyone has asked for.
+const (
+	defaultProfileMemories = 200
+	maxProfileMemories     = 1000
+
+	defaultProfileRecencyDays = 7
+	maxProfileRecencyDays     = 365
+)
+
+// profileMemoryBudget resolves how many memories a profile is built from.
+func profileMemoryBudget(requested int32) int32 {
+	switch {
+	case requested <= 0:
+		return defaultProfileMemories
+	case requested > maxProfileMemories:
+		return maxProfileMemories
+	default:
+		return requested
+	}
+}
+
+// profileRecencyDays resolves the window that separates current from settled.
+func profileRecencyDays(requested int32) int {
+	switch {
+	case requested <= 0:
+		return defaultProfileRecencyDays
+	case requested > maxProfileRecencyDays:
+		return maxProfileRecencyDays
+	default:
+		return int(requested)
+	}
+}
+
 func (s *MemoryService) GetProfile(ctx context.Context, req *pb.GetProfileRequest) (*pb.GetProfileResponse, error) {
 	if req.ProjectId == "" {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
 
-	// Fetch all memories for this project.
 	filter := graph.QueryFilter{
 		ProjectID: req.ProjectId,
-		TopK:      200,
+		TopK:      profileMemoryBudget(req.MaxMemories),
 	}
 	results, err := s.repo.QueryMemories(ctx, filter)
 	if err != nil {
@@ -668,7 +710,7 @@ func (s *MemoryService) GetProfile(ctx context.Context, req *pb.GetProfileReques
 	}
 
 	now := time.Now().UTC()
-	dynamicCutoff := now.AddDate(0, 0, -7) // last 7 days
+	dynamicCutoff := now.AddDate(0, 0, -profileRecencyDays(req.RecencyDays))
 
 	var staticFacts []*pb.ProfileFact
 	var dynamicFacts []*pb.ProfileFact
