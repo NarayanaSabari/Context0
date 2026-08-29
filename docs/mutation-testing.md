@@ -25,6 +25,38 @@ Every one of those was green. Mutation testing automates the check that caught
 them: change the source in a way a correct test must notice, run the tests, and
 report anything the suite sleeps through.
 
+## What it found in the retrieval and ingest split
+
+Run against the two packages the read and write paths moved into, immediately
+after the move:
+
+| package | before | after |
+|---|---|---|
+| `internal/retrieval` | 1 of 6 killed | **5 of 6** |
+| `internal/ingest` | 1 of 6 killed | **6 of 6** |
+| `internal/service` | 12 of 18 killed | **18 of 18** |
+
+Every survivor was the same shape: an error branch whose comment promised the
+engine degrades rather than fails, with nothing asserting it. A failed vector
+search returning keyword results, a failed candidate lookup skipping
+contradiction detection rather than losing the write, a failed searchability
+check *not* falling back. All were written down as intent and none were tested.
+
+The second thing it found is subtler and worth repeating: **a test for the
+failure path alone kills nothing.** Forcing `if err != nil` true is invisible to
+a test that already supplies an error. Half the survivors needed the success
+case -- the fallback that runs, the contradiction that is found, the vector hit
+that reaches the caller -- because that is what the mutation removes.
+
+It also found dead defence. `NewMemoryServiceWithExtractor` and `ingest.New`
+both replaced a nil extractor with the rule-based one; the service's copy is
+gone, because duplicate defence in two layers is how the two drift apart.
+
+One mutant survives on purpose. Forcing the `verr != nil` branch after
+`SearchByVector` adds a log line and changes nothing else, since the results
+are assigned before the check. It is an equivalent mutant, recorded in
+`internal/retrieval/degradation_test.go` so nobody writes a test for it.
+
 ## Usage
 
 ```sh

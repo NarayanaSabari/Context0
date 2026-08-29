@@ -40,15 +40,17 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// MemoryService implements the Kora gRPC service. It holds a graph repository
-// for persistent memory storage and traversal, an optional embedder for
-// generating vector representations used in hybrid search, and an extractor
-// that turns raw conversations into structured memories.
+// MemoryService implements the Kora gRPC service.
+//
+// It is the wire layer and little else now: protobuf in, protobuf out, and the
+// arguments that belong to the wire format -- notably session ids, where Store
+// rejects a malformed one and Extract warns and carries on. The behaviour sits
+// in the two engines either side of the store, internal/ingest and
+// internal/retrieval.
 type MemoryService struct {
 	pb.UnimplementedKoraServer
-	repo      *graph.AGERepository
-	embedder  embedding.Embedder
-	extractor extraction.Extractor
+	repo     *graph.AGERepository
+	embedder embedding.Embedder
 
 	// The two halves of the engine's behaviour, either side of the store.
 	// Constructed here rather than injected because the service is what
@@ -69,17 +71,14 @@ func NewMemoryService(repo *graph.AGERepository, embedder embedding.Embedder) *M
 }
 
 // NewMemoryServiceWithExtractor is NewMemoryService with an explicit
-// extraction backend. A nil extractor falls back to the rule-based scanner,
-// so a caller that forgets to configure one still gets working extraction
-// rather than a nil dereference on the first Extract call.
+// extraction backend. A nil extractor falls back to the rule-based scanner --
+// in ingest.New, which is the only place that decision is now made. The
+// service used to make it too, and duplicate defence in two layers is how the
+// two drift apart.
 func NewMemoryServiceWithExtractor(repo *graph.AGERepository, embedder embedding.Embedder, extractor extraction.Extractor) *MemoryService {
-	if extractor == nil {
-		extractor = extraction.RuleExtractor{}
-	}
 	return &MemoryService{
 		repo:      repo,
 		embedder:  embedder,
-		extractor: extractor,
 		retrieval: retrieval.New(repo, embedder),
 		ingest:    ingest.New(repo, embedder, extractor),
 	}
