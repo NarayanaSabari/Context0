@@ -1,4 +1,4 @@
-.PHONY: build test test-integration test-golden postgres-up lint clean docker-build proto-gen run kind-up kind-down deploy
+.PHONY: build test test-integration test-golden test-golden-quality postgres-up lint clean docker-build proto-gen run kind-up kind-down deploy
 
 # Compose refuses to start without credentials, so .env always holds a
 # generated password. The integration targets below have to use that same
@@ -40,6 +40,34 @@ test-integration: postgres-up
 test-golden: postgres-up
 	KORA_TEST_DATABASE_URL="$(TEST_DATABASE_URL)" \
 		go test ./test/golden/... -count=1 -race -v
+
+# The opt-in quality tier of the golden suite: the same corpus and cases, run
+# against a real embedding model, with its own higher floors.
+#
+# It answers what the gated suite cannot -- whether the vector retriever works
+# at all. Verified by deleting vector retrieval: the offline suite stays green,
+# this one fails on four assertions.
+#
+# Needs its own database. The embeddings column is created at the width first
+# seen, and nomic-embed-text is 768 where the default is 384, so pointing this
+# at the compose database would fail on dimension rather than on retrieval.
+#
+#   docker run -d --name kora-ollama -p 11435:11434 ollama/ollama
+#   docker exec kora-ollama ollama pull nomic-embed-text
+#   docker run -d --name kora-golden-pg -e POSTGRES_DB=kora -e POSTGRES_USER=kora \
+#     -e POSTGRES_PASSWORD=golden -p 55437:5432 <the postgres-age-vector image>
+GOLDEN_QUALITY_DSN ?= postgres://kora:golden@localhost:55437/kora?sslmode=disable
+GOLDEN_OLLAMA_URL ?= http://localhost:11435
+
+test-golden-quality:
+	@curl -sf $(GOLDEN_OLLAMA_URL)/api/tags >/dev/null || \
+		{ echo "no Ollama at $(GOLDEN_OLLAMA_URL); see the comment above this target"; exit 1; }
+	KORA_TEST_DATABASE_URL="$(GOLDEN_QUALITY_DSN)" \
+		KORA_TEST_EMBEDDING_PROVIDER=ollama \
+		KORA_TEST_EMBEDDING_MODEL=nomic-embed-text \
+		KORA_TEST_EMBEDDING_BASE_URL=$(GOLDEN_OLLAMA_URL) \
+		KORA_TEST_EMBEDDING_DIM=768 \
+		go test ./test/golden/... -count=1 -v
 
 postgres-up:
 	docker compose up -d postgres

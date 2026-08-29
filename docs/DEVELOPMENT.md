@@ -429,6 +429,22 @@ KORA_TEST_DATABASE_URL="postgres://kora:$POSTGRES_PASSWORD@localhost:5432/kora?s
 A provider whose dimension differs from the default 384 needs its own database:
 the embedding column is created at the width first seen.
 
+`make test-golden-quality` runs exactly that, against Ollama and
+`nomic-embed-text`, and scores it against a **second, higher set of floors**.
+The two tiers measure different things:
+
+| tier | embedder | floors (overall) | runs |
+|---|---|---|---|
+| offline | bag-of-words | recall 0.90, MRR 0.83 | every PR |
+| online | nomic-embed-text | recall 0.92, MRR 0.86 | by hand, before a benchmark |
+
+The online tier exists because the offline one cannot see the vector retriever
+at all. Delete vector retrieval and the gated suite stays green -- with hashed
+bag-of-words there is no paraphrase this corpus can pose that vectors answer
+and full-text search does not. With a real embedder there is, and three
+paraphrase cases exist to be unreachable lexically. Verified by deleting it:
+the online tier fails on four assertions.
+
 When a change legitimately improves retrieval, raise the floors in the same
 commit, so the gain cannot be given back silently later. When a change lowers
 them, the commit message has to say which behaviour was traded away and why.

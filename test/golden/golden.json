@@ -70,6 +70,9 @@
     { "group": "paraphrase", "query": "How should I word a commit message?", "expect": "commit-style" },
     { "group": "paraphrase", "query": "Who is allowed to merge a pull request?", "expect": "review-rule" },
     { "group": "paraphrase", "query": "What time does the team meet each morning?", "expect": "standup" },
+    { "group": "paraphrase", "query": "Who signs off on my work before it ships?", "expect": "review-rule" },
+    { "group": "paraphrase", "query": "Is there a written record after something breaks for a while?", "expect": "postmortem-rule" },
+    { "group": "paraphrase", "query": "How often is disaster recovery rehearsed?", "expect": "backup-rule" },
 
     { "group": "subject", "query": "What does Priya own?", "expect": "priya-owns-billing" },
     { "group": "subject", "query": "What are Priya's editor preferences?", "expect": "priya-vim" },
