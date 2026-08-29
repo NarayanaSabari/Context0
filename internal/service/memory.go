@@ -552,7 +552,11 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 	// the measured corpus came from.
 	folded := extraction.FoldRedundant(extracted)
 	memories := extraction.ToMemories(folded, req.ProjectId)
-	relCount := int32(0)
+	// Counted as an int and narrowed once, at the proto boundary. Accumulating
+	// into an int32 meant two conversions per extracted memory, each of which
+	// is an unchecked narrowing that gosec is right to flag: nothing here
+	// bounds how many edges a conversation can produce.
+	relCount := 0
 
 	// Entities travel alongside the memories rather than on them: ToMemories
 	// produces model.Memory values, and an entity is a node in its own right
@@ -723,7 +727,7 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 		// left both live whenever the conversation came in through Extract --
 		// which is every conversation an agent ingests.
 		superseded := s.detectAndSupersede(ctx, mem)
-		relCount += int32(s.autoLinkByTags(ctx, mem, superseded, neighbours))
+		relCount += s.autoLinkByTags(ctx, mem, superseded, neighbours)
 
 		// Entities are what make the second hop possible: two memories about
 		// the same person or place are one edge apart through a shared node,
@@ -739,7 +743,7 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 				slog.String("memory_id", mem.ID.String()),
 				slog.Any("error", err))
 		} else {
-			relCount += int32(linked)
+			relCount += linked
 			metrics.EdgesTotal.WithLabelValues(string(model.RelMentions)).Add(float64(linked))
 		}
 
@@ -759,7 +763,7 @@ func (s *MemoryService) Extract(ctx context.Context, req *pb.ExtractRequest) (*p
 
 	return &pb.ExtractResponse{
 		Memories:             pbMemories,
-		RelationshipsCreated: relCount,
+		RelationshipsCreated: int32(min(relCount, math.MaxInt32)),
 	}, nil
 }
 
