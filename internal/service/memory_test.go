@@ -381,22 +381,6 @@ func TestCancelledExtractStillFinishesItsMemories(t *testing.T) {
 	}
 }
 
-// slowEmbedder simulates a cloud embedding provider: every call is a network
-// round trip. The delay is what makes the serial-versus-parallel difference
-// observable; a local embedder returns too fast to expose it.
-type slowEmbedder struct {
-	delay time.Duration
-	calls atomic.Int64
-}
-
-func (e *slowEmbedder) Embed(string) ([]float32, error) {
-	e.calls.Add(1)
-	time.Sleep(e.delay)
-	return make([]float32, 384), nil
-}
-
-func (e *slowEmbedder) Dimension() int { return 384 }
-
 // TestExtractReportsRealRelationshipCount pins that ExtractResponse.
 // RelationshipsCreated is the number of edges actually written to the graph.
 //
