@@ -71,6 +71,32 @@ in `internal/graph/age.go`.
 - [Helm](https://helm.sh/) 3.x
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
 
+### Retrieval quality: the defaults are a floor
+
+A fresh install runs the zero-dependency backends: hashed bag-of-words
+embeddings and a line-by-line rule extractor. Nothing leaves your cluster,
+which is the point, and retrieval finds paraphrases poorly because those
+vectors score token overlap rather than meaning.
+
+The engine says so rather than leaving you to find out. It warns at startup,
+and `/v1/health` reports both backends:
+
+```json
+{"status":"ok","embeddingProvider":"bag-of-words","extractionProvider":"rule","zeroDependencyDefaults":true}
+```
+
+For real embeddings without sending anything outside the cluster, install with
+the quality profile, which points at an Ollama you run:
+
+```bash
+helm install kora ./charts/kora -n kora --create-namespace \
+  -f ./charts/kora/values-quality.yaml \
+  --set postgres.password="..." --set auth.apiKeys="..."
+```
+
+See [charts/kora/values-quality.yaml](charts/kora/values-quality.yaml) for what
+it changes and what it costs on the write path.
+
 ### Install with Helm
 
 ```bash

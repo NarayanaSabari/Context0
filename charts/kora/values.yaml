@@ -1,6 +1,45 @@
 # Kora Helm Chart values
 
 # API Server
+# Retrieval quality: which embedding and extraction backends the engine uses.
+#
+# The defaults are the zero-dependency ones. Hashed bag-of-words embeddings
+# make no network call and understand no meaning, and the rule-based extractor
+# classifies line by line and cannot merge a fact stated across two turns. That
+# is the right default for a fresh install -- nothing leaves the cluster until
+# an operator says so -- but it is a floor on retrieval quality, not a measure
+# of it.
+#
+# `helm install -f charts/kora/values-quality.yaml` switches both to a local
+# Ollama, which keeps the no-egress property while giving real embeddings.
+# The engine warns at startup and reports both providers on /v1/health when
+# these are left at their defaults.
+embedding:
+  # "bag-of-words" | "ollama" | "openai" | "google"
+  provider: "bag-of-words"
+  # Model name, e.g. "nomic-embed-text" for Ollama.
+  model: ""
+  # Endpoint override, e.g. "http://ollama.ollama.svc.cluster.local:11434".
+  baseUrl: ""
+  # Vector dimension. 0 auto-detects from the provider. Changing this on a
+  # deployment that already holds embeddings needs a re-embed: the column is
+  # created at the width first seen.
+  dim: 0
+  # Secret holding the provider API key, for openai and google. Cloud providers
+  # refuse to start without one.
+  existingSecret: ""
+  existingSecretKey: "api-key"
+
+extraction:
+  # "rule" | "llm"
+  provider: "rule"
+  # Chat model, required by "llm".
+  model: ""
+  # OpenAI-compatible endpoint, required by "llm". Ollama serves one at /v1.
+  baseUrl: ""
+  existingSecret: ""
+  existingSecretKey: "api-key"
+
 api:
   replicas: 1
   image:

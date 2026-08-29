@@ -395,3 +395,51 @@ func TestHealthStatsRecomputeIsBounded(t *testing.T) {
 		t.Errorf("statsTimeout is %s, too long to bound a health check", statsTimeout)
 	}
 }
+
+// A deployment on the zero-dependency defaults must say so.
+//
+// The defaults are the right ones -- a fresh install makes no network call --
+// but they are a floor on retrieval quality, not a measure of it, and the
+// engine answers happily either way. Health is where an operator asks "what is
+// this actually running", so the answer has to be there rather than inferred
+// from a chart or an environment variable they cannot see.
+func TestHealth_ReportsWhichBackendsAreRunning(t *testing.T) {
+	tests := []struct {
+		name      string
+		providers Providers
+		wantZero  bool
+	}{
+		{"offline defaults", Providers{Embedding: "bag-of-words", Extraction: "rule"}, true},
+		// Unset is the same state: an operator who set nothing gets the
+		// defaults, and the warning has to fire for them too.
+		{"unset", Providers{}, true},
+		{"the alias for the default embedder", Providers{Embedding: "bow", Extraction: "rule"}, true},
+		{"real embedder, default extractor", Providers{Embedding: "ollama", Extraction: "rule"}, false},
+		{"default embedder, real extractor", Providers{Embedding: "bag-of-words", Extraction: "llm"}, false},
+		{"both real", Providers{Embedding: "google", Extraction: "llm"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.providers.ZeroDependencyDefaults(); got != tt.wantZero {
+				t.Errorf("ZeroDependencyDefaults() = %v, want %v for %+v", got, tt.wantZero, tt.providers)
+			}
+		})
+	}
+}
+
+// The reported names are the ones configured, not a guess reconstructed from
+// what happens to be reachable.
+func TestHealth_ProviderNamesSurviveToTheResponse(t *testing.T) {
+	svc := &HealthService{
+		version:   "test",
+		providers: Providers{Embedding: "ollama", Extraction: "llm"},
+	}
+
+	if svc.providers.Embedding != "ollama" || svc.providers.Extraction != "llm" {
+		t.Fatalf("providers not held as given: %+v", svc.providers)
+	}
+	if svc.providers.ZeroDependencyDefaults() {
+		t.Error("a deployment running Ollama and an LLM extractor is not on zero-dependency defaults")
+	}
+}

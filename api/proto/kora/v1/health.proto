@@ -39,4 +39,27 @@ message HealthResponse {
 
   // Total number of edges currently stored in the graph.
   int64 edge_count = 4;
+
+  // Embedding backend in use, as configured: "bag-of-words", "ollama",
+  // "openai" or "google".
+  //
+  // Reported because the default is "bag-of-words", a hashed bag-of-words with
+  // no notion of meaning. It is the right default -- no network egress on a
+  // fresh install -- but a deployment running it retrieves paraphrases far
+  // worse than one with a real model, and nothing else says so.
+  string embedding_provider = 5;
+
+  // Extraction backend in use: "rule" or "llm".
+  //
+  // The default "rule" classifies line by line and cannot merge facts spread
+  // across turns. Same reasoning as embedding_provider: a caller comparing two
+  // deployments should be able to see which one is answering.
+  string extraction_provider = 6;
+
+  // True when both providers are the zero-dependency defaults, so retrieval
+  // quality is a floor rather than a measure of what the engine can do.
+  //
+  // A field rather than a status of "degraded": the engine is healthy, and a
+  // monitoring system that pages on this would be wrong.
+  bool zero_dependency_defaults = 7;
 }
