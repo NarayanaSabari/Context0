@@ -92,9 +92,40 @@ Two things follow. Full-text search earns its place on quality, not only on the 
 
 For context, mem0's open-source SDK reports 71.4 on LoCoMo. This run is 70.0 at the same retrieval budget of 30, on 40 of the 200 questions. Parity is the honest reading; a claim needs the full set.
 
+## The 200-question run
+
+`kora-locomo-200`, 2026-08-29, engine `f4fe0d1`, adapter `feat/reconcile-kora-adapter`. Forty questions from each of LoCoMo's five categories, drawn at random across all ten conversations - not the first 200 of a flattened list, which is one conversation and three of the five categories.
+
+**64.5% (129/200), MRR 0.653, recall@10 0.825, 1,079ms median search.**
+
+That is below the 70.0% measured on 40 questions, and the two are not comparable: the 40 came from one conversation and omitted the world-knowledge and adversarial categories entirely. This number is the one to quote, because it is the only one drawn from the whole benchmark.
+
+| category | n | accuracy | failures | of which retrieval missed |
+|---|---|---|---|---|
+| adversarial | 40 | **0.925** | 3 | 1 |
+| multi-hop | 40 | **0.700** | 12 | 2 |
+| world-knowledge | 40 | **0.700** | 12 | 1 |
+| temporal | 40 | **0.450** | 22 | 1 |
+| single-hop | 40 | **0.450** | 22 | 2 |
+| **total** | **200** | **0.645** | **71** | **7** |
+
+**Of 71 failures, 7 are retrieval misses.** The engine put the evidence in front of the answering model in 90% of the cases it got wrong. The improvement plan's central claim - that retrieval is not the bottleneck, what happens after it is - holds on the full benchmark, not just on the conversation it was derived from.
+
+### What the two weak categories actually are
+
+Reading the failures rather than the category names:
+
+**temporal** is mostly inference, not dates. `Would Caroline be considered religious?` with truth `Somewhat, but not extremely religious` answered `No.`; `Would Melanie go on another roadtrip soon?` with truth `Likely no; since this one went badly` answered `No.`. The engine reaches the right conclusion and states it flatly where the truth hedges, or commits in the wrong direction. This is calibration, and it is not what item 3 of the improvement plan proposed to fix.
+
+**single-hop** is mostly list shape. `What activities does Melanie partake in?` with truth `pottery, camping, painting, swimming` answered `camping, exploring forests, hiking, roasting...`; `What kind of art does Caroline make?` with truth `abstract art` answered `Painting, drawing, stained glass, and murals.` The answer is drawn from more memories than the question wanted and is scored wrong for the surplus.
+
+**adversarial at 92.5%** is worth stating plainly: refusing to answer what the corpus does not support is this engine's strongest category.
+
 ## Consequences for the plan
 
-The retrieval budget is settled, and it was not the gap. What remains between Kora and open-source mem0's 71.4 has to come from the answering and extraction work, which is where the plan's own failure analysis already pointed: 15 of 17 failures had the right memory retrieved.
+The retrieval budget is settled, and it was not the gap. At n=200 the same shape holds harder: 64 of 71 failures had the evidence retrieved.
+
+What changed is which answering work matters. The plan's three items were sized on 17 failures from one conversation, where verbosity was the largest category. On the full benchmark the two levers are answer shape for list questions and hedging on inference questions, worth roughly 15 and 10 questions respectively. Relative-date resolution, item 3, addresses almost nothing here.
 
 The one measurement that was missing - both lineages' fixes on the engine as it stands - is `kora-rebase-0829` above.
 
