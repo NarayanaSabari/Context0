@@ -157,20 +157,28 @@ async def memory_extract(
 
 @mcp.tool(
     description="Get an aggregated profile for a user or project, combining stable facts "
-    "(preferences, expertise, known information) with recent context (events from the "
-    "last 7 days). Use this at the start of a conversation to understand who you're "
-    "talking to.",
+    "(preferences, expertise, known information) with recent context (recent events, "
+    "7 days by default). Use this at the start of a conversation to understand who "
+    "you're talking to. Widen recency_days when the work is episodic and slower moving.",
     tags={"memory", "profile"},
 )
 async def memory_profile(
     project_id: Annotated[str, Field(description="Project/user to get profile for")] = "",
     query: Annotated[str, Field(description="Optional query to filter profile relevance")] = "",
+    max_memories: Annotated[
+        int, Field(description="How many memories to build the profile from (0 = engine default of 200)")
+    ] = 0,
+    recency_days: Annotated[
+        int, Field(description="How recent a memory must be to count as current (0 = engine default of 7)")
+    ] = 0,
 ) -> str:
     """Get aggregated user/project profile."""
     client = _get_client()
     pid = project_id or DEFAULT_PROJECT
 
-    result = await client.get_profile(project_id=pid, query=query)
+    result = await client.get_profile(
+        project_id=pid, query=query, max_memories=max_memories, recency_days=recency_days
+    )
 
     static = result.get("staticProfile", [])
     dynamic = result.get("dynamicProfile", [])

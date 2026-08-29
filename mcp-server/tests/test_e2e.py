@@ -124,6 +124,23 @@ async def run():
     if p is not None:
         check("get_profile() returns an object", isinstance(p, dict), f"got {type(p).__name__}")
 
+    # The sizing parameters are optional and clamped rather than refused, so an
+    # ambitious value must come back as a profile rather than an error. A
+    # parameter the gateway does not recognise would surface here as a 400.
+    sized = await attempt(
+        "get_profile() accepts a size and a recency window",
+        c.get_profile(project, max_memories=5, recency_days=90),
+    )
+    if sized is not None:
+        check("sized profile returns an object", isinstance(sized, dict), f"got {type(sized).__name__}")
+
+    clamped = await attempt(
+        "get_profile() clamps an out-of-range size instead of failing",
+        c.get_profile(project, max_memories=10_000_000, recency_days=100_000),
+    )
+    if clamped is not None:
+        check("clamped profile returns an object", isinstance(clamped, dict), f"got {type(clamped).__name__}")
+
     section("5. Connect and graph")
     s2 = await attempt(
         "a second store for the edge",
