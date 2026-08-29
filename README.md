@@ -351,6 +351,7 @@ kora/
 │   ├── graph/              # Apache AGE + pgvector repository
 │   ├── llm/                # LLM providers (Ollama, OpenAI-compat)
 │   ├── ranking/            # Scoring and ranking
+│   ├── retrieval/          # Read path: three retrievers, merge, rank
 │   └── service/            # gRPC service handlers
 ├── charts/kora/            # Helm chart (deployment topology)
 ├── web/                    # React web UI
