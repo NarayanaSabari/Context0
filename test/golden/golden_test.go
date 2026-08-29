@@ -98,34 +98,78 @@ const embeddingDim = 384
 // retrieval, so the gain cannot be given back silently. Never lower one to
 // make a failing build pass without saying, in the commit message, which
 // behaviour was traded away and why.
-const (
-	minRecall = 0.90
-	minMRR    = 0.80
-)
+// Two tiers, because the suite measures two different things depending on what
+// it is pointed at.
+//
+// Offline is the gate: bag-of-words embeddings, no credentials, no network, run
+// on every PR. Its floors are what this engine can be held to without a model.
+//
+// Online is opt-in and not in the gate. It answers a question the offline tier
+// cannot: whether the vector retriever works at all. Deleting vector retrieval
+// leaves the offline suite green, because with hashed bag-of-words there is no
+// paraphrase this corpus can pose that vectors answer and full-text search does
+// not. With a real embedder there is, and three of the paraphrase cases exist
+// specifically to be unreachable lexically.
+type floors struct {
+	recall, mrr float64
+	groups      []groupFloor
+}
 
-// groups are the case groups, their floors, and the single place any of the
-// three names is written in Go. A case whose group is not one of these fails
-// the run rather than quietly scoring in the overall figure and nowhere else,
-// which is what a typo in golden.json used to buy.
-var groups = []struct {
+type groupFloor struct {
 	name        string
 	recall, mrr float64
-}{
-	// Queries sharing distinctive words with their answer.
-	{name: "lexical", recall: 1.00, mrr: 0.90},
-
-	// The paraphrase group is the weakest by construction: these queries share
-	// few words with their answers, so they lean on the embedder, and the
-	// offline bag-of-words embedder scores token overlap rather than meaning.
-	// Three of its ten cases miss entirely for that reason. This floor guards
-	// the fallback behaviour, not semantic understanding; with a real embedder
-	// configured it should be raised.
-	// Queries asking for the same thing in different words.
-	{name: "paraphrase", recall: 0.70, mrr: 0.55},
-
-	// Queries naming a person or service that several memories mention.
-	{name: "subject", recall: 1.00, mrr: 0.85},
 }
+
+// Measured with the bag-of-words embedder over 36 cases: overall 0.917 / 0.856,
+// lexical 1.000 / 0.958, paraphrase 0.769 / 0.679, subject 1.000 / 0.955.
+var offlineFloors = floors{
+	recall: 0.90, mrr: 0.83,
+	groups: []groupFloor{
+		{"lexical", 1.00, 0.90},
+		// Three of thirteen miss entirely: those queries share almost no words
+		// with their answers, and a hashed bag-of-words embedder scores token
+		// overlap rather than meaning. This floor guards the fallback, not
+		// semantic understanding.
+		{"paraphrase", 0.76, 0.62},
+		{"subject", 1.00, 0.90},
+	},
+}
+
+// Measured with Ollama and nomic-embed-text at 768 dimensions, same 36 cases:
+// overall 0.944 / 0.889, lexical 1.000 / 1.000, paraphrase 0.846 / 0.731,
+// subject 1.000 / 0.955. Three consecutive runs, identical.
+//
+// Tighter than offline on every axis, deliberately: a real embedder is
+// expected to do better, and a tier that accepted the offline numbers would
+// pass while the vector retriever did nothing.
+var onlineFloors = floors{
+	recall: 0.92, mrr: 0.86,
+	groups: []groupFloor{
+		{"lexical", 1.00, 0.95},
+		{"paraphrase", 0.84, 0.68},
+		{"subject", 1.00, 0.90},
+	},
+}
+
+// activeFloors picks the tier from what the suite was pointed at.
+func activeFloors() (floors, string) {
+	switch os.Getenv("KORA_TEST_EMBEDDING_PROVIDER") {
+	case "", "bag-of-words", "bow":
+		return offlineFloors, "offline"
+	default:
+		return onlineFloors, "online"
+	}
+}
+
+// groupNames is the single place the three names are written in Go. A case
+// whose group is not one of these fails the run rather than quietly scoring in
+// the overall figure and nowhere else, which is what a typo in golden.json used
+// to buy.
+//
+//	lexical    - shares distinctive words with its answer
+//	paraphrase - asks for the same thing in different words
+//	subject    - names a person or service several memories mention
+var groupNames = []string{"lexical", "paraphrase", "subject"}
 
 type goldenSet struct {
 	Corpus []struct {
@@ -158,13 +202,13 @@ func load(t *testing.T) goldenSet {
 
 	// A case in an unknown group would be scored in the overall figure and in
 	// no group floor, so a typo would quietly weaken the suite.
-	known := make(map[string]bool, len(groups))
-	for _, g := range groups {
-		known[g.name] = true
+	known := make(map[string]bool, len(groupNames))
+	for _, g := range groupNames {
+		known[g] = true
 	}
 	for _, c := range gs.Cases {
 		if !known[c.Group] {
-			t.Fatalf("case %q is in group %q, which has no floor in golden_test.go", c.Query, c.Group)
+			t.Fatalf("case %q is in group %q, which is not one of %v", c.Query, c.Group, groupNames)
 		}
 	}
 
@@ -325,10 +369,11 @@ func TestGoldenRetrieval(t *testing.T) {
 
 	report(t, outcomes)
 
-	overall := score(outcomes, "")
-	checkFloor(t, "overall", overall, minRecall, minMRR)
+	active, tier := activeFloors()
+	t.Logf("scoring against the %s floors", tier)
 
-	for _, g := range groups {
+	checkFloor(t, "overall", score(outcomes, ""), active.recall, active.mrr)
+	for _, g := range active.groups {
 		checkFloor(t, g.name, score(outcomes, g.name), g.recall, g.mrr)
 	}
 }
@@ -412,11 +457,7 @@ func report(t *testing.T, outcomes []outcome) {
 		b = append(b, (line + "\n")...)
 	}
 
-	names := make([]string, 0, len(groups)+1)
-	for _, g := range groups {
-		names = append(names, g.name)
-	}
-	for _, g := range append(names, "") {
+	for _, g := range append(append([]string{}, groupNames...), "") {
 		s := score(outcomes, g)
 		name := g
 		if name == "" {
