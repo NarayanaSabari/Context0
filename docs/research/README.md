@@ -27,6 +27,7 @@ schema holding every deployment's data. See `GraphName` in
 | [performance-audit-2026-08](performance-audit-2026-08.md) | 2026-08 | Implemented: property indexes, batched edge creation, counts from AGE base tables |
 | [performance-remaining-2026-08](performance-remaining-2026-08.md) | 2026-08 | Partially implemented; the trigram and tsvector work is not done |
 | [keyword-search-indexing](keyword-search-indexing.md) | 2026-08 | Findings folded into the ranking fixes; the indexing approach is open |
+| [improvement-plan-2026-08](improvement-plan-2026-08.md) | 2026-08 | Items 4-6 implemented (write-time fold, entity nodes, full-text search); items 0-3 are sequenced in the [plan of record](../plan-of-record.md) |
 
-The two entries marked open are the honest ones to check before starting new
+The entries marked open are the honest ones to check before starting new
 performance work.
