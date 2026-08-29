@@ -1,6 +1,12 @@
 # Kora — Architecture
 
-Detailed architecture diagrams for the Kora memory engine.
+How the Kora memory engine actually works. Every diagram here describes code
+that ships and can be checked against the repository.
+
+Designs that are not implemented -- the Kubernetes Operator, multi-scope shared
+memory, the production topology -- live in [docs/vision.md](docs/vision.md).
+They used to live here behind per-section banners, which failed twice: readers
+learned the data model from node types the engine does not have.
 
 ---
 
@@ -8,10 +14,9 @@ Detailed architecture diagrams for the Kora memory engine.
 
 How Kora fits into an AI agent ecosystem.
 
-> **Partly aspirational.** The engine, PostgreSQL + AGE, the consolidation
-> CronJob, and the Prometheus `/metrics` endpoint all ship today. The Kora
-> Operator, the agent-pod sidecar cache, and the Prometheus ServiceMonitor in
-> the diagram below do not exist yet — see §7 and §9.
+> Everything in this diagram ships. The Operator, sidecar cache and
+> ServiceMonitor that used to appear here moved to
+> [docs/vision.md](docs/vision.md).
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -41,15 +46,15 @@ How Kora fits into an AI agent ecosystem.
 │                             │                                                │
 │    ┌────────────┐     ┌─────▼──────────────────────────────────────────┐     │
 │    │ Agent Pod  │     │                                                │     │
-│    │ (in-cluster│────▶│             KORA ENGINE                    │     │
+│    │ (in-cluster│────▶│             KORA ENGINE                        │     │
 │    │  via gRPC) │     │                                                │     │
 │    └────────────┘     │   ┌─────────┐  ┌──────────┐  ┌────────────┐    │     │
 │                       │   │  API    │  │  Query   │  │  Ingest    │    │     │
-│    ┌────────────┐     │   │  Server │  │  Engine  │  │  Pipeline  │    │     │
-│    │ Agent Pod  │────▶│   │         │  │          │  │            │    │     │
-│    │ (sidecar   │     │   └────┬────┘  └────┬─────┘  └─────┬──────┘    │     │
-│    │  cache)    │     │        │             │              │          │     │
-│    └────────────┘     │        └─────────────┼──────────────┘          │     │
+│                       │   │  Server │  │  Engine  │  │  Pipeline  │    │     │
+│                       │   │         │  │          │  │            │    │     │
+│                       │   └────┬────┘  └────┬─────┘  └─────┬──────┘    │     │
+│                       │        │             │              │          │     │
+│                       │        └─────────────┼──────────────┘          │     │
 │                       │                      │                         │     │
 │                       │                ┌─────▼──────┐                  │     │
 │                       │                │ PostgreSQL │                  │     │
@@ -58,11 +63,11 @@ How Kora fits into an AI agent ecosystem.
 │                       │                                                │     │
 │                       └────────────────────────────────────────────────┘     │
 │                                                                              │
-│    ┌──────────────────┐    ┌────────────────┐    ┌─────────────────┐         │
-│    │ Kora Operator│    │  Consolidation │    │  Prometheus     │         │
-│    │ (manages CRDs,   │    │  CronJob       │    │  ServiceMonitor │         │
-│    │  lifecycle)      │    │  (sleep cycle) │    │  + Grafana      │         │
-│    └──────────────────┘    └────────────────┘    └─────────────────┘         │
+│                            ┌────────────────┐    ┌─────────────────┐        │
+│                            │  Consolidation │    │  Prometheus     │        │
+│                            │  CronJob       │    │  /metrics       │        │
+│                            │  (sleep cycle) │    │  endpoint       │        │
+│                            └────────────────┘    └─────────────────┘        │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -144,150 +149,61 @@ Every component, what it does, and how they connect.
 
 ## 3. Graph Data Model — How Memory is Structured
 
-The node types, edge types, and their relationships in the memory graph.
+Every label and edge type below is created by `internal/graph`. Nothing here is
+aspirational; the earlier version of this section drew Tenant, User, Preference,
+Decision, Correction and Outcome nodes, none of which exist, and it was the
+first thing a contributor read to learn the model. Those diagrams now live in
+[docs/vision.md](docs/vision.md).
 
 ```
-                            ┌─────────────────────┐
-                            │      TENANT         │
-                            │                     │
-                            │  id: "acme-corp"    │
-                            │  plan: "pro"        │
-                            └──────────┬──────────┘
-                                       │ owns
-                          ┌────────────┼────────────┐
-                          ▼            ▼            ▼
-                   ┌────────────┐ ┌────────────┐ ┌────────────┐
-                   │  PROJECT   │ │  PROJECT   │ │   USER     │
-                   │            │ │            │ │            │
-                   │ "backend"  │ │ "frontend" │ │ "sabari"   │
-                   └─────┬──────┘ └────────────┘ └──────┬─────┘
-                         │                              │
-            ┌────────────┼───────────────┐              │ prefers
-            │            │               │              ▼
-            ▼            ▼               ▼      ┌──────────────┐
-     ┌────────────┐ ┌──────────┐ ┌────────────┐ │  PREFERENCE  │
-     │  SESSION   │ │  FACT    │ │  PATTERN   │ │              │
-     │ (episodic) │ │(semantic)│ │(procedural)│ │ "uses vim"   │
-     │            │ │          │ │            │ │ "concise     │
-     │ 2024-03-28 │ │ "uses    │ │ "always    │ │  responses"  │
-     │ 14:00-16:00│ │  Postgres│ │  run tests │ └──────────────┘
-     └──┬───┬─────┘ │  15.x"   │ │  before    │
-        │   │       └────┬─────┘ │  commit"   │
-        │   │            │       └────────────┘
-        │   │            │
-        │   │            │ supersedes
-        │   │            ▼
-        │   │     ┌──────────────┐
-        │   │     │    FACT      │
-        │   │     │  (archived)  │
-        │   │     │              │
-        │   │     │ "uses MySQL" │
-        │   │     │ [stale]      │
-        │   │     └──────────────┘
-        │   │
-        │   │ contains
-        │   ▼
-        │  ┌──────────────────┐    caused_by     ┌──────────────────┐
-        │  │    DECISION      │─────────────────▶│   CONSTRAINT     │
-        │  │                  │                  │                  │
-        │  │ "chose Next.js   │                  │ "team knows      │
-        │  │  for frontend"   │                  │  React already"  │
-        │  └──────────────────┘                  └──────────────────┘
-        │
-        │ contains
-        ▼
-     ┌──────────────────┐   validated_by    ┌──────────────────┐
-     │   CORRECTION     │──────────────────▶│    OUTCOME       │
-     │                  │                   │                  │
-     │ "don't mock DB   │                   │ "tests caught    │
-     │  in integration  │                   │  migration bug   │
-     │  tests"          │                   │  in staging"     │
-     └──────────────────┘                   └──────────────────┘
+                       ┌────────────────────┐
+                       │      PROJECT       │      created on demand; the scope
+                       │  id: "backend-api" │      every memory belongs to
+                       └─────────┬──────────┘
+                                 │ belongs_to
+                       ┌─────────┴──────────┐
+                       │      SESSION       │      one agent's run within a
+                       │  id, agent_id,     │      project
+                       │  started/ended_at  │
+                       └─────────┬──────────┘
+                                 │ contains
+                                 ▼
+   ┌───────────────────────────────────────────────────────────┐
+   │                         MEMORY                            │
+   │  id, content, content_hash, project_id, tags,             │
+   │  created_at, access_count, decay_score                    │
+   │                                                           │
+   │  type: semantic | episodic | procedural                   │
+   └───────┬───────────────────────────┬───────────────────────┘
+           │ mentions                  │ relates_to / supersedes / caused_by
+           ▼                           ▼
+   ┌────────────────┐          ┌───────────────────┐
+   │     ENTITY     │          │      MEMORY       │
+   │ name,          │          │  (another one)    │
+   │ normalized_name│          └───────────────────┘
+   │ project_id     │
+   └────────────────┘
 ```
 
-### Node Types
+**Labels:** `Project`, `Session`, `Memory`, `Entity`. Memory type is a property,
+not a label: one table, filtered by `type`.
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          NODE TYPES                                     │
-│                                                                         │
-│  ┌─────────────┐  Structural nodes — define scope and ownership         │
-│  │  Tenant     │  Properties: id, name, plan, created_at                │
-│  │  Project    │  Properties: id, name, tenant_id, created_at           │
-│  │  User       │  Properties: id, name, role, created_at                │
-│  │  Agent      │  Properties: id, framework, version, created_at        │
-│  │  Session    │  Properties: id, started_at, ended_at, agent_id        │
-│  └─────────────┘                                                        │
-│                                                                         │
-│  ┌─────────────┐  Memory nodes — the actual memories                    │
-│  │  Episodic   │  What happened. Properties: content, timestamp,        │
-│  │             │  session_id, confidence, access_count, decay_score     │
-│  │  Semantic   │  What is true. Properties: content, confidence,        │
-│  │             │  source, last_validated, access_count, decay_score     │
-│  │  Procedural │  How to do things. Properties: content, trigger,       │
-│  │             │  success_rate, times_applied, decay_score              │
-│  │  Preference │  What the user/agent prefers. Properties: content,     │
-│  │             │  strength, context, last_confirmed                     │
-│  └─────────────┘                                                        │
-│                                                                         │
-│  ┌─────────────┐  Meta nodes — decisions, corrections, outcomes         │
-│  │  Decision   │  Properties: content, rationale, decided_at, decided_by│
-│  │  Correction │  Properties: wrong_behavior, right_behavior, severity  │
-│  │  Constraint │  Properties: content, source, active                   │
-│  │  Outcome    │  Properties: content, success, measured_at             │
-│  └─────────────┘                                                        │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+**Edge types** (`pkg/model/edge.go`, and `Valid()` is what enforces the list):
 
-### Edge Types
+| Edge | From → To | Meaning |
+|---|---|---|
+| `belongs_to` | Session → Project | which project a session ran in |
+| `contains` | Session → Memory | a memory produced during that session |
+| `relates_to` | Memory → Memory | general association, from shared tags or embedding proximity |
+| `supersedes` | Memory → Memory | the newer memory replaces the older; the older is kept and marked |
+| `caused_by` | Memory → Memory | the source memory is a consequence of the target |
+| `mentions` | Memory → Entity | what the memory is about, and the only multi-hop path between memories that share no words |
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                          EDGE TYPES                                      │
-│                                                                          │
-│  Structural Edges:                                                       │
-│  ─────────────────                                                       │
-│  owns            Tenant ──▶ Project, User                                │
-│  belongs_to      Session ──▶ Project                                     │
-│  performed_by    Session ──▶ Agent                                       │
-│  participated     User ──▶ Session                                       │
-│                                                                          │
-│  Temporal Edges:                                                         │
-│  ───────────────                                                         │
-│  contains        Session ──▶ Episodic (memory created during session)    │
-│  followed_by     Session ──▶ Session (session ordering)                  │
-│  happened_before Episodic ──▶ Episodic (event ordering)                  │
-│                                                                          │
-│  Causal Edges:                                                           │
-│  ─────────────                                                           │
-│  caused_by       Decision ──▶ Constraint (why a decision was made)       │
-│  led_to          Decision ──▶ Outcome (what resulted from a decision)    │
-│  triggered_by    Correction ──▶ Episodic (what event caused correction)  │
-│  validated_by    Pattern ──▶ Outcome (proof that a pattern works)        │
-│                                                                          │
-│  Knowledge Edges:                                                        │
-│  ────────────────                                                        │
-│  supersedes      Semantic ──▶ Semantic (newer fact replaces older)       │
-│  contradicts     Semantic ──▶ Semantic (conflicting facts)               │
-│  relates_to      Any ──▶ Any (general association)                       │
-│  derived_from    Semantic ──▶ Episodic (fact extracted from event)       │
-│  generalizes     Procedural ──▶ Episodic[] (pattern from episodes)       │
-│                                                                          │
-│  Consolidation Edges:                                                    │
-│  ─────────────────                                                       │
-│  merged_into     Episodic[] ──▶ Semantic (consolidation output)          │
-│  promoted_to     Episodic ──▶ Procedural (pattern promotion)             │
-│  archived_by     Semantic ──▶ Semantic (old fact replaced)               │
-│                                                                          │
-│  All edges carry:                                                        │
-│  • weight (float)     — strength of relationship                         │
-│  • created_at (time)  — when the relationship was established            │
-│  • access_count (int) — how often this edge is traversed                 │
-│  • confidence (float) — how certain we are about this relationship       │
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+**Vectors live outside the graph.** Embeddings are a plain `memory_embeddings`
+table with a pgvector column and an HNSW index, joined back by memory id. AGE
+stores every property inside one `agtype` column, which a vector index cannot
+serve, so the hybrid query is a graph traversal and a vector search over the
+same Postgres rather than one query language doing both.
 
 ---
 
@@ -541,270 +457,7 @@ Background process that keeps the memory graph clean and efficient.
 
 ---
 
-## 7. Kubernetes Resource Model — CRDs and Operator
-
-> **Status: design sketch, not implemented.**
-> No CRDs and no operator exist in this repo today.
-> Deployment is via the Helm chart in `charts/kora/`.
-> Everything below describes intended future shape, not current behaviour.
-
-How Kora is managed as Kubernetes-native resources.
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                   CUSTOM RESOURCE DEFINITIONS                            │
-│                                                                          │
-│  apiVersion: kora.io/v1alpha1                                        │
-│                                                                          │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │  Kind: MemoryStore                                                 │  │
-│  │                                                                    │  │
-│  │  The core resource. One per tenant/project.                        │  │
-│  │                                                                    │  │
-│  │  spec:                                                             │  │
-│  │    graphDB:                                                        │  │
-│  │      engine: apache-age          # fully open source (Apache 2.0)                         │  │
-│  │      replicas: 3                                                   │  │
-│  │      storage: 50Gi                                                 │  │
-│  │      resources:                                                    │  │
-│  │        memory: 4Gi                                                 │  │
-│  │        cpu: 2                                                      │  │
-│  │    api:                                                            │  │
-│  │      replicas: 2                                                   │  │
-│  │      grpc: true                                                    │  │
-│  │      rest: true                                                    │  │
-│  │    embedding:                                                      │  │
-│  │      enabled: true                                                 │  │
-│  │      model: "bge-small-en-v1.5"                                    │  │
-│  │                                                                    │  │
-│  │  status:                                                           │  │
-│  │    phase: Running                                                  │  │
-│  │    nodeCount: 12,847                                               │  │
-│  │    edgeCount: 45,231                                               │  │
-│  │    lastConsolidation: "2024-03-28T06:00:00Z"                       │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │  Kind: MemoryPolicy                                                │  │
-│  │                                                                    │  │
-│  │  Retention, access, and isolation rules.                           │  │
-│  │                                                                    │  │
-│  │  spec:                                                             │  │
-│  │    retention:                                                      │  │
-│  │      episodic: 90d          # auto-archive after 90 days          │  │
-│  │      stale: 30d             # delete stale nodes after 30 days    │  │
-│  │      orphan: 7d             # delete orphans after 7 days         │  │
-│  │    isolation:                                                      │  │
-│  │      level: project         # project | user | agent              │  │
-│  │      networkPolicy: true    # enforce K8s NetworkPolicy           │  │
-│  │    access:                                                         │  │
-│  │      maxTraversalDepth: 5                                          │  │
-│  │      maxResultsPerQuery: 20                                        │  │
-│  │      rateLimitPerMinute: 100                                       │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │  Kind: ConsolidationSchedule                                       │  │
-│  │                                                                    │  │
-│  │  Controls the "sleep" cycle — when and how memory is consolidated. │  │
-│  │                                                                    │  │
-│  │  spec:                                                             │  │
-│  │    schedule: "0 */6 * * *"  # every 6 hours                       │  │
-│  │    phases:                                                         │  │
-│  │      merge:                                                        │  │
-│  │        enabled: true                                               │  │
-│  │        similarityThreshold: 0.85                                   │  │
-│  │      promote:                                                      │  │
-│  │        enabled: true                                               │  │
-│  │        minOccurrences: 3    # promote after 3 similar episodes    │  │
-│  │      decay:                                                        │  │
-│  │        enabled: true                                               │  │
-│  │        staleThreshold: 0.2                                         │  │
-│  │        halfLifeDays: 30     # decay halves every 30 days          │  │
-│  │      prune:                                                        │  │
-│  │        enabled: true                                               │  │
-│  │        dryRun: false                                               │  │
-│  │    llm:                                                            │  │
-│  │      provider: anthropic                                           │  │
-│  │      model: claude-haiku-4-5                                       │  │
-│  │      budgetPerRun: "$0.50"                                         │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│                   KORA OPERATOR — Reconciliation Loop                │
-│                                                                          │
-│      ┌──────────────┐                                                    │
-│      │  Watch CRDs  │◀─────────────────────────────────────┐            │
-│      └──────┬───────┘                                      │            │
-│             │                                               │            │
-│             ▼                                               │            │
-│      ┌──────────────┐     ┌───────────────┐     ┌─────────┴──────┐     │
-│      │ MemoryStore  │────▶│ Deploy/Scale  │────▶│ Update Status  │     │
-│      │ changed?     │     │ • PG + AGE    │     │ • phase        │     │
-│      │              │     │   StatefulSet │     │ • nodeCount    │     │
-│      │              │     │ • API Server  │     │ • health       │     │
-│      │              │     │   Deployment  │     │                │     │
-│      └──────────────┘     │ • PVCs        │     └────────────────┘     │
-│                           │ • Services    │                             │
-│      ┌──────────────┐     └───────────────┘                             │
-│      │ MemoryPolicy │────▶ Apply NetworkPolicy, update rate limits      │
-│      │ changed?     │                                                    │
-│      └──────────────┘                                                    │
-│                                                                          │
-│      ┌──────────────┐                                                    │
-│      │ Consolidation│────▶ Create/Update CronJob with schedule          │
-│      │ Schedule     │                                                    │
-│      │ changed?     │                                                    │
-│      └──────────────┘                                                    │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 8. Multi-Agent Shared Memory — Scoping Model
-
-How multiple agents share and isolate memory within the graph.
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        MEMORY SCOPING                                    │
-│                                                                          │
-│  Three levels of memory visibility:                                      │
-│                                                                          │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │                                                                    │  │
-│  │  GLOBAL SCOPE (shared across all projects in a tenant)             │  │
-│  │  ┌─────────────────────────────────────────────────────────────┐  │  │
-│  │  │  • User preferences ("prefers TypeScript", "concise replies") │  │  │
-│  │  │  • Organization standards ("use conventional commits")       │  │  │
-│  │  │  • Cross-project patterns                                    │  │  │
-│  │  └─────────────────────────────────────────────────────────────┘  │  │
-│  │                                                                    │  │
-│  │  ┌──────────────────────────┐  ┌──────────────────────────┐      │  │
-│  │  │  PROJECT SCOPE           │  │  PROJECT SCOPE            │      │  │
-│  │  │  "backend-api"           │  │  "mobile-app"             │      │  │
-│  │  │                          │  │                           │      │  │
-│  │  │  • Project facts         │  │  • Project facts          │      │  │
-│  │  │  • Architecture decisions│  │  • Architecture decisions │      │  │
-│  │  │  • Team patterns         │  │  • Team patterns          │      │  │
-│  │  │                          │  │                           │      │  │
-│  │  │  ┌──────────┐ ┌────────┐│  │  ┌──────────┐ ┌────────┐│      │  │
-│  │  │  │ AGENT    │ │ AGENT  ││  │  │ AGENT    │ │ AGENT  ││      │  │
-│  │  │  │ SCOPE    │ │ SCOPE  ││  │  │ SCOPE    │ │ SCOPE  ││      │  │
-│  │  │  │ Claude   │ │ Cursor ││  │  │ CrewAI   │ │ Claude ││      │  │
-│  │  │  │ Code     │ │        ││  │  │ worker   │ │ Code   ││      │  │
-│  │  │  │          │ │        ││  │  │          │ │        ││      │  │
-│  │  │  │• Session │ │• Session││  │  │• Session │ │• Session││      │  │
-│  │  │  │  history │ │  history││  │  │  history │ │  history││      │  │
-│  │  │  │• Agent-  │ │• Agent- ││  │  │• Agent-  │ │• Agent- ││      │  │
-│  │  │  │  specific│ │  specific││  │  │  specific│ │  specific││      │  │
-│  │  │  │  context │ │  context││  │  │  context │ │  context││      │  │
-│  │  │  └──────────┘ └────────┘│  │  └──────────┘ └────────┘│      │  │
-│  │  │                          │  │                           │      │  │
-│  │  └──────────────────────────┘  └──────────────────────────┘      │  │
-│  │                                                                    │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  Query resolution order:                                                 │
-│  1. Agent scope   → check agent's own memories first                     │
-│  2. Project scope → then project-wide shared memories                    │
-│  3. Global scope  → finally tenant-wide memories                         │
-│                                                                          │
-│  Write visibility:                                                       │
-│  • Agent writes default to PROJECT scope (shared)                        │
-│  • Agent can explicitly write to AGENT scope (private)                   │
-│  • Only admins/operators can write to GLOBAL scope                       │
-│  • Consolidation can promote agent → project → global                    │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 9. Deployment Topology — Production Setup
-
-> **Status: target topology, not implemented.**
-> The shipped chart runs a single-replica Postgres StatefulSet, one API
-> Deployment, a consolidation CronJob, and the web UI. CloudNativePG,
-> read replicas, HPA, the sidecar cache, the embedding worker, and the
-> OTel collector below are all future work.
-
-```
-┌─── Region: us-east-1 ────────────────────────────────────────────────────┐
-│                                                                           │
-│  ┌─── K8s Cluster ─────────────────────────────────────────────────────┐ │
-│  │                                                                      │ │
-│  │  Namespace: kora-system                                          │ │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │ │
-│  │  │ kora-operator│  │ kora-api-0   │  │ kora-api-1   │  │ │
-│  │  │ (Deployment 1/1) │  │ (Deployment 2/2) │  │ (HPA: 2-10)     │  │ │
-│  │  │                  │  │                  │  │                  │  │ │
-│  │  │ Watches CRDs,    │  │ gRPC + REST      │  │ gRPC + REST      │  │ │
-│  │  │ reconciles state │  │ :50051 / :8080   │  │ :50051 / :8080   │  │ │
-│  │  └──────────────────┘  └──────────────────┘  └──────────────────┘  │ │
-│  │                                                                      │ │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │ │
-│  │  │ pg-age-1         │  │ pg-age-2         │  │ pg-age-3         │  │ │
-│  │  │ (CloudNativePG   │  │ (read replica)   │  │ (read replica)   │  │ │
-│  │  │  Cluster 3/3)    │  │                  │  │                  │  │ │
-│  │  │ Primary (writes) │  │ Replica (reads)  │  │ Replica (reads)  │  │ │
-│  │  │ PVC: 100Gi SSD   │  │ PVC: 100Gi SSD   │  │ PVC: 100Gi SSD   │  │ │
-│  │  │ Extensions:      │  │                  │  │                  │  │ │
-│  │  │  apache_age      │  │                  │  │                  │  │ │
-│  │  │  pgvector (v0.2) │  │                  │  │                  │  │ │
-│  │  └──────────────────┘  └──────────────────┘  └──────────────────┘  │ │
-│  │                                                                      │ │
-│  │  ┌──────────────────┐  ┌──────────────────┐                        │ │
-│  │  │ consolidation    │  │ embedding-worker │                        │ │
-│  │  │ (CronJob 0/6h)  │  │ (Deployment 1/1) │                        │ │
-│  │  │                  │  │                  │                        │ │
-│  │  │ Runs merge,      │  │ Generates node   │                        │ │
-│  │  │ promote, decay,  │  │ embeddings async │                        │ │
-│  │  │ prune phases     │  │ (optional)       │                        │ │
-│  │  └──────────────────┘  └──────────────────┘                        │ │
-│  │                                                                      │ │
-│  │  Namespace: monitoring                                               │ │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │ │
-│  │  │ prometheus       │  │ grafana          │  │ otel-collector   │  │ │
-│  │  │                  │  │                  │  │                  │  │ │
-│  │  │ Scrapes metrics  │  │ Dashboards:      │  │ Traces + logs    │  │ │
-│  │  │ via              │  │ • Graph health   │  │ collection       │  │ │
-│  │  │ ServiceMonitor   │  │ • Query latency  │  │                  │  │ │
-│  │  │                  │  │ • Consolidation  │  │                  │  │ │
-│  │  │                  │  │ • Memory growth  │  │                  │  │ │
-│  │  └──────────────────┘  └──────────────────┘  └──────────────────┘  │ │
-│  │                                                                      │ │
-│  │  Namespace: agent-workloads                                          │ │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │ │
-│  │  │ agent-pod-1      │  │ agent-pod-2      │  │ agent-pod-3      │  │ │
-│  │  │ ┌──────────────┐ │  │ ┌──────────────┐ │  │                  │  │ │
-│  │  │ │ agent        │ │  │ │ agent        │ │  │  agent           │  │ │
-│  │  │ │ container    │ │  │ │ container    │ │  │  (no sidecar,    │  │ │
-│  │  │ ├──────────────┤ │  │ ├──────────────┤ │  │   uses ClusterIP │  │ │
-│  │  │ │ kora     │ │  │ │ kora     │ │  │   service        │  │ │
-│  │  │ │ sidecar      │ │  │ │ sidecar      │ │  │   directly)      │  │ │
-│  │  │ │ (local cache)│ │  │ │ (local cache)│ │  │                  │  │ │
-│  │  │ └──────────────┘ │  │ └──────────────┘ │  │                  │  │ │
-│  │  └──────────────────┘  └──────────────────┘  └──────────────────┘  │ │
-│  │                                                                      │ │
-│  └──────────────────────────────────────────────────────────────────────┘ │
-│                                                                           │
-│  ┌─── External Services ─────────────────────────────────────────────┐   │
-│  │  • S3/MinIO: kora-backups (volume snapshots, graph exports)     │   │
-│  │  • LLM API: Anthropic or self-hosted Ollama (for consolidation)    │   │
-│  │  • Embedding: self-hosted via Ollama or sentence-transformers      │   │
-│  └────────────────────────────────────────────────────────────────────┘   │
-│                                                                           │
-└───────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 10. SDK Interface — How Agents Interact
+## 7. SDK Interface — How Agents Interact
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -928,6 +581,6 @@ How multiple agents share and isolate memory within the graph.
                     │   decay → prune                  │
                     └──────────────────────────────────┘
 
-      All managed by: KORA OPERATOR (watches CRDs, reconciles state)
-      All observed by: OTEL + PROMETHEUS + GRAFANA
+      All deployed by: HELM (charts/kora)
+      All observed by: PROMETHEUS (/metrics)
 ```

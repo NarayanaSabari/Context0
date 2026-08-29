@@ -604,7 +604,8 @@ kora/
 │   └── golden/                  # Retrieval regression suite (fixed corpus + floors)
 ├── web/                         # React web UI
 ├── .gitignore
-├── ARCHITECTURE.md
+├── ARCHITECTURE.md              # What ships
+├── docs/vision.md               # What does not (yet)
 ├── CHANGELOG.md                 # Maintained per release
 ├── Dockerfile
 ├── LICENSE                      # Apache 2.0

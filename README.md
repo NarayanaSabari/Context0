@@ -375,7 +375,6 @@ kora/
 │   ├── embedding/          # Vector embeddings (pluggable)
 │   ├── extraction/         # Memory extraction (rule-based + LLM)
 │   ├── graph/              # Apache AGE + pgvector repository
-│   ├── llm/                # LLM providers (Ollama, OpenAI-compat)
 │   ├── ranking/            # Scoring and ranking
 │   ├── retrieval/          # Read path: three retrievers, merge, rank
 │   └── service/            # gRPC service handlers
@@ -466,8 +465,7 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 - [ ] Content ingestion (PDF, URLs, code)
 - [ ] Framework SDKs (LangChain, CrewAI, MCP)
 - [ ] Connectors (GitHub, Google Drive, Notion)
-- [ ] K8s Operator with CRDs
-- [ ] MemoryBench benchmark results
+- [ ] MemoryBench benchmark results (in progress: see [docs/research/benchmark-harness.md](docs/research/benchmark-harness.md))
 
 ## License
 
