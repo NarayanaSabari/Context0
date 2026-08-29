@@ -224,7 +224,9 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 	timer := prometheus.NewTimer(metrics.QueryDuration)
 	defer timer.ObserveDuration()
 
-	// project_id is optional — if empty, query across all projects.
+	// project_id is optional: empty searches every project in the deployment.
+	// That is a scoping decision, not an authorisation one -- an API key is not
+	// bound to a project. See docs/adr/0002-one-deployment-is-one-trust-domain.md.
 
 	var types []model.MemoryType
 	for _, t := range req.Types {

@@ -158,6 +158,9 @@ type Memory struct {
 	// Cognitive category of this memory.
 	Type MemoryType `protobuf:"varint,3,opt,name=type,proto3,enum=kora.v1.MemoryType" json:"type,omitempty"`
 	// Identifier of the project this memory is scoped to.
+	//
+	// Organises retrieval; it is not a security boundary. Every API key in a
+	// deployment can read every project in it. See SECURITY.md.
 	ProjectId string `protobuf:"bytes,4,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
 	// Free-form labels for filtering and categorization.
 	Tags []string `protobuf:"bytes,5,rep,name=tags,proto3" json:"tags,omitempty"`
@@ -497,6 +500,8 @@ type StoreRequest struct {
 	// Cognitive category of the memory.
 	Type MemoryType `protobuf:"varint,2,opt,name=type,proto3,enum=kora.v1.MemoryType" json:"type,omitempty"`
 	// Project to scope this memory to.
+	//
+	// Required. Organises retrieval rather than isolating it: see SECURITY.md.
 	ProjectId string `protobuf:"bytes,3,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
 	// Optional free-form labels for categorization.
 	Tags []string `protobuf:"bytes,4,rep,name=tags,proto3" json:"tags,omitempty"`
@@ -623,6 +628,16 @@ type QueryRequest struct {
 	// Natural-language query string used for vector similarity search.
 	Query string `protobuf:"bytes,1,opt,name=query,proto3" json:"query,omitempty"`
 	// Project to search within.
+	//
+	// Optional. An empty value searches every project in the deployment, which
+	// is a scoping decision and not an authorisation one: an API key is not
+	// bound to a project, so any valid key can already read all of them. One
+	// deployment is one trust domain -- see
+	// docs/adr/0002-one-deployment-is-one-trust-domain.md and SECURITY.md.
+	//
+	// Prefer setting it. Entity retrieval is scoped per project and does not run
+	// without one, so an unscoped query is answered by fewer retrievers than a
+	// scoped one, and it ranks over the whole store.
 	ProjectId string `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
 	// Maximum number of results to return.
 	//
@@ -1071,6 +1086,8 @@ type ExtractRequest struct {
 	// Raw conversation text (multi-turn messages) to extract knowledge from.
 	Conversation string `protobuf:"bytes,1,opt,name=conversation,proto3" json:"conversation,omitempty"`
 	// Project to scope the extracted memories to.
+	//
+	// Required. Organises retrieval rather than isolating it: see SECURITY.md.
 	ProjectId string `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
 	// Optional session ID to link extracted memories to.
 	SessionId     string `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -1190,6 +1207,8 @@ func (x *ExtractResponse) GetRelationshipsCreated() int32 {
 type GetProfileRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Project to build the profile for.
+	//
+	// Required. Organises retrieval rather than isolating it: see SECURITY.md.
 	ProjectId string `protobuf:"bytes,1,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
 	// Optional query string to filter the profile by relevance.
 	Query         string `protobuf:"bytes,2,opt,name=query,proto3" json:"query,omitempty"`

@@ -118,6 +118,9 @@ message Memory {
   MemoryType type = 3;
 
   // Identifier of the project this memory is scoped to.
+  //
+  // Organises retrieval; it is not a security boundary. Every API key in a
+  // deployment can read every project in it. See SECURITY.md.
   string project_id = 4;
 
   // Free-form labels for filtering and categorization.
@@ -196,6 +199,8 @@ message StoreRequest {
   MemoryType type = 2;
 
   // Project to scope this memory to.
+  //
+  // Required. Organises retrieval rather than isolating it: see SECURITY.md.
   string project_id = 3;
 
   // Optional free-form labels for categorization.
@@ -219,6 +224,16 @@ message QueryRequest {
   string query = 1;
 
   // Project to search within.
+  //
+  // Optional. An empty value searches every project in the deployment, which
+  // is a scoping decision and not an authorisation one: an API key is not
+  // bound to a project, so any valid key can already read all of them. One
+  // deployment is one trust domain -- see
+  // docs/adr/0002-one-deployment-is-one-trust-domain.md and SECURITY.md.
+  //
+  // Prefer setting it. Entity retrieval is scoped per project and does not run
+  // without one, so an unscoped query is answered by fewer retrievers than a
+  // scoped one, and it ranks over the whole store.
   string project_id = 2;
 
   // Maximum number of results to return.
@@ -307,6 +322,8 @@ message ExtractRequest {
   string conversation = 1;
 
   // Project to scope the extracted memories to.
+  //
+  // Required. Organises retrieval rather than isolating it: see SECURITY.md.
   string project_id = 2;
 
   // Optional session ID to link extracted memories to.
@@ -329,6 +346,8 @@ message ExtractResponse {
 // an aggregated user/project profile from stored memories.
 message GetProfileRequest {
   // Project to build the profile for.
+  //
+  // Required. Organises retrieval rather than isolating it: see SECURITY.md.
   string project_id = 1;
 
   // Optional query string to filter the profile by relevance.
