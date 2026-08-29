@@ -1,0 +1,39 @@
+name: PostgreSQL + AGE + pgvector
+description: >
+  Starts the Compose postgres service and waits for it, generating the
+  credentials Compose requires. Shared by every job that needs a real database,
+  so the bring-up is defined once rather than drifting between them.
+
+outputs:
+  database-url:
+    description: DSN for the started database, for KORA_TEST_DATABASE_URL.
+    value: ${{ steps.credentials.outputs.database-url }}
+
+runs:
+  using: composite
+  steps:
+    # docker-compose requires credentials to be supplied rather than shipping
+    # defaults, so generate them per run. A fixed value in a public workflow is
+    # a published credential even when it only reaches an ephemeral runner.
+    - name: Generate compose credentials
+      id: credentials
+      shell: bash
+      run: |
+        password="$(openssl rand -hex 16)"
+        {
+          echo "POSTGRES_PASSWORD=$password"
+          echo "KORA_API_KEYS=ctx0_$(openssl rand -hex 6)_$(openssl rand -hex 24)"
+        } > .env
+        echo "database-url=postgres://kora:$password@localhost:5432/kora?sslmode=disable" >> "$GITHUB_OUTPUT"
+
+    - name: Start PostgreSQL + AGE + pgvector
+      shell: bash
+      run: |
+        docker compose up -d postgres
+        for _ in $(seq 1 60); do
+          if docker compose exec -T postgres pg_isready -U kora >/dev/null 2>&1; then
+            echo "postgres ready"; exit 0
+          fi
+          sleep 2
+        done
+        echo "postgres did not become ready"; docker compose logs postgres; exit 1

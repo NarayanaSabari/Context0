@@ -169,6 +169,8 @@ For significant changes (new features, API changes, architectural shifts), pleas
 | Category | How to Run | When |
 |----------|-----------|------|
 | Unit tests | `go test ./... -race` | Every PR |
+| Integration tests | `make test-integration` | Every PR (starts Postgres + AGE) |
+| Retrieval regression | `make test-golden` | Every PR, and before any ranking or extraction change |
 | E2E tests | `go test ./test/e2e/... -tags=e2e` | Needs running server |
 | Linting | `make lint` | Every PR |
 | Coverage | `go test ./... -cover` | Check before submitting |
@@ -176,7 +178,9 @@ For significant changes (new features, API changes, architectural shifts), pleas
 ### Writing Tests
 
 - Unit tests go in the same package as the code (`*_test.go`)
-- Integration tests go in `test/integration/`
+- Integration tests go beside the code they exercise and skip unless
+  `KORA_TEST_DATABASE_URL` is set, as `internal/graph/age_test.go` does
+- Retrieval cases go in `test/golden/golden.json`; adding one needs no Go
 - E2E tests go in `test/e2e/` with build tag `//go:build e2e`
 - Use table-driven tests for multiple cases
 - Test error paths, not just happy paths
