@@ -61,9 +61,21 @@ The script renames both (catalog-only, so the cost does not scale with database
 size), reaps any privileged helper role left by an interrupted run, and
 verifies the graph is still readable afterwards. It is idempotent.
 
-The AGE graph and its schema keep the name `context0` under either option -
-renaming those is a data migration with no functional benefit. See `GraphName`
-in `internal/graph/age.go`.
+### What still says context0, and why
+
+Three names survived the rename on purpose. Each is data-bearing or
+credential-bearing, so renaming it would cost an existing deployment something
+real in exchange for consistency:
+
+| Name | Where | Why it stays |
+|---|---|---|
+| The AGE graph and its schema | `GraphName` in `internal/graph/age.go` | It is the Postgres schema holding every deployment's data. Renaming it is a data migration with no functional benefit, and the SQL in `docs/research/` refers to it. |
+| The `ctx0_` API key prefix | `KeyPrefix` in `internal/auth/keys.go` | It is in every key ever issued. Changing it invalidates all of them to fix an aesthetic problem. |
+| The Cloudflare Pages project | `.github/workflows/site.yaml` | Renaming it changes the deployment target of the docs site. |
+
+Everything else - the module, the binaries, the chart, the environment
+variables, the repository - is Kora. If you see `context0` anywhere other than
+the three rows above, it is a leftover and worth an issue.
 
 ### Prerequisites
 
