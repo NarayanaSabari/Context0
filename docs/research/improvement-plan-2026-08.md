@@ -1,7 +1,37 @@
 # Improvement plan: closing the gap to Mem0 and Zep
 
-Status: proposed, 2026-08-27
-Baseline: 57.5% on LoCoMo (40 questions), MRR 0.865, recall@10 0.95
+Status: **largely superseded, 2026-08-29.** Read
+[benchmark-harness](benchmark-harness.md) first.
+
+Original status: proposed, 2026-08-27
+Original baseline: 57.5% on LoCoMo (40 questions), MRR 0.865, recall@10 0.95
+
+## What has happened since
+
+Every number in this document comes from 40 questions of a single
+conversation. Measured again on 200 questions stratified across all ten
+LoCoMo conversations, the failure profile is a different shape, and three of
+this document's conclusions do not survive:
+
+- **Item 0, the retrieval budget, was already run.** `kora-step0` raised it from
+  10 to 30 and bought one question of 40. This document expected it to "close
+  part of the gap on its own"; it did not.
+- **Item 1, verbosity, was 7 of 17 failures here and is roughly 1 of 12 on the
+  wider sample.** A prompt change targeting it was tried and reverted: 5 gained,
+  9 lost, and the adversarial control regressed. See issue #55.
+- **Item 3, resolving relative dates, addresses almost nothing.** The temporal
+  category's failures on the wider sample are inference and hedging, not date
+  arithmetic, and the engine already stores absolute dates. Issue #57 is closed
+  on that basis.
+
+What does survive is the central claim, and it survives harder: at n=200, 64 of
+71 failures had the evidence retrieved. The bottleneck is what happens after
+retrieval, not retrieval itself.
+
+The current failure decomposition, and what replaced these items, is in
+[benchmark-harness](benchmark-harness.md). This file is kept because the
+reasoning behind items 4 to 6 -- which shipped, and one of which moved the score
+by ten points -- is still worth reading.
 
 ## Where we actually stand
 
