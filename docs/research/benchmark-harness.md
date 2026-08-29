@@ -41,6 +41,12 @@ Runs live in `~/Developer/narayana/memorybench/data/runs/` (gitignored: 29MB of 
 | 13:26 | `kora-rule-40` | 40 | **0.500** | 10 | 0.916 | 1.000 |
 | 18:32 | `kora-step0` | 40 | **0.600** | 30 | 0.869 | 1.000 |
 
+And the rebaseline, 2026-08-29, on the reconciled adapter and the engine at `f4fe0d1`:
+
+| run | n | accuracy | retrieved | MRR | recall@10 | search latency |
+|---|---|---|---|---|---|---|
+| `kora-rebase-0829` | 40 | **0.700** | 30 | 0.902 | 0.975 | 841ms median |
+
 Three of these carry the weight of everything written since.
 
 `kora-llm-40` is the 57.5% that [improvement-plan-2026-08](improvement-plan-2026-08.md) calls the baseline, and its MRR 0.865 and recall@10 0.95 are that document's other two figures.
@@ -67,8 +73,29 @@ The per-type split is worth keeping in view, because the aggregate hides a trade
 
 Temporal halved. At these counts that is a handful of questions either way and could easily be noise, but "raise the budget" is not free of side effects, and a run that only reports 57.5 to 60.0 would not show it.
 
+## The rebaseline: 70.0%
+
+`kora-rebase-0829` reuses `kora-step0`'s ingested corpus rather than re-ingesting it, so the two runs differ in exactly two things: the engine, and the adapter's search path. Same 13,844 memories, same retrieval budget of 30, same judge and answering model, same context size of 4,958 tokens per question.
+
+| | `kora-step0` | `kora-rebase-0829` |
+|---|---|---|
+| accuracy | 0.600 | **0.700** |
+| MRR | 0.869 | **0.902** |
+| single-hop / multi-hop / temporal | 0.667 / 0.650 / 0.200 | 0.600 / **0.800** / **0.600** |
+| search latency (memscore) | 2,525ms | **889ms** |
+
+The engine gained IDF-weighted full-text search (`3d562e7`), the fix that tells an unsearchable query from one that found nothing (`2d72fec`), and the query-plan fix that took keyword search off its 20x latency regression (`f4fe0d1`). `kora-step0` ran at 18:32 on 2026-08-27, before the first two landed.
+
+Per-question, against the same 40: **5 gained, 1 lost.** McNemar exact, two-sided, over 6 discordant pairs: **p = 0.22**. So the direction is consistent and the size is not established - which is what n=40 buys, and is the same caution the improvement plan already recorded for the rule-versus-LLM comparison.
+
+Two things follow. Full-text search earns its place on quality, not only on the indexability argument that motivated it; and temporal recovered from the 0.200 that step 0 had dropped it to, which suggests that drop was noise rather than a cost of the larger budget.
+
+For context, mem0's open-source SDK reports 71.4 on LoCoMo. This run is 70.0 at the same retrieval budget of 30, on 40 of the 200 questions. Parity is the honest reading; a claim needs the full set.
+
 ## Consequences for the plan
 
 The retrieval budget is settled, and it was not the gap. What remains between Kora and open-source mem0's 71.4 has to come from the answering and extraction work, which is where the plan's own failure analysis already pointed: 15 of 17 failures had the right memory retrieved.
 
-Nothing here has yet been measured against an adapter that carries both lineages' fixes, or against the engine as it stands today.
+The one measurement that was missing - both lineages' fixes on the engine as it stands - is `kora-rebase-0829` above.
+
+What has still never been measured: the engine on its install defaults. Every number here uses Gemini embeddings and LLM extraction. A default `helm install` gets hashed bag-of-words and the rule-based extractor, and `kora-rule-40` at 0.500 is the closest thing to evidence for what that costs.
