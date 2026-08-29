@@ -33,7 +33,7 @@ import (
 	"github.com/NarayanaSabari/Kora/internal/extraction"
 	"github.com/NarayanaSabari/Kora/internal/graph"
 	"github.com/NarayanaSabari/Kora/internal/metrics"
-	"github.com/NarayanaSabari/Kora/internal/ranking"
+	"github.com/NarayanaSabari/Kora/internal/retrieval"
 	"github.com/NarayanaSabari/Kora/pkg/model"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
@@ -51,6 +51,11 @@ type MemoryService struct {
 	repo      *graph.AGERepository
 	embedder  embedding.Embedder
 	extractor extraction.Extractor
+
+	// retrieval owns the read path. Constructed here rather than injected
+	// because the service is what decides the engine's dependencies; the
+	// interface it takes exists so the read path can be tested without one.
+	retrieval *retrieval.Engine
 }
 
 // NewMemoryService creates a new MemoryService with the given graph repository
@@ -71,7 +76,12 @@ func NewMemoryServiceWithExtractor(repo *graph.AGERepository, embedder embedding
 	if extractor == nil {
 		extractor = extraction.RuleExtractor{}
 	}
-	return &MemoryService{repo: repo, embedder: embedder, extractor: extractor}
+	return &MemoryService{
+		repo:      repo,
+		embedder:  embedder,
+		extractor: extractor,
+		retrieval: retrieval.New(repo, embedder),
+	}
 }
 
 // Store persists a new memory node into the graph. The full pipeline is:
@@ -225,147 +235,14 @@ func (s *MemoryService) Query(ctx context.Context, req *pb.QueryRequest) (*pb.Qu
 		types = append(types, mt)
 	}
 
-	// Parse query into structured form with time filtering.
-	filter := ParseQuery(req.Query, req.ProjectId, types, req.TopK)
-
-	// --- Keyword retrieval: PostgreSQL full-text search ---
-	//
-	// This was Cypher `CONTAINS`, which is substring matching with no term
-	// weighting: `the` counted exactly as much as `zqxjklmw`, and it matched
-	// inside words, so `go` matched `mango` and `algorithm`. It also could not
-	// be indexed at all -- AGE refuses an index for it even under
-	// `enable_seqscan=off`, which docs/research/keyword-search-indexing.md
-	// establishes is not a costing decision but the absence of any operator
-	// class that could serve the predicate.
-	//
-	// ts_rank_cd grades the match instead of asserting it, which is what lets
-	// the fusion below be additive rather than tiered.
-	graphResults, err := s.repo.SearchByText(ctx, req.ProjectId, filter.Keywords, keywordCandidatePool(filter.TopK))
+	// Retrieval lives in internal/retrieval: three retrievers, a fallback for
+	// queries with nothing to search for, and the merge that puts them on one
+	// scale. What remains here is what serving a request needs -- protocol
+	// translation, context edges, access counts, metrics.
+	results, err := s.retrieval.Retrieve(ctx, req.Query, req.ProjectId, types, req.TopK)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "keyword search failed: %v", err)
+		return nil, status.Errorf(codes.Internal, "retrieval failed: %v", err)
 	}
-
-	// Raw ts_rank_cd values arrive in Score. Normalising them is a ranking
-	// decision -- the right curve depends on the query's length -- so it
-	// happens here rather than in the repository.
-	//
-	// A query with no searchable terms retrieves nothing by keyword, which is
-	// correct: there is nothing to match. The other two retrievers cover it.
-	for i := range graphResults {
-		graphResults[i].Relevance = ranking.NormalizeBM25(graphResults[i].Score, len(filter.Keywords))
-	}
-
-	// A query with nothing to search for still has to return something, so it
-	// falls back to the plain graph query: a bare "list everything" request is
-	// answered by recency and the other retrievers rather than by an empty
-	// result.
-	//
-	// The condition is precisely "there was nothing to search for", which is
-	// neither of the two obvious approximations:
-	//
-	//   - "the caller supplied no keywords" misses queries whose every term is
-	//     a stop word to PostgreSQL but not to extractKeywords. "have", "being"
-	//     and "and" survive the first list and are removed by the second, so
-	//     such a query has keywords, lexes to an empty tsquery, and would
-	//     return nothing at all.
-	//   - "keyword retrieval returned nothing" is worse: it cannot tell an
-	//     unsearchable query from a searchable one with no matches, and the
-	//     second is an answer. Falling back there hands the caller a page of
-	//     unrelated memories -- and restores exactly what full-text search was
-	//     adopted to remove, since a query for `go` would again return the
-	//     memory about mangoes.
-	//
-	// So the question is asked of PostgreSQL, whose dictionary owns it.
-	unsearchable := len(filter.Keywords) == 0
-	if !unsearchable && len(graphResults) == 0 {
-		searchable, serr := s.repo.KeywordsAreSearchable(ctx, filter.Keywords)
-		if serr != nil {
-			// Treat it as searchable: a failed check must not turn a precise
-			// empty answer into a page of unrelated memories.
-			logging.FromContext(ctx).Warn("could not determine whether the query has searchable terms; treating it as a real search",
-				slog.Any("error", serr))
-		} else {
-			unsearchable = !searchable
-		}
-	}
-
-	if unsearchable {
-		// Without its keywords: they matched nothing, and QueryMemories filters
-		// on them with CONTAINS, so passing them through makes the fallback
-		// return nothing for exactly the queries that need it. What is wanted
-		// here is the project's memories by recency, which is what the filter
-		// reduces to once the keywords are gone.
-		fallback := filter
-		fallback.Keywords = nil
-
-		graphResults, err = s.repo.QueryMemories(ctx, fallback)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "graph query failed: %v", err)
-		}
-		for i := range graphResults {
-			// Nothing matched, so no candidate is more relevant than another by
-			// keyword. Relevance is left at zero rather than set to a constant:
-			// these are fallback candidates, and the vector and entity
-			// retrievers' signals should still order them if either has an
-			// opinion. Recency, frequency and type order the rest.
-			graphResults[i].Relevance = 0
-		}
-	}
-
-	var vectorResults []model.MemoryWithContext
-	if s.embedder != nil && req.Query != "" {
-		if queryVec, err := s.embedder.Embed(req.Query); err == nil {
-			var verr error
-			// The vector retriever gets the same candidate pool size as the
-			// graph one, for the same reason: this LIMIT runs before ranking,
-			// so it decides what ranking is allowed to consider.
-			//
-			// It was topK*2, which is far too tight to act as the safety net
-			// for the keyword retriever. The two retrievers exist to cover each
-			// other -- a paraphrased query that shares no keyword with the
-			// answer is exactly what vector search is for -- and a pool of 20
-			// cannot do that in a project holding thousands of memories.
-			vectorResults, verr = s.repo.SearchByVector(ctx, queryVec, req.ProjectId, vectorCandidatePool(filter.TopK))
-			if verr != nil {
-				// The query still returns keyword results, so the caller sees a
-				// quietly worse answer rather than an error. Record it.
-				logging.FromContext(ctx).Warn("vector search failed; falling back to keyword results only",
-					slog.String("project_id", req.ProjectId),
-					slog.Any("error", verr))
-			}
-		}
-	}
-
-	// --- Entity retrieval: the second hop ---
-	//
-	// A third source, and the only one that can reach a memory sharing neither
-	// words nor phrasing with the query. "What is Biscuit afraid of?" and "the
-	// dog hates thunderstorms" have no keyword in common and need not be close
-	// in embedding space, but both are about Biscuit, and the graph knows it.
-	//
-	// This is what multi-hop questions were missing. They were the weakest
-	// LoCoMo category at 65% because the graph clustered paraphrases of one
-	// fact rather than connecting things to each other.
-	//
-	// Run before the merge, not after, because the merge is where the three
-	// signals are put on one scale. Adding entity hits afterwards left them at
-	// zero relevance in RelevanceTier's unmatched tier, permanently below any
-	// memory containing any query word however common -- which made the recall
-	// half of this feature unreachable in every project with more than a
-	// handful of keyword matches.
-	entityResults, entityOverlap := s.entityMatches(ctx, req.ProjectId, req.Query, filter.TopK,
-		graphResults, vectorResults)
-
-	// Merge: deduplicate by ID, and put the three retrievers' signals on one
-	// scale. Keywords are passed so the merge can tell a candidate that
-	// lexically matched from one the vector retriever surfaced on similarity
-	// alone; the two scores are otherwise not comparable. See
-	// ranking.RelevanceTier.
-	results := mergeResults(graphResults, vectorResults, entityResults, entityOverlap)
-
-	// Rank results using scoring function. This consumes the Relevance set
-	// above, so retrieval quality drives the final order.
-	results = ranking.RankResults(results, int(filter.TopK))
 
 	// Populate context edges for the (already truncated) top-K results in a
 	// single round trip, and increment access counts for returned results.
@@ -1093,153 +970,6 @@ func (s *MemoryService) embedExtracted(ctx context.Context, memories []model.Mem
 	return vectors
 }
 
-// autoLinkByTags finds existing memories in the same project that share at least
-// semanticNeighbours fetches the nearest stored memories to a vector, once per
-// entityCandidatePoolFactor and maxEntityCandidatePool size the entity
-// retriever's candidate pool. See entityCandidatePool.
-const (
-	entityCandidatePoolFactor = 5
-	maxEntityCandidatePool    = 100
-)
-
-// Keyword candidate pool sizing, matching the graph retriever's previous
-// over-fetch. This LIMIT runs before ranking, so it decides what ranking is
-// allowed to consider, and the three retrievers exist to cover each other --
-// a pool that is generous on one side but tight on another leaves the hybrid
-// with fewer working retrievers than it appears to have.
-//
-// The cap is the graph side's, because a keyword hit costs one row and no
-// embedding to hydrate.
-const (
-	graphCandidatePoolFactor = 10
-	maxGraphCandidatePool    = 500
-)
-
-// keywordCandidatePool returns how many keyword hits to fetch for a query
-// asking for topK results.
-func keywordCandidatePool(topK int32) int {
-	pool := int(topK) * graphCandidatePoolFactor
-	if pool > maxGraphCandidatePool {
-		pool = maxGraphCandidatePool
-	}
-	if pool < 1 {
-		pool = 1
-	}
-	return pool
-}
-
-// entityCandidatePool returns how many entity matches to fetch for a query
-// asking for topK results.
-//
-// Sized against topK rather than fixed, and capped, for the same reason as
-// vectorCandidatePool: this limit runs before ranking, so it decides what
-// ranking is allowed to consider. The cap matters more here than for the other
-// retrievers, because an entity naming the corpus's own subject is mentioned
-// by most of it -- "Caroline" appears in nearly every memory of a corpus about
-// Caroline, so an unbounded entity match is a full table scan wearing a
-// traversal's clothes.
-func entityCandidatePool(topK int32) int {
-	pool := int(topK) * entityCandidatePoolFactor
-	if pool > maxEntityCandidatePool {
-		pool = maxEntityCandidatePool
-	}
-	if pool < 1 {
-		pool = 1
-	}
-	return pool
-}
-
-// entityMatches finds memories naming the same entities as the query, and
-// reports how much of the query's entity set every candidate names.
-//
-// Two distinct jobs, and both matter:
-//
-//   - Recall. A memory sharing no keyword and no close embedding with the
-//     query is unreachable by the other two retrievers, and a memory about the
-//     same thing is exactly the case they miss.
-//   - Ordering. Among memories the other retrievers found, the ones about the
-//     query's subject are more likely to answer it.
-//
-// The overlap map covers every candidate, not only the ones this found: a
-// memory the keyword retriever already had is just as much about Biscuit, and
-// rewarding only the new ones would rank a weak entity-only hit above a strong
-// hit naming the same entity.
-//
-// A failure degrades to the results the other retrievers produced. The graph
-// is supplementary here, so losing it makes the answer quietly worse rather
-// than wrong.
-func (s *MemoryService) entityMatches(
-	ctx context.Context,
-	projectID, query string,
-	topK int32,
-	existing ...[]model.MemoryWithContext,
-) ([]model.Memory, map[uuid.UUID]float64) {
-	// Entities are scoped per project, and an unscoped query has no project to
-	// traverse. Cross-project entity matching would breach the tenant boundary
-	// every other retriever respects.
-	if projectID == "" || query == "" {
-		return nil, nil
-	}
-
-	// The query is a sentence, so it is read for entities the same way a
-	// memory is. That symmetry is the point: the query names Biscuit, the
-	// memory names Biscuit, and they meet at one node.
-	queryEntities := make([]string, 0, 4)
-	for _, e := range extraction.ExtractEntities(query) {
-		if n := model.NormalizeEntity(e); n != "" {
-			queryEntities = append(queryEntities, n)
-		}
-	}
-	if len(queryEntities) == 0 {
-		return nil, nil
-	}
-
-	log := logging.FromContext(ctx)
-
-	matches, err := s.repo.FindMemoriesByEntities(ctx, projectID, queryEntities, entityCandidatePool(topK))
-	if err != nil {
-		log.Warn("entity retrieval failed; results come from keyword and vector search only",
-			slog.String("project_id", projectID),
-			slog.Any("error", err))
-		return nil, nil
-	}
-
-	// Every candidate is scored, including the ones the other retrievers
-	// found, so the signal orders the whole set rather than only its own hits.
-	ids := make([]uuid.UUID, 0, len(matches))
-	seen := make(map[uuid.UUID]bool, len(matches))
-	for _, group := range existing {
-		for _, r := range group {
-			if !seen[r.Memory.ID] {
-				seen[r.Memory.ID] = true
-				ids = append(ids, r.Memory.ID)
-			}
-		}
-	}
-	for _, m := range matches {
-		if !seen[m.ID] {
-			seen[m.ID] = true
-			ids = append(ids, m.ID)
-		}
-	}
-
-	byMemory, err := s.repo.GetMemoryEntities(ctx, ids)
-	if err != nil {
-		log.Warn("loading entities for ranking failed; results are ordered without the entity signal",
-			slog.Int("result_count", len(ids)),
-			slog.Any("error", err))
-		return matches, nil
-	}
-
-	overlap := make(map[uuid.UUID]float64, len(ids))
-	for _, id := range ids {
-		if o := ranking.EntityOverlap(byMemory[id], queryEntities); o > 0 {
-			overlap[id] = o
-		}
-	}
-	return matches, overlap
-}
-
 // existingByContent looks up which of these memories the project already holds
 // verbatim, keyed by content hash.
 //
@@ -1355,7 +1085,6 @@ func (s *MemoryService) foldInto(ctx context.Context, mem, existing model.Memory
 	return existing, true
 }
 
-// semanticNeighbours fetches the nearest stored memories to a vector, once per
 // write, for the two consumers that need them.
 //
 // Consolidation checks whether a near-identical fact already exists, and
@@ -1423,7 +1152,6 @@ func (s *MemoryService) consolidateAgainst(mem model.Memory, neighbours []model.
 	return model.Memory{}, extraction.Distinct, false
 }
 
-// autoLinkByTags finds existing memories in the same project that share at least
 // one tag with the given memory, or whose meaning is close to it, and creates
 // relates_to edges to connect them. This builds implicit topic clusters in the
 // graph. Memories already connected to mem by some other edge (e.g. a
@@ -1697,225 +1425,6 @@ func protoToRelType(r pb.RelationshipType) (model.RelationshipType, error) {
 	default:
 		return "", fmt.Errorf("unknown relationship type: %v", r)
 	}
-}
-
-// Vector candidate pool sizing, mirroring the graph retriever's over-fetch in
-// internal/graph. Both LIMITs run before ranking, so both decide what the
-// ranking layer is allowed to see, and a pool that is generous on one side but
-// tight on the other leaves the hybrid with only one working retriever.
-//
-// The cap is lower than the graph side's 500 because each vector candidate
-// carries an embedding to hydrate, so the memory cost per row is far higher.
-// 200 still comfortably exceeds any plausible topK.
-const (
-	vectorCandidatePoolFactor = 10
-	maxVectorCandidatePool    = 200
-)
-
-// vectorCandidatePool returns how many nearest neighbours to fetch for a query
-// asking for topK results.
-func vectorCandidatePool(topK int32) int {
-	pool := int(topK) * vectorCandidatePoolFactor
-	if pool > maxVectorCandidatePool {
-		pool = maxVectorCandidatePool
-	}
-	if pool < 1 {
-		pool = 1
-	}
-	return pool
-}
-
-// defaultTopK is how many results a query returns when the caller does not
-// say. Small on purpose: a caller that has not thought about it is better
-// served by a short, precise answer than a long one.
-const defaultTopK = 5
-
-// maxTopK bounds how many results one query may return.
-//
-// A bound is necessary. top_k sizes both candidate pools and the hydrated
-// result set, and it arrives on an unauthenticated request field, so an
-// unbounded value is a memory-exhaustion vector. The candidate pools cap
-// themselves well below this (500 graph, 200 vector), so the cost that scales
-// with top_k is hydration and the context-edge lookup, both of which are
-// bounded per row.
-//
-// It was 20, and nothing said so. memory.proto documents top_k as "Maximum
-// number of results to return", so a caller asking for 50 received 20 with no
-// error, no warning, and no way to discover the limit short of reading the
-// source. That is the part that was wrong: a cap is defensible, a silent one
-// is not. Comparable engines default to retrieving 20-30, which made the
-// undocumented clamp a quality ceiling as well as a surprise.
-//
-// 200 is chosen to sit above any plausible request while staying an order of
-// magnitude below the point where hydration cost matters. The bound is now
-// documented in memory.proto.
-const maxTopK = 200
-
-// ParseQuery converts a raw query string and request parameters into a
-// graph.QueryFilter. It extracts keywords (filtering stop words) and clamps
-// topK to a safe bound.
-func ParseQuery(query string, projectID string, types []model.MemoryType, topK int32) graph.QueryFilter {
-	keywords := extractKeywords(query)
-
-	if topK <= 0 {
-		topK = defaultTopK
-	}
-	if topK > maxTopK {
-		topK = maxTopK
-	}
-
-	return graph.QueryFilter{
-		ProjectID: projectID,
-		Keywords:  keywords,
-		Types:     types,
-		TopK:      topK,
-		// Query ranks its results, so it must see more than TopK candidates:
-		// the Cypher LIMIT runs before ranking, and created_at ties make the
-		// database's choice among equals arbitrary.
-		OverFetch: true,
-	}
-}
-
-// extractKeywords splits a query string into keywords for tag/content matching.
-func extractKeywords(query string) []string {
-	if query == "" {
-		return nil
-	}
-	// Simple tokenization: split on spaces, filter short words.
-	words := strings.Fields(strings.ToLower(query))
-	var keywords []string
-	stopWords := map[string]bool{
-		"a": true, "an": true, "the": true, "is": true, "are": true,
-		"was": true, "were": true, "do": true, "does": true, "did": true,
-		"what": true, "which": true, "who": true, "how": true, "when": true,
-		"where": true, "this": true, "that": true, "it": true, "of": true,
-		"in": true, "on": true, "for": true, "to": true, "with": true,
-		"my": true, "our": true, "we": true, "i": true, "use": true,
-		"project": true,
-	}
-	for _, w := range words {
-		// Strip surrounding punctuation before anything else. Keywords are
-		// matched with CONTAINS against stored content, so a token carrying
-		// its sentence punctuation can never match: "group?" is not a
-		// substring of "...support group yesterday". Questions are the normal
-		// way a memory engine is queried, and the "?" attaches to the last
-		// word, which is often the most specific one in the query.
-		//
-		// Trimmed only at the edges, so identifiers keep the punctuation that
-		// is part of them: "api-key", "node.js" and "user's" survive intact.
-		// A token that was nothing but punctuation trims to empty and is then
-		// dropped by the length check below.
-		w = strings.Trim(w, `.,;:!?"'()[]{}<>-`)
-		if len(w) < 2 {
-			continue
-		}
-		if stopWords[w] {
-			continue
-		}
-		keywords = append(keywords, w)
-	}
-	return keywords
-}
-
-// mergeResults combines graph-, vector- and entity-retrieved results into a
-// single deduplicated slice, carrying each candidate's retrieval relevance
-// forward for the ranking layer.
-//
-// Each retriever contributes a signal on its own scale, and every candidate is
-// scored on all three whether or not that retriever found it:
-//
-//   - Keyword hits arrive with a normalised ts_rank_cd in Relevance, set by
-//     the caller because the normalisation depends on the query length.
-//   - Vector hits carry cosine similarity in Score.
-//   - Entity overlap arrives as a map, since a memory the other two retrievers
-//     found is just as much about the query's subject as one this retriever
-//     surfaced.
-//
-// ranking.FuseRelevance combines them additively. That a memory can enter on
-// entity evidence alone is the point: "the dog bolts under the bed" answers
-// "what is Biscuit afraid of?" without sharing one query term.
-//
-// The returned slice is sorted by memory ID. Merging happens through a map, and
-// Go randomizes map iteration, so without this the candidate order (and
-// therefore the resolution of any score tie downstream) would vary between
-// identical queries.
-func mergeResults(
-	graph, vector []model.MemoryWithContext,
-	entity []model.Memory,
-	entityOverlap map[uuid.UUID]float64,
-) []model.MemoryWithContext {
-	seen := make(map[uuid.UUID]*model.MemoryWithContext, len(graph)+len(vector)+len(entity))
-
-	// Which candidates a retriever other than vector search found. The
-	// semantic gate below does not apply to those: they were not rescued by a
-	// weak signal, they were independently retrieved on evidence the gate says
-	// nothing about. See ranking.PassesSemanticGate.
-	otherEvidence := make(map[uuid.UUID]bool, len(graph)+len(entity))
-
-	// Track the cosine signal separately from the keyword one. They are
-	// different kinds of evidence and the fusion below weights them
-	// differently, so overwriting one with the other would silently reweight
-	// the query.
-	cosine := make(map[uuid.UUID]float64, len(vector))
-	for _, r := range vector {
-		cosine[r.Memory.ID] = r.Score
-	}
-
-	// Add all keyword results, whose normalised ts_rank_cd the caller has
-	// already placed in Relevance.
-	for i := range graph {
-		r := graph[i]
-		seen[r.Memory.ID] = &r
-		otherEvidence[r.Memory.ID] = true
-	}
-
-	// Add vector-only results. A memory full-text search did not return
-	// matched none of the query's terms, so it carries no keyword evidence.
-	for i := range vector {
-		r := vector[i]
-		if _, ok := seen[r.Memory.ID]; ok {
-			continue
-		}
-		r.Relevance = 0
-		seen[r.Memory.ID] = &r
-	}
-
-	// Add entity-only results: memories about the right thing that neither
-	// other retriever reached. Their evidence is applied below.
-	for i := range entity {
-		mem := entity[i]
-		otherEvidence[mem.ID] = true
-		if _, ok := seen[mem.ID]; ok {
-			continue
-		}
-		r := model.MemoryWithContext{Memory: mem}
-		seen[mem.ID] = &r
-	}
-
-	// Resolve every candidate on one scale, additively.
-	//
-	// The semantic gate runs first, and that ordering is the substance of it:
-	// gating after the combine lets keyword overlap alone rescue a candidate
-	// the embedder says is unrelated. It applies only where there is a cosine
-	// score to judge -- a candidate vector search never scored is unmeasured,
-	// not weak, and discarding those would disable keyword and entity
-	// retrieval whenever no embedder is configured.
-	results := make([]model.MemoryWithContext, 0, len(seen))
-	for id, r := range seen {
-		cos, scored := cosine[id]
-		if !ranking.PassesSemanticGate(cos, scored, otherEvidence[id]) {
-			continue
-		}
-		// Additive, not tiered. See ranking.FuseRelevance: the tier ranked any
-		// lexical match above any non-match, which with a graded keyword
-		// signal is a stronger claim than the evidence supports.
-		r.Relevance = ranking.FuseRelevance(r.Relevance, cos, entityOverlap[id])
-		results = append(results, *r)
-	}
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Memory.ID.String() < results[j].Memory.ID.String()
-	})
-	return results
 }
 
 // hasOverlappingTags returns true if the two tag slices share at least one tag
