@@ -145,7 +145,11 @@ func main() {
 	// Not fatal, and not a "degraded" health status: no network egress on a
 	// fresh install is the right default, and paging on it would be wrong.
 	// Loud once, at startup, where an operator is looking.
-	providers := service.Providers{Embedding: cfg.EmbeddingProvider, Extraction: cfg.ExtractionProvider}
+	providers := service.Providers{
+		Embedding:            cfg.EmbeddingProvider,
+		Extraction:           cfg.ExtractionProvider,
+		GraphSignalsDisabled: cfg.GraphSignals == "off",
+	}
 	if providers.ZeroDependencyDefaults() {
 		slog.Warn("running on zero-dependency defaults: hashed bag-of-words embeddings and rule-based extraction",
 			slog.String("embedding_provider", cfg.EmbeddingProvider),
@@ -181,6 +185,16 @@ func main() {
 
 	// Register all service implementations on the gRPC server.
 	memorySvc := service.NewMemoryServiceWithExtractor(repo, embedder, extractor)
+	if cfg.GraphSignals == "off" {
+		// The ablation mode, issue #86. Loud for the same reason the
+		// zero-dependency warning is: a benchmark number produced against this
+		// deployment measures the ablated engine, and the only place that is
+		// visible later is this line and the health endpoint.
+		memorySvc.DisableGraphSignals()
+		slog.Warn("graph signals disabled: retrieving by full-text and vector search alone",
+			slog.String("reason", "KORA_GRAPH_SIGNALS=off"),
+			slog.String("effect", "this deployment behaves as plain hybrid RAG; entity retrieval is off"))
+	}
 	sessionSvc := service.NewSessionService(repo)
 	healthSvc := service.NewHealthService(repo, cfg.Version, providers)
 

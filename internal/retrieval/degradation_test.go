@@ -37,8 +37,11 @@ type fakeRepo struct {
 	vectorErr     error
 	entityErr     error
 
+	entityResults []model.Memory
+
 	queryMemoriesCalled bool
 	searchByVectorCalls int
+	entityCalls         int
 }
 
 func (f *fakeRepo) SearchByText(context.Context, string, []string, int) ([]model.MemoryWithContext, error) {
@@ -60,7 +63,8 @@ func (f *fakeRepo) SearchByVector(context.Context, []float32, string, int) ([]mo
 }
 
 func (f *fakeRepo) FindMemoriesByEntities(context.Context, string, []string, int) ([]model.Memory, error) {
-	return nil, f.entityErr
+	f.entityCalls++
+	return f.entityResults, f.entityErr
 }
 
 func (f *fakeRepo) GetMemoryEntities(context.Context, []uuid.UUID) (map[uuid.UUID][]string, error) {

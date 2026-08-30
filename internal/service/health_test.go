@@ -443,3 +443,22 @@ func TestHealth_ProviderNamesSurviveToTheResponse(t *testing.T) {
 		t.Error("a deployment running Ollama and an LLM extractor is not on zero-dependency defaults")
 	}
 }
+
+// The ablation mode must be visible to an authenticated caller.
+//
+// A benchmark number produced against an ablated deployment measures the
+// ablated engine, and this field is the only way to tell the two apart after
+// the fact. See issue #86.
+func TestHealthReportsGraphSignalsDisabled(t *testing.T) {
+	h := &HealthService{repo: &countingRepo{}, version: "test",
+		providers: Providers{GraphSignalsDisabled: true}}
+
+	resp, err := h.Health(authedCtx(), &pb.HealthRequest{})
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+	if !resp.GraphSignalsDisabled {
+		t.Error("graph_signals_disabled not reported: an ablated deployment is " +
+			"indistinguishable from a normal one, which is the defect the field exists to prevent")
+	}
+}

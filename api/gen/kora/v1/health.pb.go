@@ -96,8 +96,18 @@ type HealthResponse struct {
 	// A field rather than a status of "degraded": the engine is healthy, and a
 	// monitoring system that pages on this would be wrong.
 	ZeroDependencyDefaults bool `protobuf:"varint,7,opt,name=zero_dependency_defaults,json=zeroDependencyDefaults,proto3" json:"zero_dependency_defaults,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// True when the graph's retrieval signals are switched off
+	// (KORA_GRAPH_SIGNALS=off) and queries are answered by full-text and
+	// vector search alone.
+	//
+	// This is the ablation mode: it exists to measure what the graph
+	// contributes, by comparing a deployment in this mode against a normal one
+	// on the same corpus. A benchmark number from a deployment with this set
+	// is a measurement of the ablated engine, not of Kora, and this field is
+	// what lets a caller tell the two apart.
+	GraphSignalsDisabled bool `protobuf:"varint,8,opt,name=graph_signals_disabled,json=graphSignalsDisabled,proto3" json:"graph_signals_disabled,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *HealthResponse) Reset() {
@@ -179,12 +189,19 @@ func (x *HealthResponse) GetZeroDependencyDefaults() bool {
 	return false
 }
 
+func (x *HealthResponse) GetGraphSignalsDisabled() bool {
+	if x != nil {
+		return x.GraphSignalsDisabled
+	}
+	return false
+}
+
 var File_kora_v1_health_proto protoreflect.FileDescriptor
 
 const file_kora_v1_health_proto_rawDesc = "" +
 	"\n" +
 	"\x14kora/v1/health.proto\x12\akora.v1\x1a\x1cgoogle/api/annotations.proto\"\x0f\n" +
-	"\rHealthRequest\"\x9a\x02\n" +
+	"\rHealthRequest\"\xd0\x02\n" +
 	"\x0eHealthResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1d\n" +
@@ -194,7 +211,8 @@ const file_kora_v1_health_proto_rawDesc = "" +
 	"edge_count\x18\x04 \x01(\x03R\tedgeCount\x12-\n" +
 	"\x12embedding_provider\x18\x05 \x01(\tR\x11embeddingProvider\x12/\n" +
 	"\x13extraction_provider\x18\x06 \x01(\tR\x12extractionProvider\x128\n" +
-	"\x18zero_dependency_defaults\x18\a \x01(\bR\x16zeroDependencyDefaults2^\n" +
+	"\x18zero_dependency_defaults\x18\a \x01(\bR\x16zeroDependencyDefaults\x124\n" +
+	"\x16graph_signals_disabled\x18\b \x01(\bR\x14graphSignalsDisabled2^\n" +
 	"\rHealthService\x12M\n" +
 	"\x06Health\x12\x16.kora.v1.HealthRequest\x1a\x17.kora.v1.HealthResponse\"\x12\x82\xd3\xe4\x93\x02\f\x12\n" +
 	"/v1/healthB7Z5github.com/NarayanaSabari/Kora/api/gen/kora/v1;korav1b\x06proto3"

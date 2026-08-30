@@ -54,11 +54,30 @@ type Repo interface {
 type Engine struct {
 	repo     Repo
 	embedder embedding.Embedder
+
+	// graphSignalsOff removes every graph-derived signal from retrieval.
+	// Set once at startup via DisableGraphSignals; see that method.
+	graphSignalsOff bool
 }
 
 // New returns an Engine. The embedder may be nil.
 func New(repo Repo, embedder embedding.Embedder) *Engine {
 	return &Engine{repo: repo, embedder: embedder}
+}
+
+// DisableGraphSignals removes every graph-derived signal from retrieval,
+// leaving full-text and vector search alone. One switch for all of them, so an
+// ablation run cannot accidentally disable some signals and not others.
+//
+// This is the ablation mode (issue #86): the engine behaves as plain hybrid
+// RAG, and the measured gap between that and normal operation is what the
+// graph contributes. Not a tuning knob -- a deployment that wants less of one
+// signal wants a ranking change, not this.
+//
+// Startup-only: call it before the engine serves queries. It writes an
+// unsynchronised field that Retrieve reads.
+func (e *Engine) DisableGraphSignals() {
+	e.graphSignalsOff = true
 }
 
 // Retrieve answers a query: three retrievers, merged onto one scale, ranked,
@@ -201,8 +220,12 @@ func (e *Engine) Retrieve(
 	// memory containing any query word however common -- which made the recall
 	// half of this feature unreachable in every project with more than a
 	// handful of keyword matches.
-	entityResults, entityOverlap := e.entityMatches(ctx, projectID, query, filter.TopK,
-		graphResults, vectorResults)
+	var entityResults []model.Memory
+	var entityOverlap map[uuid.UUID]float64
+	if !e.graphSignalsOff {
+		entityResults, entityOverlap = e.entityMatches(ctx, projectID, query, filter.TopK,
+			graphResults, vectorResults)
+	}
 
 	// Merge: deduplicate by ID, and put the three retrievers' signals on one
 	// scale. Keywords are passed so the merge can tell a candidate that

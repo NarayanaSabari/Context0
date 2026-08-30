@@ -68,6 +68,13 @@ type healthRepo interface {
 type Providers struct {
 	Embedding  string
 	Extraction string
+
+	// GraphSignalsDisabled reports the ablation mode: retrieval running on
+	// full-text and vector search alone (KORA_GRAPH_SIGNALS=off). Reported for
+	// the same reason as the providers -- a benchmark number from an ablated
+	// deployment measures the ablated engine, and a caller comparing two
+	// deployments needs to see which one they are looking at.
+	GraphSignalsDisabled bool
 }
 
 // ZeroDependencyDefaults reports whether both providers are the offline
@@ -145,6 +152,7 @@ func (s *HealthService) Health(ctx context.Context, _ *pb.HealthRequest) (*pb.He
 		EmbeddingProvider:      s.providers.Embedding,
 		ExtractionProvider:     s.providers.Extraction,
 		ZeroDependencyDefaults: s.providers.ZeroDependencyDefaults(),
+		GraphSignalsDisabled:   s.providers.GraphSignalsDisabled,
 	}, nil
 }
 
