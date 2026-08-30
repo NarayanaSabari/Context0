@@ -72,6 +72,30 @@ var (
 		[]string{"verdict"},
 	)
 
+	// ExtractionFallbacks counts conversations the configured LLM extractor
+	// could not handle, so the rule-based scanner answered instead.
+	//
+	// The fallback is deliberate -- losing a conversation because a provider
+	// is down is worse than storing a cruder version of it -- but it is a
+	// quality change the caller is never told about: Extract returns success
+	// either way. Without this, a deployment whose provider has been failing
+	// for a week looks identical to one whose provider works, and the only
+	// symptom is memories that read like transcript lines.
+	//
+	// "error" means the call failed. "empty" means it succeeded, returned
+	// nothing, and the rule-based pass then found memories in the same text:
+	// the disagreement, not the empty result, is the signal. A conversation
+	// both extractors find empty is not counted, because it is the normal
+	// outcome for a conversation of greetings, and a metric that fires on
+	// healthy traffic cannot be alerted on.
+	ExtractionFallbacks = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kora_extraction_fallbacks_total",
+			Help: "Conversations the rule-based extractor answered because the LLM extractor failed or missed content, by reason.",
+		},
+		[]string{"reason"},
+	)
+
 	// QueryDuration observes the latency of query requests in seconds.
 	QueryDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -218,6 +242,7 @@ func Register() {
 		MemoriesTotal,
 		EdgesTotal,
 		MemoriesConsolidated,
+		ExtractionFallbacks,
 		QueryDuration,
 		StoreDuration,
 		QueryResultsCount,
