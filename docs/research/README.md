@@ -32,6 +32,7 @@ produced each published number. Read it before quoting a benchmark figure.
 | [performance-audit-2026-08](performance-audit-2026-08.md) | 2026-08 | Implemented: property indexes, batched edge creation, counts from AGE base tables |
 | [performance-remaining-2026-08](performance-remaining-2026-08.md) | 2026-08 | Partially implemented; the trigram and tsvector work is not done |
 | [keyword-search-indexing](keyword-search-indexing.md) | 2026-08 | Findings folded into the ranking fixes; the indexing approach is open |
+| [failure-buckets-two-judge](failure-buckets-two-judge.md) | 2026-08 | Re-audit of the 200-question failures with two independent judges; answering dominates (45 of 51 high-confidence failures had evidence retrieved, 28 at rank 1) and 19.5% of the benchmark is judge-disputed |
 | [improvement-plan-2026-08](improvement-plan-2026-08.md) | 2026-08 | Items 4-6 implemented (write-time fold, entity nodes, full-text search); item 0 was run and bought one question of 40, see [benchmark-harness](benchmark-harness.md); items 1-3 are sequenced in the [plan of record](../plan-of-record.md) |
 | [benchmark-harness](benchmark-harness.md) | 2026-08, current | Harness custody and run provenance. Kept current rather than point-in-time |
 
