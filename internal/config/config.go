@@ -33,6 +33,7 @@
 //	KORA_EXTRACTION_MODEL   Chat model for LLM extraction (default: gpt-4o-mini)
 //	KORA_EXTRACTION_API_KEY API key for the extraction provider (default: "")
 //	KORA_EXTRACTION_BASE_URL OpenAI-compatible endpoint (default: https://api.openai.com)
+//	KORA_GRAPH_SIGNALS      "on" | "off": whether graph signals join retrieval (default: on)
 //
 // Metadata:
 //
@@ -96,6 +97,20 @@ type Config struct {
 	// EmbeddingDim is the vector dimension. When 0, the provider auto-detects it.
 	// Env: KORA_EMBEDDING_DIM (default: 0)
 	EmbeddingDim int
+
+	// GraphSignals reports whether the graph participates in retrieval.
+	//
+	// "off" is the ablation mode: queries are answered by full-text and
+	// vector search alone, which is what the engine would be if it were plain
+	// hybrid RAG. It exists so that the difference between that and normal
+	// operation is a measurement instead of a claim -- see issue #86 -- and
+	// doubles as the honest baseline when comparing Kora against RAG systems.
+	//
+	// Every graph-derived retrieval signal hangs off this one switch, so an
+	// ablation run cannot accidentally disable some signals and not others.
+	//
+	// Env: KORA_GRAPH_SIGNALS ("on" or "off", default: "on")
+	GraphSignals string
 
 	// ExtractionProvider selects how conversations are turned into memories.
 	// Accepted values: "rule" (default) or "llm".
@@ -172,6 +187,7 @@ func Load() Config {
 		EmbeddingBaseURL:  getEnv("KORA_EMBEDDING_BASE_URL", ""),
 		EmbeddingDim:      getEnvInt("KORA_EMBEDDING_DIM", 0),
 
+		GraphSignals:       getEnv("KORA_GRAPH_SIGNALS", "on"),
 		ExtractionProvider: getEnv("KORA_EXTRACTION_PROVIDER", "rule"),
 		ExtractionModel:    getEnv("KORA_EXTRACTION_MODEL", "gpt-4o-mini"),
 		ExtractionAPIKey:   getEnv("KORA_EXTRACTION_API_KEY", ""),
@@ -307,6 +323,15 @@ func (c Config) Validate() error {
 		problems = append(problems,
 			fmt.Sprintf("KORA_RATE_LIMIT_PER_MINUTE=%d must be positive; "+
 				"a non-positive limit rejects every request", c.RateLimitPerMinute))
+	}
+
+	// An unrecognised value must not silently mean either mode. "of" -- a
+	// typo for "off" -- silently running the full engine would invalidate the
+	// ablation measurement it was meant to produce, in the direction that
+	// flatters the graph.
+	if c.GraphSignals != "on" && c.GraphSignals != "off" {
+		problems = append(problems,
+			fmt.Sprintf("KORA_GRAPH_SIGNALS=%q is neither \"on\" nor \"off\"", c.GraphSignals))
 	}
 
 	// A negative dimension would be handed to the pgvector column definition.

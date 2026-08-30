@@ -185,6 +185,12 @@ func TestValidateRejectsOutOfRangeValues(t *testing.T) {
 			why:  "one of the two listeners would fail to bind",
 		},
 		{
+			name: "graph signals set to neither on nor off",
+			env:  map[string]string{"KORA_GRAPH_SIGNALS": "of"},
+			why: "a typo silently running the full engine would invalidate the ablation " +
+				"measurement in the direction that flatters the graph",
+		},
+		{
 			name: "zero rate limit",
 			env:  map[string]string{"KORA_RATE_LIMIT_PER_MINUTE": "0"},
 			why:  "a bucket that never refills rejects every request, which looks like an outage",

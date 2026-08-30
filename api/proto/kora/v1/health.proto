@@ -62,4 +62,15 @@ message HealthResponse {
   // A field rather than a status of "degraded": the engine is healthy, and a
   // monitoring system that pages on this would be wrong.
   bool zero_dependency_defaults = 7;
+
+  // True when the graph's retrieval signals are switched off
+  // (KORA_GRAPH_SIGNALS=off) and queries are answered by full-text and
+  // vector search alone.
+  //
+  // This is the ablation mode: it exists to measure what the graph
+  // contributes, by comparing a deployment in this mode against a normal one
+  // on the same corpus. A benchmark number from a deployment with this set
+  // is a measurement of the ablated engine, not of Kora, and this field is
+  // what lets a caller tell the two apart.
+  bool graph_signals_disabled = 8;
 }

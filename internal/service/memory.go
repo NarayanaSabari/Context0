@@ -84,6 +84,13 @@ func NewMemoryServiceWithExtractor(repo *graph.AGERepository, embedder embedding
 	}
 }
 
+// DisableGraphSignals switches the retrieval engine to full-text and vector
+// search alone: the ablation mode, issue #86. Startup-only, before the
+// service answers queries; see retrieval.Engine.DisableGraphSignals.
+func (s *MemoryService) DisableGraphSignals() {
+	s.retrieval.DisableGraphSignals()
+}
+
 // Store persists a new memory node into the graph. The full pipeline is:
 //  1. Validate input (content and project_id are required).
 //  2. Create the memory node in the graph repository.
