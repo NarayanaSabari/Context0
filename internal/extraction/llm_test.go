@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/NarayanaSabari/Kora/internal/metrics"
 	"github.com/NarayanaSabari/Kora/pkg/model"
 )
 
@@ -294,4 +297,102 @@ func TestLLMExtractor_SendsTheKeyWhenThereIsOne(t *testing.T) {
 		t.Errorf("Authorization = %q, want the configured key: a provider that requires "+
 			"authentication would reject every extraction", authSeen)
 	}
+}
+
+// A provider that fails must be visible, not just survivable.
+//
+// The fallback to the rule-based extractor is deliberate: losing a
+// conversation because a provider is down is worse than storing a cruder
+// version of it. But Extract returns success either way, so a deployment whose
+// provider has been failing for a week looked exactly like a healthy one, and
+// the only symptom was memories that read like transcript lines.
+//
+// Found by running the engine against a small local model and having to infer
+// from the shape of the output that the LLM pass had failed.
+func TestLLMExtractor_FallbackIsCounted(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		handler http.HandlerFunc
+		reason  string
+	}{
+		{
+			name: "a provider that errors",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			},
+			reason: "error",
+		},
+		{
+			name: "a provider that answers with nothing",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[]"}}]}`))
+			},
+			reason: "empty",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			before := counterValue(t, tt.reason)
+
+			srv := httptest.NewServer(tt.handler)
+			defer srv.Close()
+
+			got, err := NewLLMExtractor(srv.URL, "k", "m").Extract(sampleConversation)
+			if err != nil {
+				t.Fatalf("a failing provider cost the caller the conversation: %v", err)
+			}
+			if len(got) == 0 {
+				t.Error("the rule-based fallback produced nothing; the conversation was lost silently")
+			}
+
+			if after := counterValue(t, tt.reason); after <= before {
+				t.Errorf("kora_extraction_fallbacks_total{reason=%q} did not move (%v to %v): "+
+					"a degraded deployment is indistinguishable from a healthy one",
+					tt.reason, before, after)
+			}
+		})
+	}
+}
+
+// A conversation that is genuinely empty must not count as a fallback.
+//
+// The "empty" reason means disagreement: the model found nothing where the
+// rule-based pass found memories. When both extractors agree there is nothing,
+// that is healthy traffic -- a conversation of greetings -- and a counter that
+// fires on healthy traffic cannot be alerted on.
+func TestLLMExtractor_AgreedEmptyIsNotCounted(t *testing.T) {
+	before := counterValue(t, "empty")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[]"}}]}`))
+	}))
+	defer srv.Close()
+
+	// "hi" carries no extractable facts: the rule-based pass also finds
+	// nothing, so the two extractors agree.
+	got, err := NewLLMExtractor(srv.URL, "k", "m").Extract("user: hi")
+	if err != nil {
+		t.Fatalf("an empty conversation must not error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no memories from an empty conversation, got %d", len(got))
+	}
+
+	if after := counterValue(t, "empty"); after != before {
+		t.Errorf("kora_extraction_fallbacks_total{reason=%q} moved (%v to %v) on healthy traffic: "+
+			"an operator alerted on this counter would be paged by every small talk",
+			"empty", before, after)
+	}
+}
+
+// counterValue reads one label of the fallback counter.
+func counterValue(t *testing.T, reason string) float64 {
+	t.Helper()
+
+	c, err := metrics.ExtractionFallbacks.GetMetricWithLabelValues(reason)
+	if err != nil {
+		t.Fatalf("counter %q: %v", reason, err)
+	}
+	return testutil.ToFloat64(c)
 }

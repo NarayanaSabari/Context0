@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/NarayanaSabari/Kora/internal/metrics"
 	"github.com/NarayanaSabari/Kora/pkg/model"
 )
 
@@ -189,14 +191,26 @@ type llmMemory struct {
 // posts a conversation and keeps no copy of the memories it would have
 // produced, so an error return means the content is lost. Rule-based
 // extraction is worse but never fails and needs no network, which makes it the
-// right floor. Every fallback is logged by the caller through the returned
-// memories being visibly rule-shaped, and the reason is attached to the error
-// path below.
+// right floor. Every fallback is recorded here -- a warning and the
+// kora_extraction_fallbacks_total counter -- because the caller cannot see
+// it: Extract returns success either way.
 func (e *LLMExtractor) Extract(conversation string) ([]ExtractedMemory, error) {
 	memories, err := e.extractViaLLM(conversation)
 	if err != nil {
-		// Deliberately not returned: see the doc comment. Surfaced through
-		// slog by the service layer via the wrapped error text.
+		// The error is not returned, because a failing provider must not cost
+		// the caller a conversation. It is recorded here rather than left to
+		// the caller, which is a change: the comment used to claim the service
+		// layer surfaced it, and the service layer cannot -- Extract returns
+		// success, so there is nothing there to surface.
+		//
+		// Found by running the engine against a small local model, seeing
+		// transcript lines come back as memories, and having to infer from
+		// their shape that the LLM pass had failed. A deployment whose
+		// provider has been down for a week looked exactly like a healthy one.
+		metrics.ExtractionFallbacks.WithLabelValues("error").Inc()
+		slog.Warn("LLM extraction failed; the rule-based extractor answered instead",
+			slog.String("model", e.model),
+			slog.Any("error", err))
 		return e.fallback.Extract(conversation)
 	}
 	if len(memories) == 0 {
@@ -204,7 +218,30 @@ func (e *LLMExtractor) Extract(conversation string) ([]ExtractedMemory, error) {
 		// held nothing, or the model misunderstood the task. The rule-based
 		// pass is cheap and settles it: if it also finds nothing, there was
 		// nothing.
-		return e.fallback.Extract(conversation)
+		fallback, ferr := e.fallback.Extract(conversation)
+
+		// The disagreement is the signal, not the empty result on its own. A
+		// conversation of greetings genuinely holds nothing and both passes
+		// say so, which is normal and must not warn -- an operator trained to
+		// ignore this warning will ignore the one that matters. A model that
+		// returns nothing from a conversation the rule-based scanner finds
+		// plenty in is not reading the task, and that is worth waking up for.
+		//
+		// Measured while validating this: a 3B model returned an empty array
+		// for a transcript the rule-based pass turned into 26 memories, and
+		// the only visible symptom was memories that read like transcript
+		// lines.
+		if len(fallback) > 0 {
+			metrics.ExtractionFallbacks.WithLabelValues("empty").Inc()
+			slog.Warn("LLM extraction found nothing in a conversation the rule-based extractor did; the model may not be following the task",
+				slog.String("model", e.model),
+				slog.Int("rule_based_memories", len(fallback)))
+		} else {
+			slog.Debug("neither extractor found anything in this conversation",
+				slog.String("model", e.model))
+		}
+
+		return fallback, ferr
 	}
 	return memories, nil
 }
