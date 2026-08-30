@@ -86,3 +86,14 @@ Results land in `docs/research/` with per-question labels so runs stay comparabl
 
 At n=40, with a judge that has graded the same answer both ways in different runs, no improvement smaller than about 10 points is claimed.
 Move to the full 200-question set before any decision that depends on a smaller difference.
+
+## Phase F: the graph read path (spec: issue #86)
+
+Settled 2026-08-30 after the two-judge re-audit ([failure-buckets-two-judge](research/failure-buckets-two-judge.md)).
+
+The claim "graph memory engine, not RAG" becomes falsifiable: an ablation switch collapses retrieval to FTS+vector, and graph-on against graph-off on the pinned 200-question set is measured continuously.
+Four read-path changes connect structure the engine already writes: supersedes demotion, entity IDF, entity linking, `relates_to` expansion.
+One PR per change; every weight measured, never chosen; accept on McNemar p < 0.05 with both judges agreeing in direction; two consecutive failures trigger reassessment.
+
+The re-audit resizes expectations, not the design: answering failures dominate LoCoMo (45 of 51 high-confidence failures had the evidence retrieved), so Phase F's payoff is measured by the ablation gap and the capability suites, not by the headline accuracy.
+The answering bucket belongs to the harness-prompt control and hedging work, which follow it.
