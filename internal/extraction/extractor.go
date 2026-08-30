@@ -56,11 +56,12 @@ func Extract(conversation string) []ExtractedMemory {
 			continue
 		}
 
-		// Strip speaker prefix ("user:", "assistant:", "Alice:", etc.)
+		// Strip speaker prefix ("user:", "assistant:", "Alice:", etc.). A line
+		// that was only a label strips to nothing, and classifyLine rejects
+		// that: isNoise treats empty content as noise. No guard here for the
+		// same reason as in ExtractEntities -- one place decides what is not
+		// worth storing.
 		content := stripSpeaker(line)
-		if content == "" {
-			continue
-		}
 
 		mem := classifyLine(content)
 		if mem != nil {

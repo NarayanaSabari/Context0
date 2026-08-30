@@ -128,10 +128,6 @@ type LLMExtractor struct {
 
 	// fallback produces memories when the provider fails. Never nil.
 	fallback Extractor
-
-	// client is the HTTP client used for requests. Nil means
-	// llmDefaultClient. Only tests set this.
-	client *http.Client
 }
 
 // NewLLMExtractor creates an extractor backed by an OpenAI-compatible
@@ -236,12 +232,7 @@ func (e *LLMExtractor) extractViaLLM(conversation string) ([]ExtractedMemory, er
 		req.Header.Set("Authorization", "Bearer "+e.apiKey)
 	}
 
-	client := e.client
-	if client == nil {
-		client = llmDefaultClient
-	}
-
-	resp, err := client.Do(req)
+	resp, err := llmDefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("extraction request: %w", redactExtractionErr(err, e.url))
 	}

@@ -248,3 +248,50 @@ func TestExtractionPrompt_DemandsSpecifics(t *testing.T) {
 		}
 	}
 }
+
+// A provider that needs no key must not be sent an empty credential.
+//
+// This is the configuration charts/kora/values-quality.yaml recommends: a local
+// Ollama, serving an OpenAI-compatible API, with no key. Sending
+// "Authorization: Bearer " to it is at best noise and at worst a 401 from a
+// gateway that parses the header before deciding it is empty -- and the failure
+// would look like a broken extractor rather than a spurious header.
+func TestLLMExtractor_SendsNoAuthorizationHeaderWithoutAKey(t *testing.T) {
+	var authSeen string
+	var sawHeader bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authSeen = r.Header.Get("Authorization")
+		_, sawHeader = r.Header["Authorization"]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[]"}}]}`))
+	}))
+	defer srv.Close()
+
+	if _, err := NewLLMExtractor(srv.URL, "", "test-model").Extract(sampleConversation); err != nil {
+		t.Fatalf("Extract against a keyless provider: %v", err)
+	}
+
+	if sawHeader {
+		t.Errorf("sent Authorization: %q to a provider configured without a key", authSeen)
+	}
+}
+
+// And a provider that does need one gets it.
+func TestLLMExtractor_SendsTheKeyWhenThereIsOne(t *testing.T) {
+	var authSeen string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authSeen = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[]"}}]}`))
+	}))
+	defer srv.Close()
+
+	if _, err := NewLLMExtractor(srv.URL, "sk-secret", "test-model").Extract(sampleConversation); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	if authSeen != "Bearer sk-secret" {
+		t.Errorf("Authorization = %q, want the configured key: a provider that requires "+
+			"authentication would reject every extraction", authSeen)
+	}
+}

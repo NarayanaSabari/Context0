@@ -256,3 +256,29 @@ func TestExtractIgnoresSpeakerOnlyLines(t *testing.T) {
 		t.Errorf("the real utterance was not extracted; got %d memories: %+v", len(got), got)
 	}
 }
+
+// A line that is nothing but a speaker label produces no memory.
+//
+// The rule-based extractor strips a "Name:" prefix, and a line consisting only
+// of that prefix strips to nothing. Storing it would put an empty memory in the
+// graph: retrievable, meaningless, and counted in every total the engine
+// reports.
+//
+// The length filter above does not catch it -- "Caroline Wentworth:" is well
+// over the minimum -- so this is the only thing standing between a transcript's
+// stray label lines and the store.
+func TestRuleExtractor_SkipsLinesThatAreOnlyASpeakerLabel(t *testing.T) {
+	memories, err := RuleExtractor{}.Extract("Caroline Wentworth:\nCaroline said that she adopted a rescue dog named Biscuit.")
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	for _, m := range memories {
+		if strings.TrimSpace(m.Content) == "" {
+			t.Error("an empty memory was extracted from a line that was only a speaker label")
+		}
+	}
+	if len(memories) != 1 {
+		t.Errorf("got %d memories from one real line and one bare label: %v", len(memories), memories)
+	}
+}
