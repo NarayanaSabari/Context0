@@ -8,6 +8,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 
@@ -541,5 +542,43 @@ func TestLinkEntities_RefusesToLinkAcrossProjects(t *testing.T) {
 	if len(got[inA.ID]) != 0 {
 		t.Errorf("a project-A memory was linked to a project-B entity (%v); the "+
 			"memory's own project must be checked, not only the entity's", got[inA.ID])
+	}
+}
+
+// A database that has gone away surfaces as an error, not as silent success.
+//
+// linkOneEntity retries, because concurrent writers to the same entity row
+// collide and that collision is expected. Retrying is only correct if the
+// non-retryable case still fails: a caller told "linked 2 entities" when the
+// database was unreachable has a memory that is not in the graph and no way to
+// know.
+//
+// Mutation testing found this: forcing the success branch true made every
+// failure look like a success, and nothing noticed.
+func TestLinkEntities_UnreachableDatabaseIsAnError(t *testing.T) {
+	repo, ctx := testRepo(t)
+
+	// A pool of its own, closed, so this cannot disturb the shared one.
+	pool, err := NewPool(ctx, os.Getenv("KORA_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	pool.Close()
+
+	broken := NewAGERepository(pool, testEmbeddingDim)
+	mem := model.Memory{ID: uuid.New(), ProjectID: newProjectID(t), Content: "Caroline adopted Biscuit"}
+
+	linked, err := broken.LinkEntities(ctx, mem, []string{"Caroline", "Biscuit"})
+	if err == nil {
+		t.Errorf("LinkEntities reported %d entities linked against a closed pool and no error: "+
+			"a caller cannot tell a written graph from an unreachable one", linked)
+	}
+	if linked != 0 {
+		t.Errorf("LinkEntities reported %d entities linked while failing", linked)
+	}
+
+	// The shared repository is untouched by the above.
+	if err := repo.Ping(ctx); err != nil {
+		t.Errorf("the working repository became unusable: %v", err)
 	}
 }

@@ -108,3 +108,36 @@ func TestContentTokens_TrimsOnlyAtTheEdges(t *testing.T) {
 		}
 	}
 }
+
+// Punctuation-only words must vanish, not become empty tokens.
+//
+// ContentTokens trims punctuation from a token's edges, which turns "!!!" into
+// nothing at all. Skipping those is what keeps the fingerprint stable: an empty
+// token still joins with a space, so "hello !!! world" would hash as
+// "hello  world" -- two spaces -- and stop matching "hello world".
+//
+// The existing hash tests cannot see this. A string of pure punctuation hashes
+// to "" either way, because joining [""] is still "". It only shows up with
+// real words on both sides, which is the shape a transcript actually produces:
+// "Caroline said -- yes" and "Caroline said yes" are the same fact.
+func TestContentTokens_DropsPunctuationOnlyWords(t *testing.T) {
+	got := ContentTokens("hello !!! world")
+	want := []string{"hello", "world"}
+
+	if len(got) != len(want) {
+		t.Fatalf("ContentTokens(%q) = %q, want %q: a punctuation-only word became a token",
+			"hello !!! world", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("token %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	// The consequence, and the reason this matters: the fingerprint decides
+	// which memory is discarded as a duplicate.
+	if ContentHash("hello !!! world") != ContentHash("hello world") {
+		t.Error("punctuation between words changed the content hash: two statements " +
+			"of the same fact would both be stored")
+	}
+}

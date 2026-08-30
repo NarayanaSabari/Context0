@@ -140,10 +140,12 @@ func ExtractEntities(content string) []string {
 		// England refused" keeps "Bank of England".
 		if sentenceStart.MatchString(content[:loc[0]]) && isCommonSentenceOpener(firstWord(span)) {
 			span = strings.TrimSpace(strings.TrimPrefix(span, firstWord(span)))
-			if span == "" {
-				continue
-			}
 		}
+
+		// A run that was nothing but its opener is now empty, and add rejects
+		// it: isPlausibleEntity has a minimum length. There is deliberately no
+		// guard here for that case -- it would be a second place deciding what
+		// is not an entity, and the two would drift.
 
 		add(span)
 	}

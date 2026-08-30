@@ -200,3 +200,54 @@ func TestScore_TypeStillBreaksTies(t *testing.T) {
 			Score(semantic, now), Score(episodic, now))
 	}
 }
+
+// Score decides the order, and identity only breaks ties.
+//
+// TestRankResults asserts the output is sorted by score, but builds its
+// memories with random UUIDs -- so it passes or fails on the luck of the draw
+// if the comparator's branches are swapped. Mutation testing found exactly
+// that: inverting the score comparison left the suite green.
+//
+// Fixed ids here, chosen so identity order contradicts score order. If the
+// comparator ever ranks by id first, the higher-scoring memory comes second
+// and this fails every time rather than one run in two.
+func TestRankResults_ScoreBeatsIdentity(t *testing.T) {
+	now := time.Now().UTC()
+	first := uuid.MustParse("00000000-0000-0000-0000-00000000000a")
+	second := uuid.MustParse("ffffffff-ffff-ffff-ffff-fffffffffffe")
+
+	// The lower-scoring memory sorts first by id, so id order and score order
+	// disagree.
+	weak := model.MemoryWithContext{
+		Memory:    model.Memory{ID: first, Type: model.MemoryTypeSemantic, CreatedAt: now},
+		Relevance: 0.1,
+	}
+	strong := model.MemoryWithContext{
+		Memory:    model.Memory{ID: second, Type: model.MemoryTypeSemantic, CreatedAt: now},
+		Relevance: 0.9,
+	}
+
+	ranked := RankResults([]model.MemoryWithContext{weak, strong}, 0)
+
+	if ranked[0].Memory.ID != second {
+		t.Errorf("ranked by identity rather than by score: got %s first, want the "+
+			"higher-scoring %s", ranked[0].Memory.ID, second)
+	}
+
+	// And with equal scores, identity is what makes the order repeatable.
+	tieA := model.MemoryWithContext{
+		Memory:    model.Memory{ID: first, Type: model.MemoryTypeSemantic, CreatedAt: now},
+		Relevance: 0.5,
+	}
+	tieB := model.MemoryWithContext{
+		Memory:    model.Memory{ID: second, Type: model.MemoryTypeSemantic, CreatedAt: now},
+		Relevance: 0.5,
+	}
+	for i := 0; i < 5; i++ {
+		tied := RankResults([]model.MemoryWithContext{tieB, tieA}, 0)
+		if tied[0].Memory.ID != first {
+			t.Fatalf("equal scores ordered by %s, want the lower id %s: identical queries "+
+				"must return identical pages", tied[0].Memory.ID, first)
+		}
+	}
+}

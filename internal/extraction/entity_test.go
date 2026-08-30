@@ -206,3 +206,77 @@ func TestExtractEntities_ProducesNothingForContentWithNoNames(t *testing.T) {
 		t.Error("whitespace normalised to a non-empty key")
 	}
 }
+
+// An entity named twice in one memory is one entity.
+//
+// Entities are how two memories about the same subject become one hop apart,
+// and the edge is created per distinct name. Without deduplication a memory
+// that mentions someone twice links to them twice, which inflates every
+// traversal's cost and the relationship count the API reports, while adding no
+// reachability at all.
+func TestExtractEntities_DeduplicatesRepeatedNames(t *testing.T) {
+	got := ExtractEntities("Caroline told Melanie that Caroline had adopted a dog, and Melanie agreed.")
+
+	seen := map[string]int{}
+	for _, e := range got {
+		seen[NormalizeEntity(e)]++
+	}
+	for name, n := range seen {
+		if n > 1 {
+			t.Errorf("entity %q extracted %d times from one memory: repeated mentions "+
+				"must collapse to one node, or every traversal pays for the repetition", name, n)
+		}
+	}
+	if len(seen) != 2 {
+		t.Errorf("got %d distinct entities %v, want Caroline and Melanie", len(seen), got)
+	}
+}
+
+// The invariants the removed guards relied on.
+//
+// ExtractEntities and the rule extractor both used to check for an empty
+// string before handing it on, and both checks were unreachable: the function
+// downstream already rejects empty input. Mutation testing found them because
+// forcing either branch changed nothing.
+//
+// The guards are gone, so these pin what now carries that weight. If either
+// stops rejecting empty input, a memory naming nothing gets an entity, or a
+// line that was only a speaker label becomes a memory.
+func TestEmptyInputIsRejectedWhereItMatters(t *testing.T) {
+	if isPlausibleEntity("") {
+		t.Error("isPlausibleEntity(\"\") = true: a capitalised run that was only a " +
+			"sentence opener would become an entity")
+	}
+	if got := ExtractEntities("The deadline is tomorrow"); len(got) != 0 {
+		t.Errorf("ExtractEntities returned %v for a sentence naming nothing", got)
+	}
+}
+
+// Adjacent spans do not overlap.
+//
+// A quoted title is taken first and its range remembered, so the capitalisation
+// pass does not also emit the words inside it: `"Charlotte's Web"` is one
+// entity, not that plus Charlotte. The check is a half-open comparison, and
+// making either side inclusive would treat a run that merely touches a quoted
+// span as being inside it -- silently dropping the entity next to a title.
+func TestOverlaps_TouchingSpansAreNotOverlapping(t *testing.T) {
+	quoted := [][]int{{10, 20}}
+
+	for _, tt := range []struct {
+		name string
+		span []int
+		want bool
+	}{
+		{"a span ending exactly where the quote begins", []int{5, 10}, false},
+		{"a span beginning exactly where the quote ends", []int{20, 25}, false},
+		{"a span overlapping by one rune at the start", []int{5, 11}, true},
+		{"a span overlapping by one rune at the end", []int{19, 25}, true},
+		{"a span inside the quote", []int{12, 15}, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := overlaps(quoted, tt.span); got != tt.want {
+				t.Errorf("overlaps(%v, %v) = %v, want %v", quoted, tt.span, got, tt.want)
+			}
+		})
+	}
+}

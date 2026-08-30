@@ -57,6 +57,38 @@ One mutant survives on purpose. Forcing the `verr != nil` branch after
 are assigned before the check. It is an equivalent mutant, recorded in
 `internal/retrieval/degradation_test.go` so nobody writes a test for it.
 
+## The second sweep: graph, extraction, ranking, model
+
+| package | before | after |
+|---|---|---|
+| `internal/extraction` | 24 of 30 | **30 of 30** |
+| `internal/graph` | 23 of 24 | **24 of 24** |
+| `internal/ranking` | 9 of 15 | 12 of 15 |
+| `pkg/model` | 5 of 6 | **6 of 6** |
+
+Three kinds of finding, and only one of them is "write a test".
+
+**Real gaps.** A content hash that changed when punctuation sat between two
+words, so the same fact stated twice would be stored twice -- invisible to the
+existing tests, because a string of pure punctuation hashes to the empty string
+either way. An entity named twice in one memory producing two nodes. A ranking
+comparator whose score and identity branches could be swapped without any test
+noticing, because the existing one built its memories with random UUIDs and
+passed on the luck of the draw. And `LinkEntities` reporting success against an
+unreachable database, because the retry loop's success branch was never checked
+against a real failure.
+
+**Dead defence.** Three guards that could not fire: an empty-span check before
+a function that already rejects empty spans, an empty-content check before one
+that already treats empty as noise, and an `http.Client` field no code ever
+assigned. All removed. A guard that cannot fail is not protection, it is a
+second opinion that will eventually disagree with the first.
+
+**Equivalent mutants.** `if v < 0` against `if v <= 0` where the clamp sets
+zero either way; a comparator on ids that are always distinct; deleting a key
+from an empty map. These cannot be killed and should not be chased. They are
+listed here so the next person does not try.
+
 ## Usage
 
 ```sh
