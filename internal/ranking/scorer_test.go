@@ -251,3 +251,58 @@ func TestRankResults_ScoreBeatsIdentity(t *testing.T) {
 		}
 	}
 }
+
+// A superseded memory must lose to its successor on even evidence.
+//
+// The engine records at write time that fact B replaced fact A, and until
+// this factor existed retrieval ignored the record: on the bench corpus the
+// stale fact won exactly half its meetings with its replacement -- the coin
+// flip that "the edge is written and never read" predicts. The demotion is
+// sized from that measurement (docs/research/supersedes-demotion-sizing.md):
+// 0.6 flipped all 60 observed inversions, where the pairs score
+// near-identically (median ratio 0.983).
+func TestScore_SupersededLosesToSuccessor(t *testing.T) {
+	now := time.Now()
+	stale := model.MemoryWithContext{
+		Memory:     model.Memory{Type: model.MemoryTypeSemantic, CreatedAt: now.Add(-time.Hour)},
+		Relevance:  0.80,
+		Superseded: true,
+	}
+	// The successor scores slightly lower on relevance, which is the measured
+	// shape of the defect: paraphrase-close pairs, stale marginally ahead.
+	successor := model.MemoryWithContext{
+		Memory:    model.Memory{Type: model.MemoryTypeSemantic, CreatedAt: now.Add(-time.Hour)},
+		Relevance: 0.79,
+	}
+
+	if Score(stale, now) >= Score(successor, now) {
+		t.Errorf("superseded memory (%.4f) outranked its successor (%.4f): the engine is "+
+			"contradicting its own contradiction detection",
+			Score(stale, now), Score(successor, now))
+	}
+}
+
+// The demotion must not erase the memory's relevance entirely.
+//
+// "Where did X use to live" is answered by exactly the memory this factor
+// demotes, so a demoted-but-relevant memory must still outrank a memory that
+// carries no evidence at all. A factor of zero would pass the test above and
+// silently turn the demotion into a filter.
+func TestScore_SupersededStillBeatsIrrelevant(t *testing.T) {
+	now := time.Now()
+	staleButRelevant := model.MemoryWithContext{
+		Memory:     model.Memory{Type: model.MemoryTypeSemantic, CreatedAt: now.Add(-24 * time.Hour)},
+		Relevance:  0.85,
+		Superseded: true,
+	}
+	irrelevant := model.MemoryWithContext{
+		Memory:    model.Memory{Type: model.MemoryTypeSemantic, CreatedAt: now.Add(-24 * time.Hour)},
+		Relevance: 0.05,
+	}
+
+	if Score(staleButRelevant, now) <= Score(irrelevant, now) {
+		t.Errorf("demoted relevant memory (%.4f) fell below an irrelevant one (%.4f): "+
+			"the demotion has become a filter",
+			Score(staleButRelevant, now), Score(irrelevant, now))
+	}
+}

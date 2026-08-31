@@ -72,6 +72,20 @@ var (
 		[]string{"verdict"},
 	)
 
+	// SupersededDemotions counts retrieval candidates demoted because a live
+	// memory replaces them.
+	//
+	// The rate is the useful part: demotions per query says how often stale
+	// facts are still competing for the top of results, which is a corpus
+	// health signal -- a store that is mostly demotions is being fed the same
+	// facts in new phrasings faster than consolidation folds them.
+	SupersededDemotions = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "kora_superseded_demotions_total",
+			Help: "Retrieval candidates demoted because a live memory supersedes them.",
+		},
+	)
+
 	// ExtractionFallbacks counts conversations the configured LLM extractor
 	// could not handle, so the rule-based scanner answered instead.
 	//
@@ -243,6 +257,7 @@ func Register() {
 		EdgesTotal,
 		MemoriesConsolidated,
 		ExtractionFallbacks,
+		SupersededDemotions,
 		QueryDuration,
 		StoreDuration,
 		QueryResultsCount,

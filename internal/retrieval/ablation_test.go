@@ -48,6 +48,10 @@ func TestRetrieve_GraphSignalsOffSkipsEntityRetrieval(t *testing.T) {
 		t.Errorf("entity retriever consulted %d times with graph signals off: "+
 			"the ablated engine is not the RAG baseline it claims to be", repo.entityCalls)
 	}
+	if repo.supersededCalls != 0 {
+		t.Errorf("superseded lookup ran %d times with graph signals off: "+
+			"every graph signal must hang off the one switch", repo.supersededCalls)
+	}
 	for _, r := range results {
 		if r.Memory.ID == entityHit.ID {
 			t.Errorf("entity-only memory %q surfaced with graph signals off", r.Memory.Content)

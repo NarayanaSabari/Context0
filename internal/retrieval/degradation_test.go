@@ -38,10 +38,13 @@ type fakeRepo struct {
 	entityErr     error
 
 	entityResults []model.Memory
+	superseded    map[uuid.UUID]bool
+	supersededErr error
 
 	queryMemoriesCalled bool
 	searchByVectorCalls int
 	entityCalls         int
+	supersededCalls     int
 }
 
 func (f *fakeRepo) SearchByText(context.Context, string, []string, int) ([]model.MemoryWithContext, error) {
@@ -296,6 +299,58 @@ func TestRetrieve_WeakVectorOnlyHitsAreGated(t *testing.T) {
 		if r.Memory.ID == weak.Memory.ID {
 			t.Error("a vector-only hit below the semantic gate was returned: " +
 				"a query with no good match must come back empty rather than plausible")
+		}
+	}
+}
+
+func (f *fakeRepo) SupersededCandidates(context.Context, []uuid.UUID) (map[uuid.UUID]bool, error) {
+	f.supersededCalls++
+	return f.superseded, f.supersededErr
+}
+
+// The demotion contract at the retrieval seam: a candidate the repository
+// reports as superseded ranks below its otherwise-equal successor, and a
+// failed lookup degrades to the pre-demotion order rather than an error.
+func TestRetrieve_SupersededCandidateRanksBelowSuccessor(t *testing.T) {
+	stale := memory("the deploy target is staging")
+	successor := memory("the deploy target is production")
+	repo := &fakeRepo{
+		textResults: []model.MemoryWithContext{stale, successor},
+		searchable:  true,
+		superseded:  map[uuid.UUID]bool{stale.Memory.ID: true},
+	}
+
+	results, err := New(repo, fixedEmbedder{}).Retrieve(context.Background(), "what is the deploy target", "proj", nil, 5)
+	if err != nil {
+		t.Fatalf("retrieve: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("want both memories in results, got %d: demotion must never remove", len(results))
+	}
+	if results[0].Memory.ID != successor.Memory.ID {
+		t.Error("superseded memory outranked its live successor")
+	}
+}
+
+func TestRetrieve_SupersededLookupFailureKeepsOldOrder(t *testing.T) {
+	a := memory("the deploy target is staging")
+	b := memory("the deploy target is production")
+	repo := &fakeRepo{
+		textResults:   []model.MemoryWithContext{a, b},
+		searchable:    true,
+		supersededErr: errors.New("edge table scan timed out"),
+	}
+
+	results, err := New(repo, fixedEmbedder{}).Retrieve(context.Background(), "what is the deploy target", "proj", nil, 5)
+	if err != nil {
+		t.Fatalf("a failed superseded lookup must not fail the query: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("want 2 results, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.Superseded {
+			t.Error("candidate marked superseded although the lookup failed")
 		}
 	}
 }

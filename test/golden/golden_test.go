@@ -126,6 +126,7 @@ var offlineFloors = floors{
 	recall: 0.90, mrr: 0.83,
 	groups: []groupFloor{
 		{"lexical", 1.00, 0.90},
+		{"current-truth", 0.0, 0.0}, // placeholder until measured
 		// Three of thirteen miss entirely: those queries share almost no words
 		// with their answers, and a hashed bag-of-words embedder scores token
 		// overlap rather than meaning. This floor guards the fallback, not
@@ -146,6 +147,7 @@ var onlineFloors = floors{
 	recall: 0.92, mrr: 0.86,
 	groups: []groupFloor{
 		{"lexical", 1.00, 0.95},
+		{"current-truth", 0.0, 0.0}, // placeholder until measured
 		{"paraphrase", 0.84, 0.68},
 		{"subject", 1.00, 0.90},
 	},
@@ -169,7 +171,9 @@ func activeFloors() (floors, string) {
 //	lexical    - shares distinctive words with its answer
 //	paraphrase - asks for the same thing in different words
 //	subject    - names a person or service several memories mention
-var groupNames = []string{"lexical", "paraphrase", "subject"}
+//	current-truth - a fact and its replacement both stored; the successor
+//	                must win, the stale fact must stay reachable
+var groupNames = []string{"lexical", "paraphrase", "subject", "current-truth"}
 
 type goldenSet struct {
 	Corpus []struct {
