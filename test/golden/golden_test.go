@@ -147,7 +147,7 @@ var onlineFloors = floors{
 	recall: 0.92, mrr: 0.86,
 	groups: []groupFloor{
 		{"lexical", 1.00, 0.95},
-		{"current-truth", 0.0, 0.0}, // placeholder until measured
+		{"current-truth", 1.00, 0.55},
 		{"paraphrase", 0.84, 0.68},
 		{"subject", 1.00, 0.90},
 	},
