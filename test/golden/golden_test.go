@@ -120,12 +120,21 @@ type groupFloor struct {
 	recall, mrr float64
 }
 
-// Measured with the bag-of-words embedder over 36 cases: overall 0.917 / 0.856,
-// lexical 1.000 / 0.958, paraphrase 0.769 / 0.679, subject 1.000 / 0.955.
+// Measured with the bag-of-words embedder over 43 cases: overall 0.930 / 0.851,
+// lexical 1.000 / 0.958, paraphrase 0.769 / 0.679, subject 1.000 / 0.932,
+// discrimination 1.000 / 0.857.
 var offlineFloors = floors{
 	recall: 0.90, mrr: 0.83,
 	groups: []groupFloor{
 		{"lexical", 1.00, 0.90},
+		// One case carries the entity IDF weighting on its own, the same way
+		// "What is Will responsible for?" carries entity retrieval (see the
+		// file comment): "Did Priya mention the billing outage?" ranks 2 with
+		// discrimination weighting and 5 without, because the unweighted
+		// entity signal boosts every memory naming Priya equally. Audited by
+		// forcing entityWeights to nil: the group falls to MRR 0.814 and this
+		// floor trips.
+		{"discrimination", 1.00, 0.85},
 		// Three of thirteen miss entirely: those queries share almost no words
 		// with their answers, and a hashed bag-of-words embedder scores token
 		// overlap rather than meaning. This floor guards the fallback, not
@@ -135,9 +144,10 @@ var offlineFloors = floors{
 	},
 }
 
-// Measured with Ollama and nomic-embed-text at 768 dimensions, same 36 cases:
-// overall 0.944 / 0.889, lexical 1.000 / 1.000, paraphrase 0.846 / 0.731,
-// subject 1.000 / 0.955. Three consecutive runs, identical.
+// Measured with Ollama and nomic-embed-text at 768 dimensions, same 43 cases:
+// overall 0.953 / 0.884, paraphrase 0.846 / 0.731, discrimination identical to
+// the offline tier at 1.000 / 0.857 -- the guard case flips on entity
+// weighting, not on embedding quality.
 //
 // Tighter than offline on every axis, deliberately: a real embedder is
 // expected to do better, and a tier that accepted the offline numbers would
@@ -146,6 +156,7 @@ var onlineFloors = floors{
 	recall: 0.92, mrr: 0.86,
 	groups: []groupFloor{
 		{"lexical", 1.00, 0.95},
+		{"discrimination", 1.00, 0.85},
 		{"paraphrase", 0.84, 0.68},
 		{"subject", 1.00, 0.90},
 	},
@@ -169,7 +180,9 @@ func activeFloors() (floors, string) {
 //	lexical    - shares distinctive words with its answer
 //	paraphrase - asks for the same thing in different words
 //	subject    - names a person or service several memories mention
-var groupNames = []string{"lexical", "paraphrase", "subject"}
+//	discrimination - names a ubiquitous entity while the answer hangs on
+//	                 rarer evidence; guards the entity IDF weighting
+var groupNames = []string{"lexical", "paraphrase", "subject", "discrimination"}
 
 type goldenSet struct {
 	Corpus []struct {

@@ -37,7 +37,11 @@ type fakeRepo struct {
 	vectorErr     error
 	entityErr     error
 
-	entityResults []model.Memory
+	entityResults  []model.Memory
+	memoryEntities map[uuid.UUID][]string
+	entityStats    map[string]int64
+	entityTotal    int64
+	entityStatsErr error
 
 	queryMemoriesCalled bool
 	searchByVectorCalls int
@@ -68,7 +72,11 @@ func (f *fakeRepo) FindMemoriesByEntities(context.Context, string, []string, int
 }
 
 func (f *fakeRepo) GetMemoryEntities(context.Context, []uuid.UUID) (map[uuid.UUID][]string, error) {
-	return nil, nil
+	return f.memoryEntities, nil
+}
+
+func (f *fakeRepo) EntityMentionStats(context.Context, string, []string) (map[string]int64, int64, error) {
+	return f.entityStats, f.entityTotal, f.entityStatsErr
 }
 
 // fixedEmbedder returns a constant vector, or an error.
@@ -297,5 +305,75 @@ func TestRetrieve_WeakVectorOnlyHitsAreGated(t *testing.T) {
 			t.Error("a vector-only hit below the semantic gate was returned: " +
 				"a query with no good match must come back empty rather than plausible")
 		}
+	}
+}
+
+// Failed mention stats degrade to uniform weights, not to a lost signal.
+//
+// The stats call sits inside the entity retriever, and a database that can
+// find memories by entity but not count mentions is one bad query plan away.
+// The contract: the entity results still arrive, still carry overlap, and the
+// only casualty is the discrimination weighting.
+func TestRetrieve_EntityStatsFailureKeepsEntityResults(t *testing.T) {
+	entityHit := model.Memory{ID: uuid.New(), Content: "Biscuit trembles during thunderstorms", Type: model.MemoryTypeSemantic}
+	repo := &fakeRepo{
+		textResults:    []model.MemoryWithContext{memory("the deploy target is production")},
+		searchable:     true,
+		entityResults:  []model.Memory{entityHit},
+		memoryEntities: map[uuid.UUID][]string{entityHit.ID: {"biscuit"}},
+		entityStatsErr: errors.New("stats query timed out"),
+	}
+
+	results, err := New(repo, fixedEmbedder{}).Retrieve(context.Background(), "What scares Biscuit?", "proj", nil, 5)
+	if err != nil {
+		t.Fatalf("retrieve: %v", err)
+	}
+	for _, r := range results {
+		if r.Memory.ID == entityHit.ID {
+			return
+		}
+	}
+	t.Error("entity-only memory lost when mention stats failed: degradation must cost ordering quality, never results")
+}
+
+// The weights actually reorder: a memory matching only a ubiquitous entity
+// must score below one matching a rare entity, given otherwise equal evidence.
+//
+// This is the end-to-end face of the IDF change; the formula itself is pinned
+// in ranking. Ubiquity here: 90 of 100 memories mention "caroline", 3 mention
+// "biscuit". The query names the two entities apart from each other, because
+// the rule extractor deliberately reads "Caroline and Biscuit" as one entity
+// (the "War and Peace" rule), which would match neither.
+func TestRetrieve_RareEntityOutranksUbiquitousEntity(t *testing.T) {
+	carolineOnly := model.Memory{ID: uuid.New(), Content: "a generic note", Type: model.MemoryTypeSemantic}
+	biscuitHit := model.Memory{ID: uuid.New(), Content: "trembling during storms", Type: model.MemoryTypeSemantic}
+	repo := &fakeRepo{
+		searchable:    true,
+		entityResults: []model.Memory{carolineOnly, biscuitHit},
+		memoryEntities: map[uuid.UUID][]string{
+			carolineOnly.ID: {"caroline"},
+			biscuitHit.ID:   {"biscuit"},
+		},
+		entityStats: map[string]int64{"caroline": 90, "biscuit": 3},
+		entityTotal: 100,
+	}
+
+	results, err := New(repo, fixedEmbedder{}).Retrieve(context.Background(), "Why is Biscuit hiding from the storm near Caroline?", "proj", nil, 5)
+	if err != nil {
+		t.Fatalf("retrieve: %v", err)
+	}
+
+	rank := map[uuid.UUID]int{}
+	for i, r := range results {
+		rank[r.Memory.ID] = i + 1
+	}
+	rb, okB := rank[biscuitHit.ID]
+	rc, okC := rank[carolineOnly.ID]
+	if !okB || !okC {
+		t.Fatalf("expected both entity candidates in results; got %d results", len(results))
+	}
+	if rb >= rc {
+		t.Errorf("rare-entity memory ranked %d, ubiquitous-entity memory ranked %d: "+
+			"discrimination weighting must order them the other way", rb, rc)
 	}
 }

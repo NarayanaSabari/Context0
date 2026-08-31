@@ -191,8 +191,8 @@ func EntityRelevance(overlap float64) float64 {
 	return clamp01(entityMatchRelevance * clamp01(overlap))
 }
 
-// EntityOverlap reports the share of the query's entities a memory names, in
-// [0, 1].
+// EntityOverlap reports the weighted share of the query's entities a memory
+// names, in [0, 1].
 //
 // Entity match is evidence of a different kind from either retriever's:
 // lexical matching says the words line up and cosine similarity says the
@@ -205,7 +205,19 @@ func EntityRelevance(overlap float64) float64 {
 // normalized from the store. An empty query entity set returns 0 rather than
 // 1: with nothing to match, no memory has earned anything, and returning 1
 // would hand every candidate the full boost and cancel it out.
-func EntityOverlap(memoryEntities, queryEntities []string) float64 {
+//
+// weights scales each matched entity by how much it discriminates, in [0, 1]
+// per entity; a nil map weighs every entity fully, which is the pre-IDF
+// behaviour. The weight exists because a shared entity is only evidence when
+// sharing it is informative. "Caroline" is named by nearly every memory of a
+// corpus about Caroline, so naming her says nothing about which memory
+// answers -- measured on the ablation baseline, where this signal pulled
+// generic entity matches into adversarial questions and hurt 6-to-1 -- while
+// a shared "Biscuit" named by three memories out of thousands is nearly an
+// answer by itself. An entity missing from the map weighs 1.0: an unknown
+// entity cannot be matched at all, so its weight only ever pads the
+// denominator through distinct, exactly as it did before weighting.
+func EntityOverlap(memoryEntities, queryEntities []string, weights map[string]float64) float64 {
 	if len(queryEntities) == 0 || len(memoryEntities) == 0 {
 		return 0
 	}
@@ -215,7 +227,8 @@ func EntityOverlap(memoryEntities, queryEntities []string) float64 {
 		have[e] = true
 	}
 
-	matched, distinct := 0, 0
+	var matched float64
+	distinct := 0
 	seen := make(map[string]bool, len(queryEntities))
 	for _, q := range queryEntities {
 		if q == "" || seen[q] {
@@ -224,13 +237,19 @@ func EntityOverlap(memoryEntities, queryEntities []string) float64 {
 		seen[q] = true
 		distinct++
 		if have[q] {
-			matched++
+			w := 1.0
+			if weights != nil {
+				if ww, ok := weights[q]; ok {
+					w = clamp01(ww)
+				}
+			}
+			matched += w
 		}
 	}
 	if distinct == 0 {
 		return 0
 	}
-	return float64(matched) / float64(distinct)
+	return clamp01(matched / float64(distinct))
 }
 
 // ApplyEntityBoost raises a memory's relevance in proportion to how much of

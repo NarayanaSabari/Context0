@@ -8,8 +8,8 @@ import "testing"
 func TestEntityBoost_BreaksTiesBetweenEqualMatches(t *testing.T) {
 	const equal = 0.60
 
-	about := ApplyEntityBoost(equal, EntityOverlap([]string{"biscuit"}, []string{"biscuit"}))
-	notAbout := ApplyEntityBoost(equal, EntityOverlap([]string{"pepper"}, []string{"biscuit"}))
+	about := ApplyEntityBoost(equal, EntityOverlap([]string{"biscuit"}, []string{"biscuit"}, nil))
+	notAbout := ApplyEntityBoost(equal, EntityOverlap([]string{"pepper"}, []string{"biscuit"}, nil))
 
 	if about <= notAbout {
 		t.Errorf("a memory naming the query's entity scored %v against %v for one "+
@@ -69,7 +69,7 @@ func TestEntityOverlap_IsTheShareOfTheQuerysEntitiesNamed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := EntityOverlap(tt.memory, query); got != tt.want {
+			if got := EntityOverlap(tt.memory, query, nil); got != tt.want {
 				t.Errorf("EntityOverlap(%v, %v) = %v, want %v", tt.memory, query, got, tt.want)
 			}
 		})
@@ -93,7 +93,7 @@ func TestEntityOverlap_IsZeroWhenThereIsNothingToMatch(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := EntityOverlap(tt.memory, tt.query); got != 0 {
+			if got := EntityOverlap(tt.memory, tt.query, nil); got != 0 {
 				t.Errorf("EntityOverlap(%v, %v) = %v, want 0", tt.memory, tt.query, got)
 			}
 		})
@@ -103,7 +103,7 @@ func TestEntityOverlap_IsZeroWhenThereIsNothingToMatch(t *testing.T) {
 // A duplicated query entity must not count twice, or a query mentioning one
 // name repeatedly would inflate its own denominator and dilute the match.
 func TestEntityOverlap_CountsDistinctQueryEntities(t *testing.T) {
-	got := EntityOverlap([]string{"caroline"}, []string{"caroline", "caroline", "caroline"})
+	got := EntityOverlap([]string{"caroline"}, []string{"caroline", "caroline", "caroline"}, nil)
 	if got != 1 {
 		t.Errorf("EntityOverlap = %v, want 1: repeating an entity in the query "+
 			"does not make it harder to match", got)
@@ -166,5 +166,63 @@ func TestEntityMatch_LosesToAStrongLexicalMatch(t *testing.T) {
 		t.Errorf("an entity-only match scored %v against %v for a memory matching "+
 			"every query term; naming the subject is necessary but not sufficient",
 			entityOnly, strongLexical)
+	}
+}
+
+// Weighted overlap: the discrimination weight is the point of entity IDF.
+//
+// Measured on the ablation baseline: the unweighted signal pulled generic
+// entity matches into adversarial questions and hurt 6-to-1, because naming
+// an entity that most of the project's memories name is not evidence. The
+// weight makes a ubiquitous entity worth almost nothing and a rare one worth
+// almost everything, and both directions are pinned here.
+func TestEntityOverlap_WeightsDiscriminateByRarity(t *testing.T) {
+	weights := map[string]float64{
+		"caroline": 0.1, // mentioned by nearly every memory
+		"biscuit":  0.9, // mentioned by three
+	}
+
+	ubiquitous := EntityOverlap([]string{"caroline"}, []string{"caroline"}, weights)
+	rare := EntityOverlap([]string{"biscuit"}, []string{"biscuit"}, weights)
+
+	if ubiquitous != 0.1 {
+		t.Errorf("ubiquitous entity overlap = %v, want its weight 0.1: an entity in "+
+			"every memory must carry almost no signal", ubiquitous)
+	}
+	if rare != 0.9 {
+		t.Errorf("rare entity overlap = %v, want its weight 0.9", rare)
+	}
+	if rare <= ubiquitous {
+		t.Error("a rare shared entity must outweigh a ubiquitous one; that ordering is the feature")
+	}
+}
+
+// Nil weights are the unweighted behaviour, exactly.
+//
+// This is the degradation contract: when mention stats are unavailable the
+// caller passes nil, and retrieval must order candidates precisely as it did
+// before weighting existed -- worse ordering, never a changed result set.
+func TestEntityOverlap_NilWeightsAreUniform(t *testing.T) {
+	memory := []string{"caroline", "biscuit"}
+	query := []string{"caroline", "biscuit", "melanie"}
+
+	if got := EntityOverlap(memory, query, nil); got != 2.0/3.0 {
+		t.Errorf("nil-weight overlap = %v, want 2/3: nil must mean uniform full weight", got)
+	}
+}
+
+// An entity absent from the weights map counts fully.
+//
+// Absence means the store had no mention count for it, and an entity with no
+// mentions cannot be matched at all -- so a full-weight default only ever
+// affects entities that were matched despite the stats missing them, where
+// under-counting real evidence would be the worse error.
+func TestEntityOverlap_UnknownEntityKeepsFullWeight(t *testing.T) {
+	weights := map[string]float64{"caroline": 0.1}
+
+	got := EntityOverlap([]string{"caroline", "miso"}, []string{"caroline", "miso"}, weights)
+	want := (0.1 + 1.0) / 2.0
+	if got != want {
+		t.Errorf("overlap = %v, want %v: unweighted entity must default to full weight", got, want)
 	}
 }

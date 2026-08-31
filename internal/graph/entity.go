@@ -401,3 +401,94 @@ func (r *AGERepository) GetMemoryEntities(ctx context.Context, ids []uuid.UUID) 
 	}
 	return result, nil
 }
+
+// EntityMentionStats reports, for each of the given entity names, how many of
+// the project's memories mention it, plus the project's total memory count.
+//
+// This is the corpus knowledge behind entity IDF weighting: an entity
+// mentioned by most of a project's memories discriminates nothing, and one
+// mentioned by three memories out of thousands nearly answers the query by
+// itself. The retrieval layer turns these counts into weights; this method
+// only reports them, because how much a count is worth is a ranking decision.
+//
+// Names are normalized the same way FindMemoriesByEntities normalizes them,
+// so a caller can pass the same list to both. Entities the project has never
+// mentioned are absent from the returned map rather than zero, which callers
+// must treat identically.
+func (r *AGERepository) EntityMentionStats(ctx context.Context, projectID string, names []string) (map[string]int64, int64, error) {
+	counts := make(map[string]int64)
+	if len(names) == 0 {
+		return counts, 0, nil
+	}
+
+	normalized := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, n := range names {
+		key := model.NormalizeEntity(n)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		normalized = append(normalized, key)
+	}
+	if len(normalized) == 0 {
+		return counts, 0, nil
+	}
+
+	p := params{"project_id": projectID}
+	placeholders := make([]string, len(normalized))
+	for i, n := range normalized {
+		name := fmt.Sprintf("en%d", i)
+		placeholders[i] = "$" + name
+		p[name] = n
+	}
+
+	// DISTINCT m, because a memory mentioning an entity through two edges is
+	// still one memory: the count answers "how many memories are about this
+	// entity", not "how many edges name it".
+	q := fmt.Sprintf(
+		`MATCH (m:Memory)-[:%s]->(e:Entity) `+
+			`WHERE e.project_id = $project_id AND m.project_id = $project_id `+
+			`AND e.normalized_name IN [%s] `+
+			`WITH e.normalized_name AS name, count(DISTINCT m) AS mentions `+
+			`RETURN {name: name, mentions: mentions}`,
+		string(model.RelMentions), strings.Join(placeholders, ","),
+	)
+
+	rows, err := r.cypher(ctx, q, p)
+	if err != nil {
+		return nil, 0, fmt.Errorf("entity mention stats: %w", err)
+	}
+	type row struct {
+		Name     string `json:"name"`
+		Mentions int64  `json:"mentions"`
+	}
+	rs, err := scanAgtype[row](rows)
+	if err != nil {
+		return nil, 0, fmt.Errorf("scan entity mention stats: %w", err)
+	}
+	for _, rr := range rs {
+		if rr.Name != "" {
+			counts[rr.Name] = rr.Mentions
+		}
+	}
+
+	totalRows, err := r.cypher(ctx,
+		`MATCH (m:Memory) WHERE m.project_id = $project_id RETURN {total: count(m)}`,
+		params{"project_id": projectID})
+	if err != nil {
+		return nil, 0, fmt.Errorf("project memory count: %w", err)
+	}
+	type totalRow struct {
+		Total int64 `json:"total"`
+	}
+	ts, err := scanAgtype[totalRow](totalRows)
+	if err != nil {
+		return nil, 0, fmt.Errorf("scan project memory count: %w", err)
+	}
+	var total int64
+	if len(ts) > 0 {
+		total = ts[0].Total
+	}
+	return counts, total, nil
+}

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"strings"
 
@@ -34,7 +35,7 @@ import (
 
 // Repo is the slice of the graph repository the read path needs.
 //
-// Narrow on purpose: it names six operations out of the repository's several
+// Narrow on purpose: it names seven operations out of the repository's several
 // dozen, so a test can supply a fake without implementing a graph store, and a
 // reader can see the whole surface the read path touches.
 type Repo interface {
@@ -44,6 +45,7 @@ type Repo interface {
 	SearchByVector(ctx context.Context, embedding []float32, projectID string, topK int) ([]model.MemoryWithContext, error)
 	FindMemoriesByEntities(ctx context.Context, projectID string, names []string, limit int) ([]model.Memory, error)
 	GetMemoryEntities(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID][]string, error)
+	EntityMentionStats(ctx context.Context, projectID string, names []string) (map[string]int64, int64, error)
 }
 
 // Engine runs the read path against a repository and an optional embedder.
@@ -238,6 +240,47 @@ func (e *Engine) Retrieve(
 	// above, so retrieval quality drives the final order.
 	results = ranking.RankResults(results, int(filter.TopK))
 	return results, nil
+}
+
+// entityWeights turns per-entity mention counts into discrimination weights in
+// [0, 1], on a bounded log curve:
+//
+//	w(e) = ln(1 + N/df(e)) / ln(1 + N)
+//
+// where N is the project's memory count and df(e) how many of its memories
+// mention the entity. An entity in every memory scores ln(2)/ln(1+N) -- near
+// zero in any real project -- and one mentioned once scores 1. Entities the
+// stats do not cover are left out of the map, which EntityOverlap reads as
+// full weight: they cannot be matched anyway, so their only role is padding
+// the denominator, exactly as before weighting.
+//
+// On the ablation baseline corpus (2,537 memories) this weighs "caroline",
+// named by most memories of her conversations, at roughly a tenth of an
+// entity mentioned three times.
+//
+// Returns nil -- uniform weights, the unweighted behaviour -- when the stats
+// are unavailable or the project is too small for frequency to mean anything.
+func (e *Engine) entityWeights(ctx context.Context, projectID string, queryEntities []string) map[string]float64 {
+	counts, total, err := e.repo.EntityMentionStats(ctx, projectID, queryEntities)
+	if err != nil {
+		logging.FromContext(ctx).Warn("entity mention stats failed; entity matches are weighted uniformly",
+			slog.String("project_id", projectID),
+			slog.Any("error", err))
+		return nil
+	}
+	if total <= 1 || len(counts) == 0 {
+		return nil
+	}
+
+	denom := math.Log(1 + float64(total))
+	weights := make(map[string]float64, len(counts))
+	for name, df := range counts {
+		if df < 1 {
+			continue
+		}
+		weights[name] = math.Log(1+float64(total)/float64(df)) / denom
+	}
+	return weights
 }
 
 // entityCandidatePoolFactor and maxEntityCandidatePool size the entity
@@ -568,6 +611,17 @@ func (e *Engine) entityMatches(
 		return nil, nil
 	}
 
+	// How much each query entity is worth. An entity mentioned by most of the
+	// project's memories discriminates nothing -- the ablation baseline
+	// measured this signal, unweighted, hurting adversarial questions 6-to-1
+	// by pulling generic entity matches into questions whose right answer was
+	// no answer -- while a rarely mentioned entity nearly answers the query
+	// by itself.
+	//
+	// A failure degrades to uniform weights, which is the unweighted
+	// behaviour: worse ordering, never a lost result.
+	weights := e.entityWeights(ctx, projectID, queryEntities)
+
 	// Every candidate is scored, including the ones the other retrievers
 	// found, so the signal orders the whole set rather than only its own hits.
 	ids := make([]uuid.UUID, 0, len(matches))
@@ -597,7 +651,7 @@ func (e *Engine) entityMatches(
 
 	overlap := make(map[uuid.UUID]float64, len(ids))
 	for _, id := range ids {
-		if o := ranking.EntityOverlap(byMemory[id], queryEntities); o > 0 {
+		if o := ranking.EntityOverlap(byMemory[id], queryEntities, weights); o > 0 {
 			overlap[id] = o
 		}
 	}
