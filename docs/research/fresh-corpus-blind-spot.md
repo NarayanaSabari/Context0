@@ -1,5 +1,12 @@
 # The fresh benchmark corpus cannot see accumulation defects
 
+> **CORRECTION, 2026-09-01: the central measurements in this document are wrong.**
+> The comparison scripts read `searchResults` from result files whose key is `results`, so they compared empty lists and reported vacuous equality.
+> Re-measured with the correct key: entity IDF changed 198 of 200 top-10s (not zero), supersedes demotion changed 199 of 200 (not zero), and the fresh corpus had superseded memories in 151 of 200 top-10s before demotion (not zero).
+> The "noise floor" derived from the IDF arm is also invalid, because its retrieval inputs were not identical after all.
+> The structural explanations below (single-entity rescaling, accumulation blindness) were built to explain measurements that did not exist; they are retained as a record, struck through in spirit, and superseded by [read-path-neutrality](read-path-neutrality.md).
+> What survives: the golden-suite guards, the sizing measurements, and the ablation baseline (whose comparison used a correct reader).
+
 **Date:** 2026-08-31.
 **Context:** the first two Phase 1 read-path signals (entity IDF, PR #92; supersedes demotion, PR #97) both measured Δ=0 on the pinned 200-question LoCoMo protocol, for the same structural reason.
 
