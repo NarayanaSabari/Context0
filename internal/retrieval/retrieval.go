@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -65,11 +66,83 @@ type Engine struct {
 	// numbers do not drift with the calendar. Set once via SetClock, before
 	// the engine serves queries.
 	now func() time.Time
+
+	// fusion is how the three retrievers' signals become one relevance.
+	// Startup-only, like the other switches.
+	fusion Fusion
+}
+
+// Fusion selects how keyword, vector and entity evidence are combined.
+//
+// Three modes, because the evaluation harness showed the choice is not
+// cosmetic. See docs/WORKLOG.md, Track A.
+//
+//   - FusionMinMax, the default: a weighted sum over signals rescaled per
+//     query, keyword by its best raw score in the pool and cosine by the
+//     pool's range, so each signal spans [0, 1] on every query rather than
+//     on whatever range the corpus happens to produce.
+//   - FusionLinear: the same weighted sum over the sigmoid-normalised keyword
+//     score and raw cosine similarity. The original design, kept for
+//     ablation. Measured: the sigmoid saturates at two matched terms and
+//     nomic-embed-text cosines occupy a 0.3-wide band, so this mode is a
+//     keyword ranker with a semantic tie-break, and 43 of the 44 answerable
+//     misses on the turns corpus were evidence that a retriever had found and
+//     this fusion had buried.
+//   - FusionRRF: reciprocal rank fusion of the keyword and vector rankings,
+//     with entity overlap added as a fraction of a rank-1 contribution.
+//     Scale-free, and measured worse than min-max on both corpora (MRR
+//     0.453 against 0.499 on turns): rank fusion discards how far apart two
+//     candidates were, which is exactly the information that separates a
+//     strong semantic match from a weak one.
+type Fusion struct {
+	Mode FusionMode
+	// Keyword, Semantic and Entity weight the three signals; they are
+	// normalised to sum to one.
+	Keyword, Semantic, Entity float64
+	// RRFK is reciprocal rank fusion's smoothing constant.
+	RRFK float64
+}
+
+// FusionMode names a fusion strategy.
+type FusionMode string
+
+const (
+	FusionLinear FusionMode = "linear"
+	FusionMinMax FusionMode = "minmax"
+	FusionRRF    FusionMode = "rrf"
+)
+
+// DefaultFusion is what the engine ships with.
+func DefaultFusion() Fusion {
+	wk, ws, we := ranking.DefaultFusionWeights()
+	return Fusion{Mode: FusionMinMax, Keyword: wk, Semantic: ws, Entity: we, RRFK: 60}
 }
 
 // New returns an Engine. The embedder may be nil.
 func New(repo Repo, embedder embedding.Embedder) *Engine {
-	return &Engine{repo: repo, embedder: embedder, now: func() time.Time { return time.Now().UTC() }}
+	return &Engine{
+		repo:     repo,
+		embedder: embedder,
+		now:      func() time.Time { return time.Now().UTC() },
+		fusion:   DefaultFusion(),
+	}
+}
+
+// SetFusion replaces the fusion strategy. Startup-only.
+func (e *Engine) SetFusion(f Fusion) error {
+	switch f.Mode {
+	case FusionLinear, FusionMinMax, FusionRRF:
+	default:
+		return fmt.Errorf("unknown fusion mode %q", f.Mode)
+	}
+	if f.Keyword < 0 || f.Semantic < 0 || f.Entity < 0 || f.Keyword+f.Semantic+f.Entity <= 0 {
+		return fmt.Errorf("fusion weights must be non-negative and not all zero, got %v/%v/%v", f.Keyword, f.Semantic, f.Entity)
+	}
+	if f.Mode == FusionRRF && f.RRFK <= 0 {
+		return fmt.Errorf("rrf k must be positive, got %v", f.RRFK)
+	}
+	e.fusion = f
+	return nil
 }
 
 // SetClock replaces the clock the recency signal is measured against.
@@ -267,7 +340,13 @@ func (e *Engine) retrieve(
 			// these are fallback candidates, and the vector and entity
 			// retrievers' signals should still order them if either has an
 			// opinion. Recency, frequency and type order the rest.
+			//
+			// Score too. QueryMemories fills it with a placeholder 1.0, and
+			// the min-max fusion reads the raw keyword score from Score; a
+			// placeholder there would hand every fallback candidate the full
+			// keyword signal for matching nothing.
 			graphResults[i].Relevance = 0
+			graphResults[i].Score = 0
 		}
 	}
 
@@ -337,7 +416,7 @@ func (e *Engine) retrieve(
 	// lexically matched from one the vector retriever surfaced on similarity
 	// alone; the two scores are otherwise not comparable. See
 	// ranking.RelevanceTier.
-	results := mergeResults(graphResults, vectorResults, entityResults, entityOverlap)
+	results := mergeResults(graphResults, vectorResults, entityResults, entityOverlap, e.fusion)
 
 	// Rank results using scoring function. This consumes the Relevance set
 	// above, so retrieval quality drives the final order.
@@ -564,8 +643,28 @@ func mergeResults(
 	graph, vector []model.MemoryWithContext,
 	entity []model.Memory,
 	entityOverlap map[uuid.UUID]float64,
+	fusion Fusion,
 ) []model.MemoryWithContext {
 	seen := make(map[uuid.UUID]*model.MemoryWithContext, len(graph)+len(vector)+len(entity))
+
+	// Per-query scales and ranks for the fusion modes that need them. The
+	// keyword retriever returns its pool best-first and the vector retriever
+	// nearest-first, so a position is a rank.
+	var maxKeyword float64
+	keywordRank := make(map[uuid.UUID]int, len(graph))
+	for i, r := range graph {
+		keywordRank[r.Memory.ID] = i + 1
+		if r.Score > maxKeyword {
+			maxKeyword = r.Score
+		}
+	}
+	vectorRank := make(map[uuid.UUID]int, len(vector))
+	cosMin, cosMax := math.Inf(1), math.Inf(-1)
+	for i, r := range vector {
+		vectorRank[r.Memory.ID] = i + 1
+		cosMin = math.Min(cosMin, r.Score)
+		cosMax = math.Max(cosMax, r.Score)
+	}
 
 	// Which candidates a retriever other than vector search found. The
 	// semantic gate below does not apply to those: they were not rescued by a
@@ -630,7 +729,32 @@ func mergeResults(
 		// Additive, not tiered. See ranking.FuseRelevance: the tier ranked any
 		// lexical match above any non-match, which with a graded keyword
 		// signal is a stronger claim than the evidence supports.
-		r.Relevance = ranking.FuseRelevance(r.Relevance, cos, entityOverlap[id])
+		switch fusion.Mode {
+		case FusionMinMax:
+			// r.Score still holds the raw ts_rank_cd for keyword hits; a
+			// candidate the keyword retriever did not return has no lexical
+			// evidence and scores zero, as in the linear mode.
+			var kw float64
+			if _, hit := keywordRank[id]; hit && maxKeyword > 0 {
+				kw = r.Score / maxKeyword
+			}
+			var sem float64
+			if scored {
+				sem = ranking.MinMax(cos, cosMin, cosMax)
+			}
+			r.Relevance = ranking.FuseWeighted(kw, sem, entityOverlap[id], fusion.Keyword, fusion.Semantic, fusion.Entity)
+		case FusionRRF:
+			// Entity overlap has no rank of its own -- the entity retriever
+			// orders by recency -- so it enters as a share of what a rank-1
+			// keyword or vector hit would contribute.
+			sum := ranking.RRF(keywordRank[id], fusion.RRFK, fusion.Keyword) +
+				ranking.RRF(vectorRank[id], fusion.RRFK, fusion.Semantic) +
+				ranking.RRF(1, fusion.RRFK, fusion.Entity)*entityOverlap[id]
+			best := ranking.RRF(1, fusion.RRFK, fusion.Keyword+fusion.Semantic+fusion.Entity)
+			r.Relevance = sum / best
+		default:
+			r.Relevance = ranking.FuseWeighted(r.Relevance, cos, entityOverlap[id], fusion.Keyword, fusion.Semantic, fusion.Entity)
+		}
 		results = append(results, *r)
 	}
 	sort.Slice(results, func(i, j int) bool {

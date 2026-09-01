@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"sort"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ import (
 	"github.com/NarayanaSabari/Kora/internal/graph"
 	"github.com/NarayanaSabari/Kora/internal/retrieval"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -236,6 +238,7 @@ type Report struct {
 	Corpus       string    `json:"corpus"`
 	Embedder     string    `json:"embedder"`
 	GraphSignals string    `json:"graph_signals"`
+	Fusion       string    `json:"fusion"`
 	TopK         int       `json:"top_k"`
 	Passes       int       `json:"passes"`
 	Dataset      struct {
@@ -288,6 +291,12 @@ func runEval(args []string) error {
 	graphSignals := fs.String("graph-signals", "on", "on, or off for the FTS+vector ablation")
 	out := fs.String("out", "", "report path (default eval/results/<corpus>-<embedder>.json)")
 	tracePath := fs.String("trace", "", "also write a per-question retrieval trace for failure analysis")
+	fusionMode := fs.String("fusion", string(retrieval.DefaultFusion().Mode), "linear, minmax or rrf; see retrieval.Fusion")
+	weights := fs.String("weights", "", "keyword,semantic,entity fusion weights (default: the engine's)")
+	rrfK := fs.Float64("rrf-k", 60, "reciprocal rank fusion constant")
+	reuseDB := fs.Bool("reuse-db", false, "reuse a database already holding this corpus instead of demanding an empty one")
+	cpuProfile := fs.String("cpuprofile", "", "write a CPU profile of the timing passes to this file")
+	memProfile := fs.String("memprofile", "", "write an allocation profile taken after the timing passes to this file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -340,29 +349,60 @@ func runEval(args []string) error {
 	if err := repo.InitSchema(ctx); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
-	if n, err := repo.NodeCount(ctx); err != nil {
-		return err
-	} else if n > 0 {
-		return fmt.Errorf("database already holds %d nodes; the eval needs an empty one (scripts/eval_db.sh up recreates it)", n)
-	}
-
-	logf("loading corpus %s: %d docs", corpus.Name, len(corpus.Docs))
-	stats, err := evalset.LoadCorpus(ctx, repo, corpus, embedder, func(done, total int) {
-		logf("  %d/%d", done, total)
-	})
+	// A marker names the corpus a database holds, so a sweep over ranking
+	// variants can skip the load. Safe because Retrieve mutates nothing: the
+	// read path does not touch access counts (that is Query's job), so the
+	// tables are the same on the hundredth run as on the first.
+	marker := fmt.Sprintf("%s/%s/%d/%s", corpus.Name, *embedderName, len(corpus.Docs), ds.SHA256)
+	loaded, err := corpusMarker(ctx, pool)
 	if err != nil {
 		return err
 	}
-	// Fresh planner statistics, so the latency numbers reflect the plans a
-	// long-running deployment would use rather than a table Postgres has
-	// never looked at.
-	if _, err := pool.Exec(ctx, "ANALYZE"); err != nil {
-		return fmt.Errorf("analyze: %w", err)
+	var stats evalset.LoadStats
+	switch {
+	case loaded == marker && *reuseDB:
+		logf("reusing loaded corpus %s", corpus.Name)
+		stats.Memories = len(corpus.Docs)
+	case loaded != "":
+		return fmt.Errorf("database already holds corpus %q; pass -reuse-db to keep it or recreate it with scripts/eval_db.sh up", loaded)
+	default:
+		if n, err := repo.NodeCount(ctx); err != nil {
+			return err
+		} else if n > 0 {
+			return fmt.Errorf("database already holds %d nodes; the eval needs an empty one (scripts/eval_db.sh up recreates it)", n)
+		}
+		logf("loading corpus %s: %d docs", corpus.Name, len(corpus.Docs))
+		stats, err = evalset.LoadCorpus(ctx, repo, corpus, embedder, func(done, total int) {
+			logf("  %d/%d", done, total)
+		})
+		if err != nil {
+			return err
+		}
+		// Fresh planner statistics, so the latency numbers reflect the plans
+		// a long-running deployment would use rather than a table Postgres
+		// has never looked at.
+		if _, err := pool.Exec(ctx, "ANALYZE"); err != nil {
+			return fmt.Errorf("analyze: %w", err)
+		}
+		if err := setCorpusMarker(ctx, pool, marker); err != nil {
+			return err
+		}
+		logf("loaded %d memories, %d entity links in %s", stats.Memories, stats.Entities, stats.Duration.Round(time.Millisecond))
 	}
-	logf("loaded %d memories, %d entity links in %s", stats.Memories, stats.Entities, stats.Duration.Round(time.Millisecond))
 
 	engine := retrieval.New(repo, embedder)
 	engine.SetClock(func() time.Time { return corpus.Clock })
+	fusion := retrieval.DefaultFusion()
+	fusion.Mode = retrieval.FusionMode(*fusionMode)
+	fusion.RRFK = *rrfK
+	if *weights != "" {
+		if _, err := fmt.Sscanf(*weights, "%g,%g,%g", &fusion.Keyword, &fusion.Semantic, &fusion.Entity); err != nil {
+			return fmt.Errorf("-weights wants three comma-separated numbers, got %q", *weights)
+		}
+	}
+	if err := engine.SetFusion(fusion); err != nil {
+		return err
+	}
 	switch *graphSignals {
 	case "on":
 	case "off":
@@ -413,6 +453,24 @@ func runEval(args []string) error {
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
+	if *cpuProfile != "" {
+		f, err := os.Create(*cpuProfile)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			return fmt.Errorf("cpu profile: %w", err)
+		}
+		defer pprof.StopCPUProfile()
+	}
+	if *memProfile != "" {
+		// Every allocation of the timing passes, not a sample: the question
+		// is where the 36k mallocs per query come from, and a sampled profile
+		// of a 400-query run would miss the small ones that make up most of
+		// them.
+		runtime.MemProfileRate = 1
+	}
 	timed := 0
 	for pass := 2; pass <= *passes; pass++ {
 		for _, q := range ds.Questions {
@@ -425,6 +483,19 @@ func runEval(args []string) error {
 		}
 	}
 	runtime.ReadMemStats(&after)
+	if *memProfile != "" {
+		f, err := os.Create(*memProfile)
+		if err != nil {
+			return err
+		}
+		if err := pprof.Lookup("allocs").WriteTo(f, 0); err != nil {
+			f.Close()
+			return fmt.Errorf("alloc profile: %w", err)
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
+	}
 
 	if fixture != nil && fixture.Misses() > 0 {
 		return fmt.Errorf("%d embedding lookups missed the fixture; the vector retriever was silently absent, so these numbers are void", fixture.Misses())
@@ -436,6 +507,7 @@ func runEval(args []string) error {
 		Corpus:       corpus.Name,
 		Embedder:     *embedderName,
 		GraphSignals: *graphSignals,
+		Fusion:       fmt.Sprintf("%s %g/%g/%g k=%g", fusion.Mode, fusion.Keyword, fusion.Semantic, fusion.Entity, fusion.RRFK),
 		TopK:         *topK,
 		Passes:       *passes,
 		Metrics:      make(map[string]evalset.Aggregate),
@@ -634,6 +706,31 @@ func buildTrace(q evalset.Question, tr *retrieval.Trace, docByID map[uuid.UUID]e
 	return qt
 }
 
+// The marker table records which corpus a database holds. Outside the graph
+// and outside public.memory_embeddings, so it never appears in the index
+// sizes or the node counts the eval reports.
+const markerTable = "kora_eval.corpus"
+
+func corpusMarker(ctx context.Context, pool *pgxpool.Pool) (string, error) {
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS kora_eval"); err != nil {
+		return "", fmt.Errorf("eval schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+markerTable+" (marker text NOT NULL)"); err != nil {
+		return "", fmt.Errorf("eval marker table: %w", err)
+	}
+	var marker string
+	err := pool.QueryRow(ctx, "SELECT marker FROM "+markerTable+" LIMIT 1").Scan(&marker)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return marker, err
+}
+
+func setCorpusMarker(ctx context.Context, pool *pgxpool.Pool, marker string) error {
+	_, err := pool.Exec(ctx, "INSERT INTO "+markerTable+" (marker) VALUES ($1)", marker)
+	return err
+}
+
 func indexSizes(ctx context.Context, pool *pgxpool.Pool, into map[string]int64) error {
 	rows, err := pool.Query(ctx, `
 		SELECT n.nspname || '.' || c.relname, pg_relation_size(c.oid)
@@ -670,8 +767,8 @@ func percentile(sorted []time.Duration, q float64) float64 {
 }
 
 func printReport(w io.Writer, rep Report, ks []int) {
-	fmt.Fprintf(w, "corpus=%s embedder=%s graph_signals=%s top_k=%d questions=%d commit=%s\n",
-		rep.Corpus, rep.Embedder, rep.GraphSignals, rep.TopK, rep.Dataset.Questions, rep.Commit)
+	fmt.Fprintf(w, "corpus=%s embedder=%s graph_signals=%s fusion=%s top_k=%d questions=%d commit=%s\n",
+		rep.Corpus, rep.Embedder, rep.GraphSignals, rep.Fusion, rep.TopK, rep.Dataset.Questions, rep.Commit)
 	fmt.Fprintf(w, "%-16s %4s %5s", "category", "n", "n/a")
 	for _, k := range ks {
 		fmt.Fprintf(w, "  hit@%-3d", k)

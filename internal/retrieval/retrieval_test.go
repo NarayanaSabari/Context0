@@ -101,20 +101,26 @@ func TestMergeResults_CarriesRelevanceForward(t *testing.T) {
 	vectorOnly := uuid.New()
 	both := uuid.New()
 
+	// Keyword hits carry the raw ts_rank_cd in Score and its normalised
+	// form in Relevance, as Retrieve sets them; min-max fusion reads Score.
 	graphResults := []model.MemoryWithContext{
-		{Memory: model.Memory{ID: graphOnly}, Relevance: 0.8},
-		{Memory: model.Memory{ID: both}, Relevance: 0.6},
+		{Memory: model.Memory{ID: graphOnly}, Score: 0.8, Relevance: 0.8},
+		{Memory: model.Memory{ID: both}, Score: 0.6, Relevance: 0.6},
 	}
-	// The repository reports cosine similarity in Score, not Relevance.
+	// The repository reports cosine similarity in Score, not Relevance. A
+	// third, weaker candidate keeps "both" off the bottom of the pool, where
+	// min-max would grade its cosine at zero.
+	weakest := uuid.New()
 	vectorResults := []model.MemoryWithContext{
 		{Memory: model.Memory{ID: vectorOnly}, Score: 0.7},
 		{Memory: model.Memory{ID: both}, Score: 0.5},
+		{Memory: model.Memory{ID: weakest}, Score: 0.3},
 	}
 
-	merged := mergeResults(graphResults, vectorResults, nil, nil)
+	merged := mergeResults(graphResults, vectorResults, nil, nil, DefaultFusion())
 
-	if len(merged) != 3 {
-		t.Fatalf("expected 3 deduplicated results, got %d", len(merged))
+	if len(merged) != 4 {
+		t.Fatalf("expected 4 deduplicated results, got %d", len(merged))
 	}
 
 	byID := make(map[uuid.UUID]model.MemoryWithContext, len(merged))
@@ -122,25 +128,25 @@ func TestMergeResults_CarriesRelevanceForward(t *testing.T) {
 		byID[m.Memory.ID] = m
 	}
 
-	// Relevance is now tiered rather than passed through raw: candidates that
-	// lexically matched the query outrank those the vector retriever surfaced
-	// on similarity alone, because cosine similarity and lexical match are not
-	// measured on the same scale. Assert the ordering the ranking layer relies
-	// on, not the specific arithmetic.
+	// Each signal is rescaled onto [0, 1] within its own pool before the
+	// weighted sum, and the keyword weight is at least the semantic one, so
+	// the pool's best lexical match outranks the pool's best vector-only
+	// hit. Assert the ordering the ranking layer relies on, not the specific
+	// arithmetic.
 	if byID[graphOnly].Relevance <= byID[vectorOnly].Relevance {
-		t.Errorf("a keyword match (%f) must outrank a vector-only hit (%f)",
+		t.Errorf("the best keyword match (%f) must outrank a vector-only hit (%f)",
 			byID[graphOnly].Relevance, byID[vectorOnly].Relevance)
 	}
-	if byID[both].Relevance <= byID[vectorOnly].Relevance {
-		t.Errorf("a memory found by both retrievers (%f) must outrank a vector-only hit (%f)",
-			byID[both].Relevance, byID[vectorOnly].Relevance)
+	if byID[both].Relevance <= byID[weakest].Relevance {
+		t.Errorf("a memory found by both retrievers (%f) must outrank the weakest vector-only hit (%f)",
+			byID[both].Relevance, byID[weakest].Relevance)
 	}
 
 	// Agreement between retrievers must still lift a memory above the same
 	// memory matched lexically alone.
 	lexicalOnly := mergeResults(
-		[]model.MemoryWithContext{{Memory: model.Memory{ID: both}, Relevance: 0.6}},
-		nil, nil, nil,
+		[]model.MemoryWithContext{{Memory: model.Memory{ID: both}, Score: 0.6, Relevance: 0.6}},
+		nil, nil, nil, DefaultFusion(),
 	)
 	if byID[both].Relevance <= lexicalOnly[0].Relevance {
 		t.Errorf("cross-retriever agreement should boost relevance: %f with agreement vs %f without",
@@ -165,9 +171,9 @@ func TestMergeResults_IsDeterministic(t *testing.T) {
 		})
 	}
 
-	first := mergeResults(graphResults, nil, nil, nil)
+	first := mergeResults(graphResults, nil, nil, nil, DefaultFusion())
 	for i := 0; i < 20; i++ {
-		got := mergeResults(graphResults, nil, nil, nil)
+		got := mergeResults(graphResults, nil, nil, nil, DefaultFusion())
 		for j := range got {
 			if got[j].Memory.ID != first[j].Memory.ID {
 				t.Fatalf("mergeResults order varies between identical calls at %d", j)
@@ -181,16 +187,19 @@ func TestMergeResults_IsDeterministic(t *testing.T) {
 // keyword that appears verbatim in its own content, while unrelated memories
 // were.
 //
-// The cause is a units mismatch at the merge. The graph retriever filters by
-// keyword, so every hit it returns genuinely contains the term, and it grades
-// them with LexicalRelevance -- where a content hit is worth 0.75. The vector
-// retriever runs unfiltered and passes raw cosine similarity through as
-// relevance, and a bag-of-words embedding routinely puts near-duplicate
-// sentences above 0.85.
+// The cause was a units mismatch at the merge. The graph retriever filters by
+// keyword, so every hit it returns genuinely contains the term, and graded
+// them at 0.75 for a content hit; the vector retriever ran unfiltered and
+// passed raw cosine similarity through, and a bag-of-words embedding
+// routinely puts near-duplicate sentences above 0.85. A memory that did not
+// contain the keyword at all entered the merged set at 0.87 and outranked
+// one that did at 0.75; with top_k truncation the exact match was discarded
+// and the write appeared unreadable by its own text.
 //
-// So a memory that does not contain the keyword at all can enter the merged
-// set at 0.87 and outrank one that does at 0.75. With top_k truncation, the
-// exact match is discarded and the write appears unreadable by its own text.
+// Under min-max fusion the same guarantee rests on the weights: both signals
+// are rescaled onto [0, 1] within their pools, and the keyword weight is at
+// least the semantic weight, so the best lexical match cannot lose to a
+// candidate with no lexical evidence however confident the embedder is.
 func TestExactKeywordMatchOutranksVectorOnlyResult(t *testing.T) {
 	exact := model.MemoryWithContext{
 		Memory: model.Memory{
@@ -198,8 +207,10 @@ func TestExactKeywordMatchOutranksVectorOnlyResult(t *testing.T) {
 			Content: "soak kjgzoaii about prometheus metrics collection",
 		},
 	}
-	// Graded the way Query grades graph hits: one keyword, matched in content.
-	exact.Relevance = ranking.LexicalRelevance(exact.Memory.Content, nil, []string{"kjgzoaii"})
+	// Graded the way Retrieve grades keyword hits: the raw ts_rank_cd of a
+	// single matched term in Score, its normalised form in Relevance.
+	exact.Score = 0.1
+	exact.Relevance = ranking.NormalizeBM25(exact.Score, 1)
 
 	// A vector-only hit: semantically near, but it does not contain the term.
 	// 0.8715 is a real score observed from this deployment.
@@ -211,7 +222,7 @@ func TestExactKeywordMatchOutranksVectorOnlyResult(t *testing.T) {
 	merged := mergeResults(
 		[]model.MemoryWithContext{exact},
 		[]model.MemoryWithContext{vectorOnly},
-		nil, nil,
+		nil, nil, DefaultFusion(),
 	)
 
 	var exactRel, vectorRel float64

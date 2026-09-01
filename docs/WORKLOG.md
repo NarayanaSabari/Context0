@@ -89,3 +89,109 @@ Three things the baseline already says:
    The published ablation found the same shape on accuracy; this harness can see it on ranking.
 2. The install default (hashed bag-of-words) is 8 points of hit@10 behind a real embedder.
 3. Extraction helps ranking where it keeps the fact (hit@10 0.79 vs 0.72) and loses the fact outright for 36 of 200 questions.
+
+## Track A, step 1: where the 44 answerable misses go
+
+Method: `cmd/eval -trace` records every retriever's candidate pool and the fused components of each result.
+A miss is bucketed by where its best evidence doc stood. `turns` corpus, 158 scorable answerable questions:
+
+| bucket | single | multi | temporal | world | total |
+|---|---|---|---|---|---|
+| A: evidence in top 10 | 28 | 32 | 23 | 31 | 114 |
+| B: evidence returned at rank 11-30 | 6 | 2 | 7 | 3 | 18 |
+| C: evidence in a retriever's pool, fused below the cut | 6 | 6 | 7 | 6 | 25 |
+| D: evidence in no retriever's pool | 0 | 0 | 1 | 0 | 1 |
+
+Retrieval misses proper (D) are one question. **43 of 44 failures are fusion and ranking**, not recall: the evidence was a candidate.
+
+What outranked it. For every B and C question, the components of the doc at rank 10 minus the components of the best evidence doc:
+
+| bucket | keyword | cosine | entity |
+|---|---|---|---|
+| B (n=18) | **+0.239** | -0.033 | -0.056 |
+| C (n=25) | **+0.488** | +0.106 | +0.613 |
+
+The evidence typically had the *better* cosine and lost on the keyword signal.
+In B its keyword rank was median 48 against vector rank median 16; in C, keyword rank median 186 against vector rank median 55.
+
+Why the keyword signal wins: `NormalizeBM25` is a logistic sigmoid whose midpoint is 0.4 of the query's term count, so a memory matching two or three of a question's terms saturates at 0.95-1.00 while a memory matching one sits at 0.10-0.19.
+The signal is near-binary.
+Cosine similarity from nomic-embed-text, by contrast, arrives raw and lives in a band of roughly 0.55-0.85, so its 0.35 weight moves the fused score by a tenth of what the keyword signal's 0.5 does.
+The fusion is a keyword ranker with a small semantic tie-break, and the keyword ranker is saturated by the speaker's name (present in every turn via the "Melanie said that" prefix) plus one common word.
+
+Example (`conv-26-q19`, "What do Melanie's kids like?"): the evidence "They were stoked for the dinosaur exhibit! They love learning about animals" is vector rank 3, keyword rank 256 (it matches only "melanie"), fused out of the top 30.
+Rank 1 is "Giving a home to needy kids is such a loving way to build a family", which matches "melanie", "kids" and "like" and scores keyword 1.00.
+
+The same shape on the `extracted` corpus (134 scorable): 106 A, 16 B, 11 C, 1 D; rank-10 minus evidence keyword +0.132 (B) and +0.491 (C).
+
+Fix order, by bucket size: fusion first (B + C = 43), then the entity signal (the C-bucket's +0.613 entity gap says the entity boost is lifting non-evidence, as the adversarial baseline already showed), then recall (D = 1, nothing to gain).
+
+## Track A, change 1: normalise the signals before fusing them
+
+**Hypothesis.** The misses are a fusion problem: the keyword signal is saturated by the sigmoid and the cosine signal is compressed, so the weighted sum is a keyword ranker.
+Rescaling each signal per query (keyword by the pool's best raw score, cosine by the pool's min-max range) should let the semantic evidence compete.
+Reciprocal rank fusion is the other standard answer and is scale-free, so it is measured beside it.
+
+**Change.** `retrieval.Fusion` with three modes, selected by `SetFusion`: `linear` (the original), `minmax`, `rrf` (k = 60, entity overlap added as a share of a rank-1 contribution).
+`cmd/eval -fusion/-weights/-rrf-k`, and `-reuse-db` so a sweep loads the corpus once.
+Weights are the engine's 0.5 / 0.35 / 0.15 unless stated.
+
+**Measured**, answerable questions, metrics at k = 10:
+
+| corpus | fusion | hit@10 | rec@10 | full@10 | MRR | nDCG | adversarial MRR |
+|---|---|---|---|---|---|---|---|
+| turns (158) | linear (baseline) | 0.722 | 0.590 | 0.475 | 0.491 | 0.487 | 0.338 |
+| turns | **minmax** | 0.753 | 0.624 | 0.506 | 0.499 | 0.501 | 0.551 |
+| turns | rrf 1/1/0.3 | 0.747 | 0.611 | 0.494 | 0.453 | 0.468 | 0.264 |
+| turns | rrf 1/1/0 | 0.734 | 0.603 | 0.494 | 0.441 | 0.458 | 0.387 |
+| turns | linear, weights 0.35/0.5/0.15 | 0.722 | 0.587 | 0.475 | 0.498 | 0.490 | 0.274 |
+| extracted (134) | linear (baseline) | 0.791 | 0.683 | 0.582 | 0.598 | 0.588 | 0.366 |
+| extracted | **minmax** | 0.821 | 0.712 | 0.612 | 0.595 | 0.591 | 0.629 |
+| extracted | rrf 1/1/0.3 | 0.791 | 0.687 | 0.582 | 0.606 | 0.589 | 0.358 |
+
+Paired, linear to minmax: turns hit@10 gained 7 questions and lost 2 (McNemar p = 0.18), MRR +0.008 (95% CI -0.03 to +0.05); extracted gained 5 and lost 1.
+The direction is the same on both corpora and on every metric, and adversarial MRR rises 0.2 on both, which reweighting alone (row 5) does not do.
+
+RRF is worse than min-max on MRR on both corpora (0.453 vs 0.499 on turns): a rank-based fusion throws away how far apart two candidates were, and on this corpus the keyword ranking's top positions are mostly noise, so RRF rewards them anyway.
+
+**Verdict: keep min-max normalisation.** Weights are chosen in the next step, one axis at a time.
+
+## Track A, change 2: the fusion weights
+
+**Hypothesis.** With both signals on one scale, the 0.5 / 0.35 split that favoured keywords is no longer justified by the saturation it was compensating for.
+
+**Change.** None to the code beyond the constants; a sweep through `cmd/eval -weights` on the loaded corpora. Keyword weight from 0.30 to 0.60 with semantic = 0.85 - keyword and entity fixed at 0.15; then entity from 0 to 0.30 at 0.40 / 0.45.
+
+**Measured**, answerable MRR@10 (hit@10 in brackets):
+
+| keyword / semantic | turns (158) | extracted (134) |
+|---|---|---|
+| 0.30 / 0.55 | 0.499 (0.753) | **0.620** (0.828) |
+| 0.35 / 0.50 | 0.503 (0.759) | 0.617 (0.813) |
+| **0.40 / 0.45** | 0.509 (0.766) | 0.614 (0.806) |
+| 0.45 / 0.40 | **0.510** (0.778) | 0.606 (0.813) |
+| 0.50 / 0.35 (change 1) | 0.499 (0.753) | 0.595 (0.821) |
+| 0.55 / 0.30 | 0.502 (0.741) | 0.589 (0.799) |
+| 0.60 / 0.25 | 0.499 (0.734) | 0.588 (0.799) |
+
+The two corpora peak in different places (verbatim turns want more keyword, extracted facts want more semantic), and every difference between neighbouring rows is inside the paired 95% CI of about +/- 0.02.
+0.40 / 0.45 is the point neither corpus objects to.
+
+Entity weight at 0.40 / 0.45:
+
+| entity | turns MRR | turns adversarial MRR | extracted MRR | extracted adversarial MRR |
+|---|---|---|---|---|
+| 0 | 0.504 | 0.525 | 0.604 | 0.643 |
+| 0.05 | 0.507 | 0.506 | 0.612 | 0.638 |
+| 0.15 | 0.509 | 0.439 | 0.614 | 0.608 |
+| 0.30 | 0.514 | 0.353 | 0.621 | 0.451 |
+
+The entity signal buys under 0.01 of answerable MRR per 0.15 of weight and costs adversarial MRR steeply.
+Nothing here is significant, so the weight stays at 0.15 and the entity signal gets its own experiment.
+
+**Verdict: 0.45 / 0.40 / 0.15 becomes the default**, with min-max fusion.
+0.40 / 0.45 and 0.45 / 0.40 are indistinguishable on the harness (turns MRR 0.509 vs 0.510, extracted 0.614 vs 0.606, both inside the CI), and the second has a property the harness cannot see: with the keyword weight at or above the semantic one, the best lexical match for a query can never be outranked by a candidate with no lexical evidence.
+That is the guarantee behind `TestExactKeywordMatchOutranksVectorOnlyResult`, a soak-run bug where a write became unreadable by a rare token in its own content, and 0.40 / 0.45 broke that test.
+Two other tests pinned the old fusion's arithmetic and were rewritten to state the new contract (`TestMergeResults_CarriesRelevanceForward`, `TestFuseRelevance_AStrongKeywordMatchStillBeatsSemanticSimilarityAlone`); the golden suite passes unchanged (overall recall 0.917, MRR 0.856).
+
+Against the original engine, turns corpus: hit@10 0.722 to 0.778, rec@10 0.590 to 0.653, full@10 0.475 to 0.544, MRR 0.491 to 0.510, nDCG 0.487 to 0.514; extracted: hit@10 0.791 to 0.813, MRR 0.598 to 0.606.
