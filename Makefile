@@ -1,4 +1,4 @@
-.PHONY: build test test-integration test-golden test-golden-quality postgres-up lint clean docker-build proto-gen run kind-up kind-down deploy
+.PHONY: build test test-integration test-golden test-golden-quality postgres-up lint clean docker-build proto-gen run kind-up kind-down deploy eval eval-db-up eval-db-down eval-fixtures
 
 # Compose refuses to start without credentials, so .env always holds a
 # generated password. The integration targets below have to use that same
@@ -68,6 +68,37 @@ test-golden-quality:
 		KORA_TEST_EMBEDDING_BASE_URL=$(GOLDEN_OLLAMA_URL) \
 		KORA_TEST_EMBEDDING_DIM=768 \
 		go test ./test/golden/... -count=1 -v
+
+# The offline retrieval evaluation. See eval/README.md.
+#
+# Deterministic and network-free: query and corpus vectors come from the
+# committed fixture, the clock is fixed, and the database is recreated empty
+# for every run. Two consecutive runs print the same numbers and the same
+# digest; if they do not, that is a bug in the engine, not noise.
+#
+# Needs the LoCoMo dataset in eval/data (CC BY-NC 4.0, so fetched rather than
+# committed): `make eval-fixtures` downloads it once. The default corpus is
+# the verbatim turns; EVAL_ARGS selects others, e.g.
+#   make eval EVAL_ARGS="-corpus extracted"
+#   make eval EVAL_ARGS="-embedder bow"
+#   make eval EVAL_ARGS="-graph-signals off"
+EVAL_ARGS ?=
+
+eval:
+	KORA_EVAL_DATABASE_URL="$$(scripts/eval_db.sh up)" go run ./cmd/eval run $(EVAL_ARGS)
+
+eval-db-up:
+	@scripts/eval_db.sh up >/dev/null
+
+eval-db-down:
+	@scripts/eval_db.sh down
+
+# One-time fixture build. Downloads the dataset if absent and embeds every
+# question and turn through the engine's own Ollama client. The only target
+# in this file that talks to a model server.
+EVAL_OLLAMA_URL ?= http://localhost:11434
+eval-fixtures:
+	go run ./cmd/eval fixtures -ollama $(EVAL_OLLAMA_URL)
 
 postgres-up:
 	docker compose up -d postgres
@@ -161,4 +192,5 @@ help:
 	@echo "  kind-up        - Create kind cluster"
 	@echo "  kind-down      - Delete kind cluster"
 	@echo "  deploy         - Deploy to kind cluster"
+	@echo "  eval           - Offline retrieval evaluation (see eval/README.md)"
 	@echo "  clean          - Remove build artifacts"

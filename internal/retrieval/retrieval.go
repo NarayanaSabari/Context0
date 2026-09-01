@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/NarayanaSabari/Kora/internal/embedding"
 	"github.com/NarayanaSabari/Kora/internal/extraction"
@@ -58,11 +59,27 @@ type Engine struct {
 	// graphSignalsOff removes every graph-derived signal from retrieval.
 	// Set once at startup via DisableGraphSignals; see that method.
 	graphSignalsOff bool
+
+	// now is the clock ranking scores recency against. time.Now in
+	// production; fixed by the evaluation harness so that a benchmark's
+	// numbers do not drift with the calendar. Set once via SetClock, before
+	// the engine serves queries.
+	now func() time.Time
 }
 
 // New returns an Engine. The embedder may be nil.
 func New(repo Repo, embedder embedding.Embedder) *Engine {
-	return &Engine{repo: repo, embedder: embedder}
+	return &Engine{repo: repo, embedder: embedder, now: func() time.Time { return time.Now().UTC() }}
+}
+
+// SetClock replaces the clock the recency signal is measured against.
+//
+// Startup-only, like DisableGraphSignals: it writes an unsynchronised field
+// that Retrieve reads. The only caller outside tests is the offline
+// evaluation harness, which needs the same corpus ranked identically on
+// every run.
+func (e *Engine) SetClock(now func() time.Time) {
+	e.now = now
 }
 
 // DisableGraphSignals removes every graph-derived signal from retrieval,
@@ -92,6 +109,71 @@ func (e *Engine) Retrieve(
 	types []model.MemoryType,
 	topK int32,
 ) ([]model.MemoryWithContext, error) {
+	return e.retrieve(ctx, query, projectID, types, topK, nil)
+}
+
+// Trace is what each retriever contributed to one query.
+//
+// It exists for the evaluation harness, which has to say *why* a piece of
+// evidence was not returned: never a candidate in any retriever, a candidate
+// that fusion ranked below the cut, or a candidate the entity signal pushed
+// down. The ranked list alone cannot distinguish those, and each calls for a
+// different fix.
+type Trace struct {
+	// Keywords are the terms the keyword retriever searched; Unsearchable
+	// reports that it fell back to the recency query instead.
+	Keywords     []string
+	Unsearchable bool
+	// QueryEntities are the normalised entities read from the query text.
+	QueryEntities []string
+	// Keyword, Vector and Entity are each retriever's candidate pool in the
+	// order it returned them. Keyword scores are the normalised relevance
+	// (Raw holds ts_rank_cd), Vector scores are cosine similarity, Entity
+	// scores are the share of the query's entities the memory names.
+	Keyword []Candidate
+	Vector  []Candidate
+	Entity  []Candidate
+	// Ranked is the final list with the components each score was fused
+	// from.
+	Ranked []Ranked
+}
+
+// Candidate is one retriever's view of one memory.
+type Candidate struct {
+	ID    uuid.UUID
+	Score float64
+	Raw   float64
+}
+
+// Ranked is one result with its fused relevance decomposed.
+type Ranked struct {
+	ID        uuid.UUID
+	Keyword   float64
+	Cosine    float64
+	Entity    float64
+	Relevance float64
+	Score     float64
+}
+
+// RetrieveTraced is Retrieve that also reports how the answer was assembled.
+func (e *Engine) RetrieveTraced(
+	ctx context.Context,
+	query, projectID string,
+	types []model.MemoryType,
+	topK int32,
+) ([]model.MemoryWithContext, *Trace, error) {
+	trace := &Trace{}
+	results, err := e.retrieve(ctx, query, projectID, types, topK, trace)
+	return results, trace, err
+}
+
+func (e *Engine) retrieve(
+	ctx context.Context,
+	query, projectID string,
+	types []model.MemoryType,
+	topK int32,
+	trace *Trace,
+) ([]model.MemoryWithContext, error) {
 	// Parse query into structured form with time filtering.
 	filter := ParseQuery(query, projectID, types, topK)
 
@@ -120,6 +202,12 @@ func (e *Engine) Retrieve(
 	// correct: there is nothing to match. The other two retrievers cover it.
 	for i := range graphResults {
 		graphResults[i].Relevance = ranking.NormalizeBM25(graphResults[i].Score, len(filter.Keywords))
+	}
+	if trace != nil {
+		trace.Keywords = filter.Keywords
+		for _, r := range graphResults {
+			trace.Keyword = append(trace.Keyword, Candidate{ID: r.Memory.ID, Score: r.Relevance, Raw: r.Score})
+		}
 	}
 
 	// A query with nothing to search for still has to return something, so it
@@ -168,6 +256,10 @@ func (e *Engine) Retrieve(
 		graphResults, err = e.repo.QueryMemories(ctx, fallback)
 		if err != nil {
 			return nil, fmt.Errorf("graph query: %w", err)
+		}
+		if trace != nil {
+			trace.Unsearchable = true
+			trace.Keyword = nil
 		}
 		for i := range graphResults {
 			// Nothing matched, so no candidate is more relevant than another by
@@ -220,11 +312,24 @@ func (e *Engine) Retrieve(
 	// memory containing any query word however common -- which made the recall
 	// half of this feature unreachable in every project with more than a
 	// handful of keyword matches.
+	if trace != nil {
+		for _, r := range vectorResults {
+			trace.Vector = append(trace.Vector, Candidate{ID: r.Memory.ID, Score: r.Score, Raw: r.Score})
+		}
+	}
+
 	var entityResults []model.Memory
 	var entityOverlap map[uuid.UUID]float64
 	if !e.graphSignalsOff {
-		entityResults, entityOverlap = e.entityMatches(ctx, projectID, query, filter.TopK,
+		var queryEntities []string
+		entityResults, entityOverlap, queryEntities = e.entityMatches(ctx, projectID, query, filter.TopK,
 			graphResults, vectorResults)
+		if trace != nil {
+			trace.QueryEntities = queryEntities
+			for _, m := range entityResults {
+				trace.Entity = append(trace.Entity, Candidate{ID: m.ID, Score: entityOverlap[m.ID], Raw: entityOverlap[m.ID]})
+			}
+		}
 	}
 
 	// Merge: deduplicate by ID, and put the three retrievers' signals on one
@@ -236,7 +341,28 @@ func (e *Engine) Retrieve(
 
 	// Rank results using scoring function. This consumes the Relevance set
 	// above, so retrieval quality drives the final order.
-	results = ranking.RankResults(results, int(filter.TopK))
+	results = ranking.RankResultsAt(results, int(filter.TopK), e.now())
+
+	if trace != nil {
+		keyword := make(map[uuid.UUID]float64, len(graphResults))
+		for _, r := range graphResults {
+			keyword[r.Memory.ID] = r.Relevance
+		}
+		cosine := make(map[uuid.UUID]float64, len(vectorResults))
+		for _, r := range vectorResults {
+			cosine[r.Memory.ID] = r.Score
+		}
+		for _, r := range results {
+			trace.Ranked = append(trace.Ranked, Ranked{
+				ID:        r.Memory.ID,
+				Keyword:   keyword[r.Memory.ID],
+				Cosine:    cosine[r.Memory.ID],
+				Entity:    entityOverlap[r.Memory.ID],
+				Relevance: r.Relevance,
+				Score:     r.Score,
+			})
+		}
+	}
 	return results, nil
 }
 
@@ -537,12 +663,12 @@ func (e *Engine) entityMatches(
 	projectID, query string,
 	topK int32,
 	existing ...[]model.MemoryWithContext,
-) ([]model.Memory, map[uuid.UUID]float64) {
+) ([]model.Memory, map[uuid.UUID]float64, []string) {
 	// Entities are scoped per project, and an unscoped query has no project to
 	// traverse. Cross-project entity matching would breach the tenant boundary
 	// every other retriever respects.
 	if projectID == "" || query == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// The query is a sentence, so it is read for entities the same way a
@@ -555,7 +681,7 @@ func (e *Engine) entityMatches(
 		}
 	}
 	if len(queryEntities) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	log := logging.FromContext(ctx)
@@ -565,7 +691,7 @@ func (e *Engine) entityMatches(
 		log.Warn("entity retrieval failed; results come from keyword and vector search only",
 			slog.String("project_id", projectID),
 			slog.Any("error", err))
-		return nil, nil
+		return nil, nil, queryEntities
 	}
 
 	// Every candidate is scored, including the ones the other retrievers
@@ -592,7 +718,7 @@ func (e *Engine) entityMatches(
 		log.Warn("loading entities for ranking failed; results are ordered without the entity signal",
 			slog.Int("result_count", len(ids)),
 			slog.Any("error", err))
-		return matches, nil
+		return matches, nil, queryEntities
 	}
 
 	overlap := make(map[uuid.UUID]float64, len(ids))
@@ -601,5 +727,5 @@ func (e *Engine) entityMatches(
 			overlap[id] = o
 		}
 	}
-	return matches, overlap
+	return matches, overlap, queryEntities
 }
