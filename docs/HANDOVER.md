@@ -20,6 +20,7 @@ On top of that, the repository is being submitted to the [Razorpay AI Buildathon
 | the demo agent | `examples/receivables-chaser/README.md`, `make demo`, `make demo-test` |
 | the 5-minute pitch script and the panel questions | `docs/PITCH.md` |
 | the exact commands to type while recording, and what they print | `docs/RECORDING.md` |
+| the word-for-word 5-minute video script with screen cues | `docs/VIDEO_SCRIPT.md` |
 | the judge-facing summary | top of `README.md`, section "Measured, not claimed" |
 | frozen benchmark reports | `eval/results/baseline-*.json` (engine before), `eval/results/final-*.json` (engine after) |
 
@@ -47,7 +48,7 @@ Every number in the README and the report was produced by `make eval`. Do not ad
 1. Run `make demo` once and read the report it prints; the pitch script narrates it tick by tick.
 2. For the live beat, start the engine (`docker compose up -d`, credentials in `.env` per the README), export `KORA_URL` and `KORA_API_KEY`, and run `make demo` again. The live run takes about 6 seconds over 21 ticks. Run it once without `KORA_URL` and once with it: both recover ₹633,300, but the memory-backed run sends 49 messages against 430. That contrast is the strongest thing in the demo, so give it a beat.
 3. If this machine's containers are still up, note that `docker compose up -d` from the repo root collides with the running `kora-bench-*` benchmark containers, which must survive (section 4). Use a separate project instead: `docker compose -p kora-demo -f docker-compose.yaml -f docker-compose.demo.yaml up -d`, which serves the API on 18095. `docker-compose.demo.yaml` is gitignored and documents its own reasoning.
-4. Read `docs/PITCH.md` end to end and have the "why not an LLM here" answers ready. `docs/RECORDING.md` is the typing side: exact commands, expected output, and what to do if a beat fails on camera.
+4. Read `docs/PITCH.md` end to end and have the "why not an LLM here" answers ready. `docs/RECORDING.md` is the typing side: exact commands, expected output, and what to do if a beat fails on camera. `docs/VIDEO_SCRIPT.md` is the narration itself, timed to 5 minutes with every number traced to a source.
 
 **Before submitting:**
 1. Deadline and eligibility were confirmed on the [application form](https://forms.gle/d9r2gvxp8cmoZhon9) on 2026-09-02: applications close **2026-09-05**, and the event is **students only**. This is no longer a belief.

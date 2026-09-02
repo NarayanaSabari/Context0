@@ -3,6 +3,11 @@
 Recorded against `make demo` in one terminal and the README's table in another.
 Times are cumulative.
 
+For the recording itself, use [VIDEO_SCRIPT.md](VIDEO_SCRIPT.md): the same
+argument written word for word with screen cues and a measured 5-minute
+budget. This file is the prose version and, from "the questions to expect"
+onward, the Q&A preparation that the script deliberately leaves out.
+
 ## 0:00 The problem (40 s)
 
 "A merchant's receivables agent that chases overdue invoices nags, because it has no memory.
