@@ -1,0 +1,83 @@
+{{- if .Values.api.hpa.enabled }}
+# Read the CPU comment on api.resources in values.yaml before changing
+# anything here: a query is ~22ms wall clock of which ~21ms is waiting on
+# PostgreSQL, this process is CPU-idle 77% of the time even under a loaded
+# single-threaded query stream, and the write path is bound on the
+# embedding/LLM network call. More API pods do not make Postgres answer
+# faster -- they add more connections competing for the same
+# postgres.resources capacity (uncapped CPU, fixed shared_buffers) and the
+# same pool.maxConns budget against Postgres's max_connections (100). This HPA
+# exists for the case where the bottleneck genuinely moves to the API side
+# (see values.yaml), and defaults to off.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: kora-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kora-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kora-api
+  minReplicas: {{ .Values.api.hpa.minReplicas }}
+  maxReplicas: {{ .Values.api.hpa.maxReplicas }}
+  metrics:
+    # A Pods metric, not a Resource (CPU/memory) metric: CPU is not what
+    # limits this service (see the comment above), so the primary signal is
+    # request throughput instead. kora_requests_per_second does not exist as a
+    # metric the API exports directly -- it is a prometheus-adapter external
+    # rule computed as rate(kora_requests_total[...]) over the engine's real
+    # counter (internal/metrics/metrics.go). Without that adapter rule
+    # installed and matching this metric name, the HPA has nothing to read
+    # and sits at minReplicas. See docs/kubernetes.md for the adapter config.
+    - type: Pods
+      pods:
+        metric:
+          name: kora_requests_per_second
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.api.hpa.targetRequestsPerSecond | quote }}
+    {{- if gt (int .Values.api.hpa.targetCPUUtilizationPercentage) 0 }}
+    # Opt-in fallback: only present when the operator has evidence this
+    # workload is CPU-heavier than the profiled read path (values.yaml
+    # explains when that might be true). An HPA with more than one metric
+    # scales on whichever one asks for the most replicas, so this cannot
+    # scale down below what the requests metric alone would choose.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.api.hpa.targetCPUUtilizationPercentage }}
+    {{- end }}
+  behavior:
+    scaleDown:
+      # 300s is the HPA's own default; written out explicitly so the choice
+      # is visible here rather than relying on a reader to know the default.
+      # Kept at the default rather than shortened: nothing about this
+      # workload's traffic pattern argues for scaling down faster, and a
+      # database-bound service flapping replica count adds pool churn
+      # (pgxpool ramping connections up and down against max_connections)
+      # for no throughput benefit.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        # One pod per minute, not the HPA's default of doubling every 15s.
+        # Each new replica adds up to api.pool.maxConns (10) connections
+        # against Postgres's max_connections (100); at maxReplicas (6) the
+        # fleet claims at most 60, leaving headroom, but only if replicas
+        # arrive slowly enough for Postgres's connection accounting and this
+        # process's own pool ramp-up to keep up. A burst of several pods at
+        # once risks a thundering herd of connection attempts against a
+        # database that, per the comment above, was already the bottleneck.
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+{{- end }}

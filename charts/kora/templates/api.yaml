@@ -1,3 +1,22 @@
+{{/*
+The process's own drain is a fixed 15s; anything Kubernetes does on top of
+that (the preStop sleep) has to fit inside terminationGracePeriodSeconds too,
+or the kubelet SIGKILLs the process mid-drain and the connection pool is never
+closed cleanly. Checked at render time rather than left to be discovered as a
+production SIGKILL, the same reasoning postgres.yaml applies to its own
+shm-vs-memory-limit invariant.
+*/}}
+{{- $minGrace := add (int .Values.api.preStopSleepSeconds) 15 }}
+{{- if lt (int .Values.api.terminationGracePeriodSeconds) $minGrace }}
+{{- fail (printf "api.terminationGracePeriodSeconds (%d) must be at least api.preStopSleepSeconds (%d) plus the process's 15s drain (%d total): otherwise Kubernetes SIGKILLs the process mid-drain and the connection pool is never closed." (int .Values.api.terminationGracePeriodSeconds) (int .Values.api.preStopSleepSeconds) $minGrace) }}
+{{- end }}
+{{/*
+Whether the API will genuinely run more than one pod, which the multi-replica
+-only bits below (topology spread, PDB) need to key on. The HPA can put the
+Deployment above 1 replica even when api.replicas itself is 1, since replicas
+is omitted from the spec entirely once the HPA owns it (see below).
+*/}}
+{{- $multiReplica := or (gt (int .Values.api.replicas) 1) (and .Values.api.hpa.enabled (gt (int .Values.api.hpa.minReplicas) 1)) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -6,7 +25,14 @@ metadata:
   labels:
     app: kora-api
 spec:
+  {{- if not .Values.api.hpa.enabled }}
+  # Omitted when the HPA is enabled: a Deployment's replicas field and the HPA
+  # both want to own the replica count, and Helm re-applying this manifest on
+  # every `helm upgrade` would otherwise fight the autoscaler by resetting the
+  # count back to api.replicas each time. Leaving the field out lets the HPA
+  # be the sole owner, which is the pattern the Kubernetes HPA docs recommend.
   replicas: {{ .Values.api.replicas }}
+  {{- end }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -36,10 +62,17 @@ spec:
       # Long enough for the in-process 15s drain to finish, with headroom for
       # the preStop sleep below.
       terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
-      {{- if gt (int .Values.api.replicas) 1 }}
+      {{- if $multiReplica }}
       # Spread replicas across nodes so a single node failure cannot take out
       # the whole API. ScheduleAnyway keeps single-node clusters (kind, minikube)
       # schedulable.
+      #
+      # Deliberately no matchLabelKeys: [pod-template-hash]. It would spread
+      # each rollout's new ReplicaSet independently of the old one instead of
+      # treating both generations as one pool, which is only worth doing on
+      # very large fleets doing frequent rolling updates -- for this chart's
+      # replica counts it adds a beta-gated (default-on since 1.27, still
+      # beta) field for no observable benefit. See docs/kubernetes.md.
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -144,13 +177,22 @@ spec:
             # Go does not derive its heap target from the cgroup limit, so
             # without this the GC only reacts to its own pacing and the kernel
             # OOM-kills the container before the collector feels any pressure.
+            #
+            # Computed at render time rather than via a Downward API
+            # resourceFieldRef: GOMEMLIMIT's grammar is
+            # `^[0-9]+(([KMGT]i)?B)?$` or "off" -- "512Mi" is not valid input
+            # and crashes the process at startup -- and while resourceFieldRef
+            # does convert the limit to a plain byte integer for free, it can
+            # only emit the limit itself, with no way to take a percentage of
+            # it. The Go GC guide recommends 5-10% headroom under the
+            # container limit rather than setting GOMEMLIMIT equal to it, so
+            # this uses the kora.gomemlimit helper (90%, the conservative end
+            # of that range) instead. Emitted only when a memory limit is set;
+            # with none there is nothing to compute a fraction of.
             {{- if .Values.api.resources.limits }}
             {{- if .Values.api.resources.limits.memory }}
             - name: GOMEMLIMIT
-              valueFrom:
-                resourceFieldRef:
-                  containerName: kora-api
-                  resource: limits.memory
+              value: {{ include "kora.gomemlimit" .Values.api.resources.limits.memory | quote }}
             {{- end }}
             {{- end }}
           resources:
@@ -192,15 +234,25 @@ spec:
             # handler used to report as "database unreachable" while the
             # database was healthy.
             timeoutSeconds: 3
+          # Endpoint removal and container termination race each other:
+          # kubelet sends SIGTERM at the same time the endpoints controller
+          # starts propagating the removal. Without this pause a proxy can
+          # still route to a socket that has already closed, which shows up
+          # as connection-refused errors on every rollout.
           lifecycle:
             preStop:
+              {{- if .Values.api.preStopSleepAction }}
+              # Native sleep action (GA since Kubernetes 1.34): no fork/exec,
+              # no dependency on a `sleep` binary existing in the image.
+              sleep:
+                seconds: {{ .Values.api.preStopSleepSeconds }}
+              {{- else }}
+              # exec form: works on every Kubernetes version, at the cost of
+              # forking `sleep` out of the image (alpine has it) on every pod
+              # termination. Default; see api.preStopSleepAction.
               exec:
-                # Endpoint removal and container termination race each other:
-                # kubelet sends SIGTERM at the same time the endpoints
-                # controller starts propagating the removal. Without this pause
-                # a proxy can still route to a socket that has already closed,
-                # which shows up as connection-refused errors on every rollout.
                 command: ["sleep", "{{ .Values.api.preStopSleepSeconds }}"]
+              {{- end }}
           volumeMounts:
             # readOnlyRootFilesystem is on, so give the process a writable /tmp.
             - name: tmp
@@ -237,7 +289,7 @@ spec:
       {{- end }}
   selector:
     app: kora-api
-{{- if gt (int .Values.api.replicas) 1 }}
+{{- if $multiReplica }}
 ---
 # A PDB only makes sense with more than one replica: with replicas=1 a
 # minAvailable of 1 would block every voluntary eviction, including node drains.
@@ -250,6 +302,13 @@ metadata:
     app: kora-api
 spec:
   maxUnavailable: 1
+  # GA since Kubernetes 1.31. Without it, a crash-looping pod (unhealthy, so
+  # it contributes nothing to availability either way) still counts as
+  # "unavailable" for this budget's purposes and can block a node drain
+  # indefinitely -- the drain waits on a pod that was never going to serve
+  # traffic again regardless of what the PDB decides. AlwaysAllow evicts
+  # unhealthy pods unconditionally so drains proceed.
+  unhealthyPodEvictionPolicy: AlwaysAllow
   selector:
     matchLabels:
       app: kora-api

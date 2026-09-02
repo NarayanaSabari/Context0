@@ -23,6 +23,43 @@ Kora solves this with a **graph-based memory engine** that runs in your Kubernet
 - **100% open source** -- Apache 2.0 license, every dependency OSI-approved
 - **Self-hosted** -- your data stays in your cluster, period
 
+## Measured, not claimed
+
+Every retrieval number in this repository comes from `make eval`, an offline benchmark that runs the real engine against the 200-question LoCoMo set and scores it against the dataset's own evidence annotations.
+It makes no network or model call, and two runs produce identical numbers and an identical digest of every ranked list.
+The published 69% accuracy figure that preceded it was an LLM judge's verdict and could not be reproduced without an API; that story, and what replaced it, is in [docs/OPTIMIZATION_REPORT.md](docs/OPTIMIZATION_REPORT.md).
+
+Engine before and after this branch, verbatim-turns corpus, 158 answerable questions:
+
+| metric | before | after |
+|---|---|---|
+| hit@10 | 0.722 | **0.766** |
+| recall@10 | 0.590 | **0.646** |
+| MRR@10 | 0.491 | **0.518** |
+| query latency p50 / p99 | 24.9 / 53.2 ms | **16.7 / 40.4 ms** |
+| allocations per query | 36,215 | **17,905** |
+
+What moved it: 43 of the 44 misses were evidence a retriever had already found and the fusion had buried, because a saturated keyword score outvoted a compressed cosine.
+Normalising both per query fixed most of that.
+The graph's entity signal, the feature the project is named for, measured +0.005 MRR and was left in at its measured weight.
+The full ablation, the failure buckets before and after, the papers used and rejected, and what is left on the table are in the report; the step-by-step log with reverts is [docs/WORKLOG.md](docs/WORKLOG.md).
+
+What the memory is worth to an agent, measured the same way on the receivables-chaser example over 21 days and 50 invoices:
+
+| | recovered | messages sent |
+|---|---|---|
+| escalation ladder alone | ₹633,300 | 430 |
+| with Kora as memory | ₹633,300 | **49** |
+
+The engine does not recover more money. It recovers the same money without re-chasing anyone who had already promised to pay, disputed the invoice, or been contacted that day.
+Reproduce both rows with `make demo`, once with `KORA_URL` unset and once with it pointed at a running engine.
+
+```bash
+make eval            # needs Docker; loads the corpus into a throwaway Postgres and prints the table above
+make demo            # the receivables-chaser agent, offline, with Kora as its memory (see examples/)
+make test            # unit tests, no database
+```
+
 ## Quick Start
 
 ### Upgrading from Context0
@@ -336,15 +373,22 @@ Conversation ──> Extract ──> Memory Nodes (fact/preference/event)
                [semantic]  [episodic]  [procedural]
                     │           │           │
                     └─── Graph Edges ───────┘
-                    (relates_to, supersedes, caused_by)
+                    (relates_to, supersedes, mentions -> Entity)
                                 │
-                    ┌───────────┼───────────┐
-                    v           v           v
-              Graph Query + Vector Search + Ranking
+                                v
+   Query ──> full-text search (IDF-weighted ts_rank_cd, GIN index)
+         ──> vector search    (pgvector cosine, exact within a project)
+         ──> entity match     (memories naming the query's entities)
+                                │
+                                v
+   per-query min-max normalisation, weighted sum 0.45 / 0.40 / 0.15
+   then recency, frequency and type priors as tie-breaks
                                 │
                                 v
                       Ranked Results with Context
 ```
+
+The read path is `internal/retrieval`; the fusion and priors are `internal/ranking`, and every constant there carries the measurement that set it.
 
 ### Tech Stack
 

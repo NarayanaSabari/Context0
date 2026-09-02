@@ -233,6 +233,32 @@ func EntityOverlap(memoryEntities, queryEntities []string) float64 {
 	return float64(matched) / float64(distinct)
 }
 
+// EntityOverlapCount is EntityOverlap when the database has already counted
+// how many distinct query entities a memory names. The denominator is the
+// number of distinct, non-empty query entities, as in EntityOverlap, so the
+// two agree on every input.
+func EntityOverlapCount(matched int, queryEntities []string) float64 {
+	if matched <= 0 || len(queryEntities) == 0 {
+		return 0
+	}
+	distinct := 0
+	seen := make(map[string]bool, len(queryEntities))
+	for _, q := range queryEntities {
+		if q == "" || seen[q] {
+			continue
+		}
+		seen[q] = true
+		distinct++
+	}
+	if distinct == 0 {
+		return 0
+	}
+	if matched > distinct {
+		matched = distinct
+	}
+	return float64(matched) / float64(distinct)
+}
+
 // ApplyEntityBoost raises a memory's relevance in proportion to how much of
 // the query's entity set it names.
 //

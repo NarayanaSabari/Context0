@@ -1,0 +1,627 @@
+{
+  "today": "2026-09-02",
+  "customers": [
+    {
+      "id": "cust_01",
+      "name": "Asha Traders",
+      "email": "accounts@asha.traders.example",
+      "behavior": "promise_then_pay"
+    },
+    {
+      "id": "cust_02",
+      "name": "Bhavani Textiles",
+      "email": "accounts@bhavani.textiles.example",
+      "behavior": "dispute"
+    },
+    {
+      "id": "cust_03",
+      "name": "Chandra Electronics",
+      "email": "accounts@chandra.electronics.example",
+      "behavior": "pays_after_first_contact"
+    },
+    {
+      "id": "cust_04",
+      "name": "Deccan Foods",
+      "email": "accounts@deccan.foods.example",
+      "behavior": "pays_after_first_contact"
+    },
+    {
+      "id": "cust_05",
+      "name": "Ekta Logistics",
+      "email": "accounts@ekta.logistics.example",
+      "behavior": "promise_then_pay"
+    },
+    {
+      "id": "cust_06",
+      "name": "Falcon Auto Parts",
+      "email": "accounts@falcon.auto.parts.example",
+      "behavior": "unreachable"
+    },
+    {
+      "id": "cust_07",
+      "name": "Ganga Steel Co",
+      "email": "accounts@ganga.steel.co.example",
+      "behavior": "promise_then_pay"
+    },
+    {
+      "id": "cust_08",
+      "name": "Hariom Furnishings",
+      "email": "accounts@hariom.furnishings.example",
+      "behavior": "already_paid"
+    },
+    {
+      "id": "cust_09",
+      "name": "Indus Packaging",
+      "email": "accounts@indus.packaging.example",
+      "behavior": "dispute"
+    },
+    {
+      "id": "cust_10",
+      "name": "Jyoti Pharma",
+      "email": "accounts@jyoti.pharma.example",
+      "behavior": "promise_then_miss"
+    },
+    {
+      "id": "cust_11",
+      "name": "Kaveri Agro",
+      "email": "accounts@kaveri.agro.example",
+      "behavior": "promise_then_pay"
+    },
+    {
+      "id": "cust_12",
+      "name": "Lotus Interiors",
+      "email": "accounts@lotus.interiors.example",
+      "behavior": "unreachable"
+    },
+    {
+      "id": "cust_13",
+      "name": "Manasa Pumps",
+      "email": "accounts@manasa.pumps.example",
+      "behavior": "promise_then_miss"
+    },
+    {
+      "id": "cust_14",
+      "name": "Nandi Hardware",
+      "email": "accounts@nandi.hardware.example",
+      "behavior": "already_paid"
+    },
+    {
+      "id": "cust_15",
+      "name": "Orbit Print Works",
+      "email": "accounts@orbit.print.works.example",
+      "behavior": "unreachable"
+    },
+    {
+      "id": "cust_16",
+      "name": "Prakash Plastics",
+      "email": "accounts@prakash.plastics.example",
+      "behavior": "already_paid"
+    },
+    {
+      "id": "cust_17",
+      "name": "Rudra Chemicals",
+      "email": "accounts@rudra.chemicals.example",
+      "behavior": "pays_after_first_contact"
+    },
+    {
+      "id": "cust_18",
+      "name": "Sarovar Foods",
+      "email": "accounts@sarovar.foods.example",
+      "behavior": "pays_after_first_contact"
+    },
+    {
+      "id": "cust_19",
+      "name": "Tulasi Textiles",
+      "email": "accounts@tulasi.textiles.example",
+      "behavior": "dispute"
+    },
+    {
+      "id": "cust_20",
+      "name": "Varun Motors",
+      "email": "accounts@varun.motors.example",
+      "behavior": "promise_then_miss"
+    }
+  ],
+  "invoices": [
+    {
+      "id": "inv_001",
+      "customer_id": "cust_01",
+      "amount": 34300,
+      "currency": "INR",
+      "issued_date": "2026-06-30",
+      "due_date": "2026-07-22",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_002",
+      "customer_id": "cust_01",
+      "amount": 26700,
+      "currency": "INR",
+      "issued_date": "2026-07-14",
+      "due_date": "2026-08-07",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_003",
+      "customer_id": "cust_02",
+      "amount": 76500,
+      "currency": "INR",
+      "issued_date": "2026-07-16",
+      "due_date": "2026-08-13",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_004",
+      "customer_id": "cust_02",
+      "amount": 66000,
+      "currency": "INR",
+      "issued_date": "2026-08-01",
+      "due_date": "2026-08-27",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_005",
+      "customer_id": "cust_02",
+      "amount": 20000,
+      "currency": "INR",
+      "issued_date": "2026-08-01",
+      "due_date": "2026-08-31",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_006",
+      "customer_id": "cust_03",
+      "amount": 65900,
+      "currency": "INR",
+      "issued_date": "2026-07-17",
+      "due_date": "2026-08-06",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_007",
+      "customer_id": "cust_03",
+      "amount": 32400,
+      "currency": "INR",
+      "issued_date": "2026-07-24",
+      "due_date": "2026-08-20",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_008",
+      "customer_id": "cust_03",
+      "amount": 23600,
+      "currency": "INR",
+      "issued_date": "2026-07-06",
+      "due_date": "2026-07-21",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_009",
+      "customer_id": "cust_04",
+      "amount": 43200,
+      "currency": "INR",
+      "issued_date": "2026-08-06",
+      "due_date": "2026-08-22",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_010",
+      "customer_id": "cust_04",
+      "amount": 18700,
+      "currency": "INR",
+      "issued_date": "2026-08-04",
+      "due_date": "2026-08-20",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_011",
+      "customer_id": "cust_04",
+      "amount": 10000,
+      "currency": "INR",
+      "issued_date": "2026-07-05",
+      "due_date": "2026-07-26",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_012",
+      "customer_id": "cust_05",
+      "amount": 27900,
+      "currency": "INR",
+      "issued_date": "2026-06-09",
+      "due_date": "2026-07-09",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_013",
+      "customer_id": "cust_05",
+      "amount": 18700,
+      "currency": "INR",
+      "issued_date": "2026-06-18",
+      "due_date": "2026-07-08",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_014",
+      "customer_id": "cust_06",
+      "amount": 48100,
+      "currency": "INR",
+      "issued_date": "2026-07-30",
+      "due_date": "2026-08-23",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_015",
+      "customer_id": "cust_06",
+      "amount": 15200,
+      "currency": "INR",
+      "issued_date": "2026-07-28",
+      "due_date": "2026-08-25",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_016",
+      "customer_id": "cust_07",
+      "amount": 10200,
+      "currency": "INR",
+      "issued_date": "2026-06-06",
+      "due_date": "2026-07-04",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_017",
+      "customer_id": "cust_07",
+      "amount": 32600,
+      "currency": "INR",
+      "issued_date": "2026-06-19",
+      "due_date": "2026-07-11",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_018",
+      "customer_id": "cust_07",
+      "amount": 29700,
+      "currency": "INR",
+      "issued_date": "2026-08-16",
+      "due_date": "2026-09-02",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_019",
+      "customer_id": "cust_08",
+      "amount": 55300,
+      "currency": "INR",
+      "issued_date": "2026-06-25",
+      "due_date": "2026-07-25",
+      "status": "paid",
+      "paid_date": "2026-07-19"
+    },
+    {
+      "id": "inv_020",
+      "customer_id": "cust_08",
+      "amount": 34000,
+      "currency": "INR",
+      "issued_date": "2026-06-30",
+      "due_date": "2026-07-29",
+      "status": "paid",
+      "paid_date": "2026-07-21"
+    },
+    {
+      "id": "inv_021",
+      "customer_id": "cust_09",
+      "amount": 64900,
+      "currency": "INR",
+      "issued_date": "2026-06-23",
+      "due_date": "2026-07-15",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_022",
+      "customer_id": "cust_09",
+      "amount": 61700,
+      "currency": "INR",
+      "issued_date": "2026-08-12",
+      "due_date": "2026-09-02",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_023",
+      "customer_id": "cust_10",
+      "amount": 60600,
+      "currency": "INR",
+      "issued_date": "2026-06-30",
+      "due_date": "2026-07-15",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_024",
+      "customer_id": "cust_10",
+      "amount": 42500,
+      "currency": "INR",
+      "issued_date": "2026-06-27",
+      "due_date": "2026-07-27",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_025",
+      "customer_id": "cust_11",
+      "amount": 73000,
+      "currency": "INR",
+      "issued_date": "2026-07-16",
+      "due_date": "2026-08-07",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_026",
+      "customer_id": "cust_11",
+      "amount": 82000,
+      "currency": "INR",
+      "issued_date": "2026-08-11",
+      "due_date": "2026-09-02",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_027",
+      "customer_id": "cust_11",
+      "amount": 59200,
+      "currency": "INR",
+      "issued_date": "2026-07-17",
+      "due_date": "2026-08-12",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_028",
+      "customer_id": "cust_12",
+      "amount": 74500,
+      "currency": "INR",
+      "issued_date": "2026-07-31",
+      "due_date": "2026-08-26",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_029",
+      "customer_id": "cust_12",
+      "amount": 52700,
+      "currency": "INR",
+      "issued_date": "2026-08-13",
+      "due_date": "2026-08-31",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_030",
+      "customer_id": "cust_13",
+      "amount": 10400,
+      "currency": "INR",
+      "issued_date": "2026-07-24",
+      "due_date": "2026-08-21",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_031",
+      "customer_id": "cust_13",
+      "amount": 13900,
+      "currency": "INR",
+      "issued_date": "2026-06-16",
+      "due_date": "2026-07-04",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_032",
+      "customer_id": "cust_13",
+      "amount": 62400,
+      "currency": "INR",
+      "issued_date": "2026-08-02",
+      "due_date": "2026-08-17",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_033",
+      "customer_id": "cust_13",
+      "amount": 74300,
+      "currency": "INR",
+      "issued_date": "2026-07-01",
+      "due_date": "2026-07-26",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_034",
+      "customer_id": "cust_14",
+      "amount": 55800,
+      "currency": "INR",
+      "issued_date": "2026-07-27",
+      "due_date": "2026-08-21",
+      "status": "paid",
+      "paid_date": "2026-08-20"
+    },
+    {
+      "id": "inv_035",
+      "customer_id": "cust_14",
+      "amount": 47300,
+      "currency": "INR",
+      "issued_date": "2026-06-26",
+      "due_date": "2026-07-23",
+      "status": "paid",
+      "paid_date": "2026-07-10"
+    },
+    {
+      "id": "inv_036",
+      "customer_id": "cust_15",
+      "amount": 52400,
+      "currency": "INR",
+      "issued_date": "2026-07-04",
+      "due_date": "2026-08-03",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_037",
+      "customer_id": "cust_15",
+      "amount": 4800,
+      "currency": "INR",
+      "issued_date": "2026-07-08",
+      "due_date": "2026-07-27",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_038",
+      "customer_id": "cust_16",
+      "amount": 42200,
+      "currency": "INR",
+      "issued_date": "2026-06-22",
+      "due_date": "2026-07-21",
+      "status": "paid",
+      "paid_date": "2026-07-14"
+    },
+    {
+      "id": "inv_039",
+      "customer_id": "cust_16",
+      "amount": 41500,
+      "currency": "INR",
+      "issued_date": "2026-07-10",
+      "due_date": "2026-08-03",
+      "status": "paid",
+      "paid_date": "2026-07-19"
+    },
+    {
+      "id": "inv_040",
+      "customer_id": "cust_16",
+      "amount": 3300,
+      "currency": "INR",
+      "issued_date": "2026-07-30",
+      "due_date": "2026-08-25",
+      "status": "paid",
+      "paid_date": "2026-08-19"
+    },
+    {
+      "id": "inv_041",
+      "customer_id": "cust_17",
+      "amount": 15200,
+      "currency": "INR",
+      "issued_date": "2026-06-11",
+      "due_date": "2026-07-04",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_042",
+      "customer_id": "cust_17",
+      "amount": 38400,
+      "currency": "INR",
+      "issued_date": "2026-07-24",
+      "due_date": "2026-08-17",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_043",
+      "customer_id": "cust_17",
+      "amount": 19800,
+      "currency": "INR",
+      "issued_date": "2026-08-08",
+      "due_date": "2026-08-29",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_044",
+      "customer_id": "cust_18",
+      "amount": 34900,
+      "currency": "INR",
+      "issued_date": "2026-07-03",
+      "due_date": "2026-07-30",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_045",
+      "customer_id": "cust_18",
+      "amount": 41500,
+      "currency": "INR",
+      "issued_date": "2026-07-30",
+      "due_date": "2026-08-28",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_046",
+      "customer_id": "cust_19",
+      "amount": 78200,
+      "currency": "INR",
+      "issued_date": "2026-06-22",
+      "due_date": "2026-07-08",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_047",
+      "customer_id": "cust_19",
+      "amount": 24500,
+      "currency": "INR",
+      "issued_date": "2026-07-19",
+      "due_date": "2026-08-13",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_048",
+      "customer_id": "cust_20",
+      "amount": 49100,
+      "currency": "INR",
+      "issued_date": "2026-08-02",
+      "due_date": "2026-08-28",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_049",
+      "customer_id": "cust_20",
+      "amount": 80400,
+      "currency": "INR",
+      "issued_date": "2026-06-16",
+      "due_date": "2026-07-08",
+      "status": "open",
+      "paid_date": null
+    },
+    {
+      "id": "inv_050",
+      "customer_id": "cust_20",
+      "amount": 64000,
+      "currency": "INR",
+      "issued_date": "2026-06-13",
+      "due_date": "2026-07-10",
+      "status": "open",
+      "paid_date": null
+    }
+  ]
+}

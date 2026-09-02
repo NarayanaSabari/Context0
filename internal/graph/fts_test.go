@@ -28,7 +28,7 @@ func TestSearchByText_DoesNotMatchInsideWords(t *testing.T) {
 	mango := storeMemory(t, repo, ctx, newMemory(projectID, "she ate a mango for breakfast"))
 	algorithm := storeMemory(t, repo, ctx, newMemory(projectID, "the algorithm sorts in linear time"))
 
-	got, err := repo.SearchByText(ctx, projectID, []string{"go"}, 10)
+	got, _, err := repo.SearchByText(ctx, projectID, []string{"go"}, 10)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestSearchByText_RareTermsOutrankCommonOnes(t *testing.T) {
 			fmt.Sprintf("the deployment %d ran the usual way through the pipeline", i)))
 	}
 
-	got, err := repo.SearchByText(ctx, projectID, []string{"zqxjklmw", "the"}, 10)
+	got, _, err := repo.SearchByText(ctx, projectID, []string{"zqxjklmw", "the"}, 10)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestSearchByText_RanksByHowMuchOfTheQueryIsMatched(t *testing.T) {
 	storeMemory(t, repo, ctx, newMemory(projectID, "Caroline went to the shops"))
 	storeMemory(t, repo, ctx, newMemory(projectID, "the dog barked"))
 
-	got, err := repo.SearchByText(ctx, projectID,
+	got, _, err := repo.SearchByText(ctx, projectID,
 		[]string{"caroline", "rescue", "dog", "biscuit"}, 10)
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -121,7 +121,7 @@ func TestSearchByText_IsScopedToTheProject(t *testing.T) {
 	inA := storeMemory(t, repo, ctx, newMemory(projectA, "the zqxjklmw marker in project A"))
 	storeMemory(t, repo, ctx, newMemory(projectB, "the zqxjklmw marker in project B"))
 
-	got, err := repo.SearchByText(ctx, projectA, []string{"zqxjklmw"}, 10)
+	got, _, err := repo.SearchByText(ctx, projectA, []string{"zqxjklmw"}, 10)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestSearchByText_IsScopedToTheProject(t *testing.T) {
 
 	// The unscoped search is reachable through the API by omitting project_id,
 	// and must still see both.
-	unscoped, err := repo.SearchByText(ctx, "", []string{"zqxjklmw"}, 10)
+	unscoped, _, err := repo.SearchByText(ctx, "", []string{"zqxjklmw"}, 10)
 	if err != nil {
 		t.Fatalf("unscoped search: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestSearchByText_OrsItsTerms(t *testing.T) {
 
 	storeMemory(t, repo, ctx, newMemory(projectID, "Caroline walks by the river each morning"))
 
-	got, err := repo.SearchByText(ctx, projectID,
+	got, _, err := repo.SearchByText(ctx, projectID,
 		[]string{"caroline", "helicopter", "submarine"}, 10)
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -179,7 +179,7 @@ func TestSearchByText_HandlesQueriesWithNothingToMatch(t *testing.T) {
 		{"zero limit", []string{"deployment"}, 0},
 		{"negative limit", []string{"deployment"}, -1},
 	} {
-		got, err := repo.SearchByText(ctx, projectID, tc.keywords, tc.limit)
+		got, _, err := repo.SearchByText(ctx, projectID, tc.keywords, tc.limit)
 		if err != nil {
 			t.Errorf("%s: unexpected error: %v", tc.name, err)
 		}
@@ -208,7 +208,7 @@ func TestSearchByText_TreatsHostileQueriesAsText(t *testing.T) {
 		{"unbalanced \" quote"},
 	}
 	for _, kws := range hostile {
-		if _, err := repo.SearchByText(ctx, projectID, kws, 10); err != nil {
+		if _, _, err := repo.SearchByText(ctx, projectID, kws, 10); err != nil {
 			t.Errorf("a hostile query %q errored rather than simply not matching: %v", kws, err)
 		}
 	}
@@ -232,7 +232,7 @@ func TestSearchByText_RespectsTheLimit(t *testing.T) {
 	}
 
 	const limit = 5
-	got, err := repo.SearchByText(ctx, projectID, []string{"deployment"}, limit)
+	got, _, err := repo.SearchByText(ctx, projectID, []string{"deployment"}, limit)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestSearchByText_HydrationPreservesRankOrder(t *testing.T) {
 			fmt.Sprintf("the zqxjklmw marker appears once in filler %d", i)))
 	}
 
-	got, err := repo.SearchByText(ctx, projectID, []string{"zqxjklmw"}, 10)
+	got, _, err := repo.SearchByText(ctx, projectID, []string{"zqxjklmw"}, 10)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestSearchByText_TermsCarryingSearchSyntaxAreStillJustTerms(t *testing.T) {
 	// A term that lexes into two lexemes sits between the others. Under the
 	// broken form its internal AND reached across the following OR and the
 	// dogs memory was lost.
-	got, err := repo.SearchByText(ctx, projectID, []string{"cats", `say"hello`, "dogs"}, 10)
+	got, _, err := repo.SearchByText(ctx, projectID, []string{"cats", `say"hello`, "dogs"}, 10)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestSearchByText_TermsCarryingSearchSyntaxAreStillJustTerms(t *testing.T) {
 
 	// A leading dash must not negate. Under the broken form this query
 	// excluded the cats memory rather than looking for it.
-	got, err = repo.SearchByText(ctx, projectID, []string{"windowsill", "-cats"}, 10)
+	got, _, err = repo.SearchByText(ctx, projectID, []string{"windowsill", "-cats"}, 10)
 	if err != nil {
 		t.Fatalf("search with a leading dash: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestSearchByText_StopWordsAmongRealTermsAreIgnored(t *testing.T) {
 
 	mem := storeMemory(t, repo, ctx, newMemory(projectID, "the zqxjklmw marker is recorded here"))
 
-	got, err := repo.SearchByText(ctx, projectID, []string{"the", "zqxjklmw", "of"}, 10)
+	got, _, err := repo.SearchByText(ctx, projectID, []string{"the", "zqxjklmw", "of"}, 10)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestSearchByText_WeightsTermsByHowRareTheyAre(t *testing.T) {
 			fmt.Sprintf("the ledger records widespread entry number %d", i)))
 	}
 
-	got, err := repo.SearchByText(ctx, projectID, []string{"zqxjklmw", "widespread"}, 30)
+	got, _, err := repo.SearchByText(ctx, projectID, []string{"zqxjklmw", "widespread"}, 30)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestSearchByText_MatchesTags(t *testing.T) {
 		newMemory(projectID, "the rollout finished without incident", "kubernetes", "postgres"))
 	storeMemory(t, repo, ctx, newMemory(projectID, "an unrelated note about lunch"))
 
-	got, err := repo.SearchByText(ctx, projectID, []string{"kubernetes"}, 10)
+	got, _, err := repo.SearchByText(ctx, projectID, []string{"kubernetes"}, 10)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}

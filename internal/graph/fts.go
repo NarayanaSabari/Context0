@@ -267,7 +267,7 @@ df AS MATERIALIZED (
 	), 1)::float8 AS d
 	FROM lexed
 )
-SELECT id, sum(weighted) AS rank FROM (
+SELECT id, sum(weighted) AS rank, (SELECT sum(%s) FROM df, corpus) AS idf_sum FROM (
 	SELECT %s AS id, %s * ts_rank_cd(to_tsvector('%s', %s), df.q) AS weighted
 	FROM %s."Memory", df, corpus
 	WHERE to_tsvector('%s', %s) @@ df.q
@@ -276,6 +276,7 @@ GROUP BY id ORDER BY rank DESC LIMIT $2`,
 			termsCTE,
 			GraphName,
 			GraphName, textSearchConfig, contentExprFor("m"),
+			idfExpr,
 			idExpr, idfExpr, textSearchConfig, contentExpr,
 			GraphName,
 			textSearchConfig, contentExpr,
@@ -292,7 +293,7 @@ df AS MATERIALIZED (
 	), 1)::float8 AS d
 	FROM lexed
 )
-SELECT id, sum(weighted) AS rank FROM (
+SELECT id, sum(weighted) AS rank, (SELECT sum(%s) FROM df, corpus) AS idf_sum FROM (
 	SELECT %s AS id, %s * ts_rank_cd(to_tsvector('%s', %s), df.q) AS weighted
 	FROM %s."Memory", df, corpus
 	WHERE %s = $2 AND to_tsvector('%s', %s) @@ df.q
@@ -301,6 +302,7 @@ GROUP BY id ORDER BY rank DESC LIMIT $3`,
 			termsCTE,
 			GraphName, projectExpr,
 			GraphName, projectExprFor("m"), textSearchConfig, contentExprFor("m"),
+			idfExpr,
 			idExpr, idfExpr, textSearchConfig, contentExpr,
 			GraphName,
 			projectExpr, textSearchConfig, contentExpr,
@@ -327,27 +329,38 @@ GROUP BY id ORDER BY rank DESC LIMIT $3`,
 // right normalisation depends on the query length and the ranking layer is
 // where that decision is documented and tested.
 //
+// The second result is the sum of the query terms' IDF weights in this
+// project: the scale a memory matching every term once would score on, which
+// is what lets ranking say how complete a match is rather than only how it
+// compares to the rest of the pool. Zero when nothing matched, since the
+// query then returns no rows to carry it.
+//
 // An empty result is not an error: a query whose terms are all stop words has
 // nothing to match.
-func (r *AGERepository) SearchByKeywords(ctx context.Context, projectID string, keywords []string, limit int) ([]KeywordHit, error) {
+func (r *AGERepository) SearchByKeywords(ctx context.Context, projectID string, keywords []string, limit int) ([]KeywordHit, float64, error) {
 	if len(keywords) == 0 || limit <= 0 {
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	sql, args := keywordSearchQuery(projectID, keywords, limit)
 
 	rows, err := r.pool.Query(ctx, sql, args...)
 	if err != nil {
-		return nil, fmt.Errorf("keyword search: %w", err)
+		return nil, 0, fmt.Errorf("keyword search: %w", err)
 	}
 	defer rows.Close()
 
 	var hits []KeywordHit
+	var idfSum float64
 	for rows.Next() {
 		var rawID string
 		var rank float64
-		if err := rows.Scan(&rawID, &rank); err != nil {
-			return nil, fmt.Errorf("scan keyword hit: %w", err)
+		var idf *float64
+		if err := rows.Scan(&rawID, &rank, &idf); err != nil {
+			return nil, 0, fmt.Errorf("scan keyword hit: %w", err)
+		}
+		if idf != nil {
+			idfSum = *idf
 		}
 		id, perr := uuid.Parse(strings.Trim(rawID, `"`))
 		if perr != nil {
@@ -356,10 +369,10 @@ func (r *AGERepository) SearchByKeywords(ctx context.Context, projectID string, 
 		hits = append(hits, KeywordHit{ID: id, Rank: rank})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("keyword search: %w", err)
+		return nil, 0, fmt.Errorf("keyword search: %w", err)
 	}
 
-	return hits, nil
+	return hits, idfSum, nil
 }
 
 // hydrateKeywordHits loads the full memories behind a set of keyword hits,
@@ -423,12 +436,13 @@ func (r *AGERepository) hydrateKeywordHits(ctx context.Context, hits []KeywordHi
 // SearchByVector: holding two pool connections per call deadlocks the pool as
 // soon as concurrency reaches MaxConns, which is a bug this repository has
 // already had once.
-func (r *AGERepository) SearchByText(ctx context.Context, projectID string, keywords []string, limit int) ([]model.MemoryWithContext, error) {
-	hits, err := r.SearchByKeywords(ctx, projectID, keywords, limit)
+func (r *AGERepository) SearchByText(ctx context.Context, projectID string, keywords []string, limit int) ([]model.MemoryWithContext, float64, error) {
+	hits, idfSum, err := r.SearchByKeywords(ctx, projectID, keywords, limit)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return r.hydrateKeywordHits(ctx, hits)
+	results, err := r.hydrateKeywordHits(ctx, hits)
+	return results, idfSum, err
 }
 
 // KeywordsAreSearchable reports whether the terms lex to anything Postgres can

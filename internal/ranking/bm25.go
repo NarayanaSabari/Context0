@@ -68,6 +68,26 @@ const bm25MidpointCoverage = 0.4
 // information ts_rank_cd was adopted to provide.
 const bm25SteepnessScale = 2.3
 
+// FullMatchScore is the raw keyword score a memory matching every query term
+// once would receive: bm25RankPerTerm times the sum of the terms' IDF
+// weights, which the repository reports alongside the hits.
+//
+// It is the scale the min-max fusion divides keyword scores by, and the
+// reason is the scenario TestQuery_OneCommonWordDoesNotOutrankAStrongSemanticMatch
+// reproduces end to end: a pool whose best lexical match covers one common
+// word of a four-word question. Dividing by the pool's own best would grade
+// that match 1.0, because it is the best there is; dividing by what a full
+// match would score grades it by how much of the question it answers, which
+// for one low-IDF word of four is close to nothing. A zero sum, meaning the
+// repository could not report one, tells the caller to fall back to the pool
+// maximum.
+func FullMatchScore(idfSum float64) float64 {
+	if math.IsNaN(idfSum) || idfSum <= 0 {
+		return 0
+	}
+	return bm25RankPerTerm * idfSum
+}
+
 // NormalizeBM25 maps a raw ts_rank_cd score onto [0, 1], adapting to the
 // query's length.
 //
@@ -172,14 +192,27 @@ func PassesSemanticGate(cosine float64, hasCosine, hasOtherEvidence bool) bool {
 // than rescaling the others: a memory's keyword score means the same thing
 // whether or not the embedder was reachable.
 //
-// The split favours lexical evidence over cosine similarity, which is the same
-// judgement RelevanceTier encodes in a stronger form. A memory containing the
-// query's rare terms is better evidence than one an embedding places nearby,
-// because cosine similarity is a statement about direction in a space rather
-// than about whether the memory says what was asked.
+// They were 0.5 / 0.35 / 0.15, favouring lexical evidence on the argument
+// that a memory containing the query's rare terms is better evidence than one
+// an embedding places nearby. Measured on the offline LoCoMo harness
+// (docs/WORKLOG.md, Track A) that argument only holds once both signals are
+// on the same scale: with per-query min-max normalisation in place, a sweep
+// of the keyword weight from 0.30 to 0.60 put the best answerable MRR at
+// 0.40-0.45 on the verbatim-turns corpus and at 0.30-0.35 on the extracted
+// corpus, with every neighbouring pair inside the paired confidence interval.
+//
+// 0.45 / 0.40 is chosen from that plateau for a property the sweep cannot
+// see: with the keyword weight at or above the semantic one, a memory that
+// is the best lexical match for a query can never be outranked by a memory
+// with no lexical evidence at all, however the vector pool happens to
+// rescale. That is the guarantee behind TestExactKeywordMatchOutranksVectorOnlyResult,
+// which reproduces a soak-run bug where a write became unreadable by a rare
+// token in its own content, and it would not survive 0.40 / 0.45. The entity
+// weight was swept separately and moves answerable MRR by under 0.01 in
+// either direction, so it stays.
 const (
-	fusionKeywordWeight  = 0.5
-	fusionSemanticWeight = 0.35
+	fusionKeywordWeight  = 0.45
+	fusionSemanticWeight = 0.40
 	fusionEntityWeight   = 0.15
 )
 
@@ -201,9 +234,46 @@ const (
 // Every input is expected in [0, 1]: keyword through NormalizeBM25, semantic
 // as cosine similarity, entity as EntityOverlap.
 func FuseRelevance(keyword, semantic, entity float64) float64 {
+	return FuseWeighted(keyword, semantic, entity, fusionKeywordWeight, fusionSemanticWeight, fusionEntityWeight)
+}
+
+// DefaultFusionWeights are the weights FuseRelevance uses, exported so a
+// caller that varies them for an ablation starts from the production values.
+func DefaultFusionWeights() (keyword, semantic, entity float64) {
+	return fusionKeywordWeight, fusionSemanticWeight, fusionEntityWeight
+}
+
+// FuseWeighted is FuseRelevance with caller-supplied weights. The weights are
+// normalised to sum to one, so the result stays in [0, 1] whatever the caller
+// passes and an absent signal still contributes zero rather than rescaling
+// the others.
+func FuseWeighted(keyword, semantic, entity, wk, ws, we float64) float64 {
+	total := wk + ws + we
+	if total <= 0 {
+		return 0
+	}
 	return clamp01(
-		fusionKeywordWeight*clamp01(keyword) +
-			fusionSemanticWeight*clamp01(semantic) +
-			fusionEntityWeight*clamp01(entity),
+		(wk*clamp01(keyword) + ws*clamp01(semantic) + we*clamp01(entity)) / total,
 	)
+}
+
+// MinMax rescales v from [lo, hi] onto [0, 1]. A degenerate range maps to 1:
+// every candidate scored the same, so each is as good as the best.
+func MinMax(v, lo, hi float64) float64 {
+	if hi <= lo {
+		return 1
+	}
+	return clamp01((v - lo) / (hi - lo))
+}
+
+// RRF is the reciprocal-rank-fusion contribution of one ranked position:
+// weight / (k + rank), with rank 1-based. Cormack, Clarke and Buettcher
+// (2009) proposed k = 60, and it is what most implementations still use; the
+// constant flattens the difference between the top few ranks so that no one
+// retriever's rank 1 dominates the sum.
+func RRF(rank int, k, weight float64) float64 {
+	if rank <= 0 {
+		return 0
+	}
+	return weight / (k + float64(rank))
 }

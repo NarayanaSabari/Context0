@@ -168,3 +168,31 @@ func TestEntityMatch_LosesToAStrongLexicalMatch(t *testing.T) {
 			entityOnly, strongLexical)
 	}
 }
+
+// TestEntityOverlapCount_AgreesWithEntityOverlap pins the two forms to each
+// other: the database-counted variant must give the same share as counting
+// the names in Go, including on duplicated and empty query entities, and it
+// must clamp a count that exceeds the distinct query set.
+func TestEntityOverlapCount_AgreesWithEntityOverlap(t *testing.T) {
+	cases := []struct {
+		name    string
+		memory  []string
+		query   []string
+		matched int
+	}{
+		{"full match", []string{"biscuit", "caroline"}, []string{"biscuit", "caroline"}, 2},
+		{"half match", []string{"biscuit"}, []string{"biscuit", "caroline"}, 1},
+		{"no match", []string{"melanie"}, []string{"biscuit"}, 0},
+		{"duplicate query entities", []string{"biscuit"}, []string{"biscuit", "biscuit", ""}, 1},
+		{"empty query", []string{"biscuit"}, nil, 1},
+	}
+	for _, c := range cases {
+		want := EntityOverlap(c.memory, c.query)
+		if got := EntityOverlapCount(c.matched, c.query); got != want {
+			t.Errorf("%s: EntityOverlapCount(%d, %v) = %v, EntityOverlap = %v", c.name, c.matched, c.query, got, want)
+		}
+	}
+	if got := EntityOverlapCount(5, []string{"biscuit"}); got != 1 {
+		t.Errorf("a count above the distinct query set should clamp to 1, got %v", got)
+	}
+}
