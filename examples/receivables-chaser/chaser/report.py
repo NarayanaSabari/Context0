@@ -19,7 +19,13 @@ def _inr(amount: int) -> str:
     return f"₹{amount:,}"
 
 
-def build_report(result: RunResult, merchant: str, start_date: date, end_date: date) -> dict[str, Any]:
+def build_report(
+    result: RunResult,
+    merchant: str,
+    start_date: date,
+    end_date: date,
+    memory_status: str = "unknown",
+) -> dict[str, Any]:
     initial = result.initial_invoices
     final = result.final_invoices
 
@@ -72,6 +78,7 @@ def build_report(result: RunResult, merchant: str, start_date: date, end_date: d
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "invoices_processed": len(final),
+        "memory": memory_status,
         "contacts_by_rung": contacts_by_rung,
         "amount_outstanding_start": outstanding_start,
         "amount_recovered": total_recovered,
@@ -105,6 +112,11 @@ def render_markdown(data: dict[str, Any]) -> str:
         f"# Receivables Chaser Report -- {data['merchant']}",
         "",
         f"Run: {data['start_date']} to {data['end_date']} ({data['invoices_processed']} invoices)",
+        # Stated in the header: which memory was actually in the loop.
+        # Losing Kora mid-run is caught and logged rather than raised, so
+        # without this the report of a degraded run is indistinguishable
+        # from a healthy one once the warning has scrolled away.
+        f"Memory: {data.get('memory', 'unknown')}",
         "",
         "## Contacts sent",
         "",

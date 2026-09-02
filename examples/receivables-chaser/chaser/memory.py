@@ -32,6 +32,16 @@ class Memory(Protocol):
 
     def recall(self, project_id: str, query: str, top_k: int = 50) -> list[str]: ...
 
+    def status(self) -> str:
+        """One line naming the backend actually in use, for the report.
+
+        Every way of losing Kora at runtime is caught and logged rather than
+        raised, so a degraded run prints a report that looks entirely normal.
+        Asking the memory to describe itself lets the report carry that fact
+        instead of leaving it in a warning that has scrolled away.
+        """
+        ...
+
 
 class KoraMemory:
     """Wraps the Kora SDK client.
@@ -68,6 +78,9 @@ class KoraMemory:
         results = self._client(project_id).query(query, top_k=top_k)
         return [r.memory.content for r in results]
 
+    def status(self) -> str:
+        return f"Kora at {self._endpoint}"
+
 
 class NullMemory:
     """Used when no Kora endpoint is configured at all.
@@ -88,6 +101,9 @@ class NullMemory:
             logger.warning("no Kora configured; %s is running without memory", project_id)
             self._warned.add(project_id)
         return []
+
+    def status(self) -> str:
+        return "no memory (KORA_URL / KORA_API_KEY not set)"
 
 
 class SafeMemory:
@@ -119,3 +135,11 @@ class SafeMemory:
         if not self._warned:
             logger.warning("Kora unreachable (%s); continuing without memory", exc)
             self._warned = True
+
+    def status(self) -> str:
+        # A failure part-way through still means the run was not backed by
+        # memory for its whole length, so say so rather than reporting the
+        # endpoint it started out talking to.
+        if self._warned:
+            return f"{self._inner.status()} -- UNREACHABLE, ran without memory"
+        return self._inner.status()

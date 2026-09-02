@@ -29,6 +29,9 @@ class FakeMemory:
     def recall(self, project_id: str, query: str, top_k: int = 50) -> list[str]:
         return list(self.store.get(project_id, []))[-top_k:]
 
+    def status(self) -> str:
+        return "fake in-memory Kora"
+
 
 class RankingFakeMemory:
     """A Kora stand-in that ranks and truncates the way the real engine does.
@@ -70,6 +73,9 @@ class RankingFakeMemory:
             key=lambda pair: (-self._score(query, pair[1]), -pair[0]),
         )
         return [content for _, content in ranked[:top_k]]
+
+    def status(self) -> str:
+        return "ranking fake in-memory Kora"
 
 
 @pytest.fixture
