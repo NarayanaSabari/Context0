@@ -94,6 +94,24 @@ functional, but a customer who has already promised gets reminded daily
 until the promise is due, since there is nowhere to remember that they
 already answered.
 
+That difference is the whole point of the example, and it is measurable on
+the committed fixture: both configurations recover the same ₹633,300, but
+the ladder alone sends 430 messages to do it and the memory-backed run sends
+49. Same money, an order of magnitude less nagging.
+
+Two details matter if you compare runs yourself:
+
+- **Each run starts from an empty store.** Kora persists, so without this a
+  second run would read the first run's contacts and skip customers it had
+  not actually contacted yet -- two identical commands would print different
+  numbers. Pass `--resume` to deliberately carry history across runs; a
+  second `--resume` run sends far fewer messages, because it already knows
+  who was chased and who promised what.
+- **Each customer gets their own project** (`receivables-{merchant}-{id}`).
+  Sharing one project across customers means a `top_k` recall for one
+  customer comes back mostly about others, and their own promises fall off
+  the end of the ranked list.
+
 ## Run it live (Razorpay test mode)
 
 ```bash

@@ -20,6 +20,15 @@ Say out loud: "Every decision here is a rule with a name in the audit log.
 The only thing an LLM does is reword the message, and the tests mock it.
 Forcing a model into the decision would have made the audit trail unexplainable."
 
+**The strongest beat, if you have a live engine running.** Run the same command twice, once without `KORA_URL` set and once with it:
+
+"Same fixture, same rules, same money recovered: ₹633,300 both times.
+Without memory the agent sends 430 messages to collect it. With Kora it sends 49.
+The memory engine did not recover more; it recovered the same amount without nagging anyone who had already promised to pay.
+That is what an agent's memory is actually worth, and it is the number a merchant would feel."
+
+If you want to show memory persisting rather than a clean run, add `--resume` and run it a second time: the agent already knows who was chased and sends almost nothing.
+
 ## 2:10 The measurement story (80 s)
 
 Switch to the README table.

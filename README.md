@@ -44,6 +44,16 @@ Normalising both per query fixed most of that.
 The graph's entity signal, the feature the project is named for, measured +0.005 MRR and was left in at its measured weight.
 The full ablation, the failure buckets before and after, the papers used and rejected, and what is left on the table are in the report; the step-by-step log with reverts is [docs/WORKLOG.md](docs/WORKLOG.md).
 
+What the memory is worth to an agent, measured the same way on the receivables-chaser example over 21 days and 50 invoices:
+
+| | recovered | messages sent |
+|---|---|---|
+| escalation ladder alone | ₹633,300 | 430 |
+| with Kora as memory | ₹633,300 | **49** |
+
+The engine does not recover more money. It recovers the same money without re-chasing anyone who had already promised to pay, disputed the invoice, or been contacted that day.
+Reproduce both rows with `make demo`, once with `KORA_URL` unset and once with it pointed at a running engine.
+
 ```bash
 make eval            # needs Docker; loads the corpus into a throwaway Postgres and prints the table above
 make demo            # the receivables-chaser agent, offline, with Kora as its memory (see examples/)

@@ -44,11 +44,12 @@ Every number in the README and the report was produced by `make eval`. Do not ad
 
 **Before the video (tomorrow, 2026-09-03):**
 1. Run `make demo` once and read the report it prints; the pitch script narrates it tick by tick.
-2. For the live beat, start the engine (`docker compose up -d`, credentials in `.env` per the README), export `KORA_URL` and `KORA_API_KEY`, and run `make demo` again. Use `--days 14` if the live run's ~2 minutes is too long on camera; the SDK opens one HTTP connection per call, which is the cause and is outside the demo's scope.
-3. Read `docs/PITCH.md` end to end and have the "why not an LLM here" answers ready.
+2. For the live beat, start the engine (`docker compose up -d`, credentials in `.env` per the README), export `KORA_URL` and `KORA_API_KEY`, and run `make demo` again. The live run takes about 6 seconds over 21 ticks. Run it once without `KORA_URL` and once with it: both recover ₹633,300, but the memory-backed run sends 49 messages against 430. That contrast is the strongest thing in the demo, so give it a beat.
+3. If this machine's containers are still up, note that `docker compose up -d` from the repo root collides with the running `kora-bench-*` benchmark containers, which must survive (section 4). Use a separate project instead: `docker compose -p kora-demo -f docker-compose.yaml -f docker-compose.demo.yaml up -d`, which serves the API on 18095. `docker-compose.demo.yaml` is gitignored and documents its own reasoning.
+4. Read `docs/PITCH.md` end to end and have the "why not an LLM here" answers ready.
 
 **Before submitting:**
-4. Confirm the form deadline and the student-only eligibility on the [application form](https://forms.gle/d9r2gvxp8cmoZhon9). A third-party post says applications close 2026-09-05; the official page shows no date.
+4. Deadline and eligibility were confirmed on the [application form](https://forms.gle/d9r2gvxp8cmoZhon9) on 2026-09-02: applications close **2026-09-05**, and the event is **students only**. This is no longer a belief.
 5. Decide the track: Revenue Recovery (recommended, the demo fits its stated bar) or Open.
 6. Razorpay test-mode keys go in a local `.env` only if you want the live Razorpay path on camera; the recorded fixture is what the demo uses otherwise. Never commit `.env`.
 7. Merge PR #100 when CI is green, or submit the branch URL; the README's numbers are on the branch, not on `main`.
