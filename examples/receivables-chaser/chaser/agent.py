@@ -56,7 +56,22 @@ def run(
     anchor date. Deterministic given the client's own data: same world, same
     days, the same audit log every time.
     """
-    project_id = f"receivables-{merchant}"
+    # One project per customer, not one per merchant.
+    #
+    # Every customer's history used to go into a single `receivables-{merchant}`
+    # project, which is fine against a fake that returns everything but wrong
+    # against a real engine: a recall asks for the top 50 matches, and with 20
+    # customers writing to one project, 44 of those 50 came back about somebody
+    # else. The customer's own promises and disputes were ranked out of the
+    # window, so the policy stopped seeing them and the agent re-chased people
+    # who had already promised to pay.
+    #
+    # Scoping by customer is also the honest modelling choice: these histories
+    # are never queried together, and a promise from one customer is not
+    # evidence about another.
+    def project_for(customer_id: str) -> str:
+        return f"receivables-{merchant}-{customer_id}"
+
     start_date = razorpay.today()
 
     audit: list[AuditEntry] = []
@@ -87,6 +102,7 @@ def run(
             customer = razorpay.get_customer(customer_id)
             customers[customer_id] = customer
 
+            project_id = project_for(customer_id)
             query = f"customer {customer.name} invoice payment promise dispute contact"
             raw = memory.recall(project_id, query, top_k=50)
             customer_facts = factsmod.parse_facts(raw)
@@ -139,7 +155,7 @@ def run(
         for inv in sorted(razorpay.list_invoices(today), key=lambda i: i.id):
             if inv.status == "paid" and inv.id not in paid_recorded:
                 customer = razorpay.get_customer(inv.customer_id)
-                memory.remember(project_id, notes.format_payment(today, customer.name, inv))
+                memory.remember(project_for(inv.customer_id), notes.format_payment(today, customer.name, inv))
                 paid_recorded.add(inv.id)
 
         final_invoices = {inv.id: inv for inv in sorted(razorpay.list_invoices(today), key=lambda i: i.id)}

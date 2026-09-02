@@ -30,9 +30,56 @@ class FakeMemory:
         return list(self.store.get(project_id, []))[-top_k:]
 
 
+class RankingFakeMemory:
+    """A Kora stand-in that ranks and truncates the way the real engine does.
+
+    FakeMemory above returns everything in a project regardless of the query,
+    which makes it blind to the failure that matters most here: if the agent
+    writes every customer's notes into one project and then asks for top_k
+    results, the engine returns the top_k best matches across ALL customers,
+    and a given customer's own promises can be crowded out entirely by
+    unrelated traffic. Against FakeMemory that run looks perfect; against a
+    real Kora the agent stopped seeing promises and disputes altogether.
+
+    So this fake keeps the two properties of the real engine that the bug
+    depended on -- relevance ordering and a hard top_k cut -- while staying
+    deterministic. Scoring is deliberately crude (shared words, no IDF, no
+    vectors): the point is not to imitate the ranker but to ensure that
+    writing unrelated memories into a shared project pushes the relevant
+    ones out, which is exactly what a real engine does.
+    """
+
+    def __init__(self) -> None:
+        self.store: dict[str, list[str]] = {}
+
+    def remember(self, project_id: str, content: str, type: str = "episodic") -> None:
+        self.store.setdefault(project_id, []).append(content)
+
+    @staticmethod
+    def _score(query: str, content: str) -> int:
+        q = {w.strip(".,:()").lower() for w in query.split()}
+        c = {w.strip(".,:()").lower() for w in content.split()}
+        return len(q & c)
+
+    def recall(self, project_id: str, query: str, top_k: int = 50) -> list[str]:
+        items = self.store.get(project_id, [])
+        # Rank by relevance, tie-break by recency (later writes first), then
+        # cut to top_k -- the order the engine's own fusion produces.
+        ranked = sorted(
+            enumerate(items),
+            key=lambda pair: (-self._score(query, pair[1]), -pair[0]),
+        )
+        return [content for _, content in ranked[:top_k]]
+
+
 @pytest.fixture
 def fake_memory() -> Memory:
     return FakeMemory()
+
+
+@pytest.fixture
+def ranking_fake_memory() -> Memory:
+    return RankingFakeMemory()
 
 
 @pytest.fixture
@@ -89,3 +136,11 @@ def tiny_world_path(tmp_path: Path) -> Path:
     path = tmp_path / "world.json"
     path.write_text(json.dumps(TINY_WORLD))
     return path
+
+
+@pytest.fixture
+def new_ranking_fake_memory():
+    """A factory, for tests that need to keep one ranking fake alive across
+    two separate agent runs -- which is how a persistent store behaves.
+    """
+    return RankingFakeMemory

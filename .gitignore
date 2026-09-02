@@ -68,6 +68,7 @@ site/.vite/
 # Local compose override (host port remaps, machine-specific)
 docker-compose.override.yaml
 docker-compose.override.yml
+docker-compose.demo.yaml
 
 # Offline evaluation harness (see eval/README.md).
 # eval/data holds text derived from the LoCoMo dataset, which is CC BY-NC 4.0

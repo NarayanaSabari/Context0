@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import sys
+import uuid
 from datetime import timedelta
 from pathlib import Path
 from typing import Optional
@@ -67,7 +68,29 @@ def _run(args: argparse.Namespace) -> int:
     # invoices Razorpay has right now and acts once, the way a cron job
     # firing daily against the real API would.
     days = 1 if args.live else args.days
-    result = agent.run(razorpay, memory, drafter, days=days, merchant=args.merchant)
+
+    # Each run gets its own memory namespace unless --resume is passed.
+    #
+    # Kora persists, so without this a second run reads the first run's
+    # memories and behaves differently: the agent sees contacts it has not
+    # made yet in this run and skips them. Two identical commands produced
+    # Rs 221,200 and then Rs 259,900, which makes the demo unreproducible.
+    #
+    # The namespace has to be genuinely fresh rather than merely derived from
+    # the run's inputs: a namespace that is a pure function of the command is
+    # the same namespace on the second run, which is the accumulating case
+    # again. So this is a random suffix, and the determinism it buys is of
+    # the output, not of the name -- every run starts from an empty store and
+    # therefore makes the same decisions.
+    #
+    # --resume opts back into carrying history across runs, which is worth
+    # demonstrating deliberately: run once, then run again with --resume and
+    # the agent already knows who promised what.
+    merchant = args.merchant
+    if not args.resume:
+        merchant = f"{args.merchant}-{uuid.uuid4().hex[:8]}"
+
+    result = agent.run(razorpay, memory, drafter, days=days, merchant=merchant)
 
     start_date = razorpay.today()
     end_date = start_date + timedelta(days=days - 1)
@@ -97,6 +120,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     run_parser.add_argument("--days", type=int, default=21, help="daily ticks to simulate in --recorded mode")
     run_parser.add_argument("--world", default=str(DEFAULT_WORLD), help="path to the recorded world fixture")
     run_parser.add_argument("--merchant", default="acme", help="merchant slug; scopes the Kora project")
+    run_parser.add_argument(
+        "--resume", action="store_true",
+        help="carry memory over from previous runs instead of starting from an empty store",
+    )
     run_parser.add_argument("--kora-url", default=None, help="overrides the KORA_URL environment variable")
     run_parser.add_argument("--api-key", default=None, help="overrides the KORA_API_KEY environment variable")
     run_parser.add_argument("--out-dir", default=str(EXAMPLE_ROOT), help="where to write audit.jsonl and report.json")
