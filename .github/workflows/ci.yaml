@@ -367,8 +367,29 @@ jobs:
             --set postgres.password="$E2E_PG_PASSWORD" \
             --set auth.apiKeys="$E2E_API_KEY"
 
-          kubectl -n kora wait --for=condition=ready pod -l app=postgres-age --timeout=120s
-          kubectl -n kora wait --for=condition=ready pod -l app=kora-api --timeout=120s
+          # `helm install` returns once the API server has accepted the
+          # manifests, not once the controllers have created anything. So a
+          # `kubectl wait` for a pod condition can arrive while the label
+          # selector still matches nothing, and `wait` treats "no such object"
+          # as an error rather than something to wait for:
+          #
+          #   error: no matching resources found
+          #
+          # That is a race, not a deployment failure, and it fails the most
+          # expensive job in CI several minutes in. Observed on a docs-only
+          # change that could not have affected the deployment, which reran
+          # green with no edits.
+          #
+          # `rollout status` is the right instrument: it waits on the
+          # StatefulSet and Deployment themselves, which exist the moment helm
+          # returns, and it only reports success once the desired replicas are
+          # actually ready. The pod-level waits stay as a cheap assertion that
+          # what became ready is what we asked for.
+          kubectl -n kora rollout status statefulset/postgres-age --timeout=180s
+          kubectl -n kora rollout status deployment/kora-api --timeout=180s
+
+          kubectl -n kora wait --for=condition=ready pod -l app=postgres-age --timeout=60s
+          kubectl -n kora wait --for=condition=ready pod -l app=kora-api --timeout=60s
 
       - name: Port forward
         run: |
