@@ -293,7 +293,7 @@ func runEval(args []string) error {
 	passes := fs.Int("passes", 3, "query passes; the first scores, the rest time")
 	graphSignals := fs.String("graph-signals", "on", "on, or off for the FTS+vector ablation")
 	out := fs.String("out", "", "report path (default eval/results/<corpus>-<embedder>.json)")
-	traceName := fs.String("trace", "", "also write a per-question retrieval trace, as this file name beside the report")
+	withTrace := fs.Bool("trace", false, "also write a per-question retrieval trace beside the report, as <report>-trace.json")
 	fusionMode := fs.String("fusion", string(retrieval.DefaultFusion().Mode), "linear, minmax or rrf; see retrieval.Fusion")
 	weights := fs.String("weights", "", "keyword,semantic,entity fusion weights (default: the engine's)")
 	rrfK := fs.Float64("rrf-k", 60, "reciprocal rank fusion constant")
@@ -452,7 +452,7 @@ func runEval(args []string) error {
 		for name, d := range trace.Stages {
 			stageTotals[name] += d
 		}
-		if *traceName != "" {
+		if *withTrace {
 			traces = append(traces, buildTrace(q, trace, docByID, present))
 		}
 		ids := make([]uuid.UUID, len(hits))
@@ -596,15 +596,15 @@ func runEval(args []string) error {
 		return err
 	}
 
-	if *traceName != "" {
+	if *withTrace {
 		raw, err := json.MarshalIndent(traces, "", " ")
 		if err != nil {
 			return err
 		}
-		// Beside the report, by base name only: the trace is an artefact of
-		// this run, and confining it to the report's directory is also what
-		// keeps a path from the command line from being written anywhere.
-		tracePath := filepath.Join(filepath.Dir(*out), filepath.Base(*traceName))
+		// Named after the report rather than by a second path flag: the
+		// trace is an artefact of this run, and one output location is one
+		// fewer path to reason about.
+		tracePath := strings.TrimSuffix(*out, ".json") + "-trace.json"
 		if err := os.WriteFile(tracePath, raw, 0o600); err != nil {
 			return err
 		}
