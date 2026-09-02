@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -115,7 +116,7 @@ type SnapshotDoc struct {
 
 // LoadSnapshot reads a dumped corpus.
 func LoadSnapshot(path string) ([]SnapshotDoc, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +140,7 @@ func ExtractedCorpus(snapshotPath, labelsPath string) (*Corpus, error) {
 	if err != nil {
 		return nil, err
 	}
-	raw, err := os.ReadFile(labelsPath)
+	raw, err := os.ReadFile(filepath.Clean(labelsPath))
 	if err != nil {
 		return nil, err
 	}

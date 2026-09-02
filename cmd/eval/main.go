@@ -44,7 +44,7 @@ import (
 const (
 	defaultDataDir     = "eval/data"
 	defaultFixturesDir = "eval/fixtures/locomo"
-	defaultDSN         = "postgres://kora:eval@localhost:55450/kora?sslmode=disable"
+	dsnEnv             = "KORA_EVAL_DATABASE_URL"
 	nomicDim           = 768
 )
 
@@ -131,7 +131,7 @@ func runFixtures(args []string) error {
 		return err
 	}
 	if _, err := os.Stat(p.sha); errors.Is(err, os.ErrNotExist) {
-		if err := os.WriteFile(p.sha, []byte(ds.SHA256+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(p.sha, []byte(ds.SHA256+"\n"), 0o600); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "recorded dataset sha256 %s\n", ds.SHA256)
@@ -206,7 +206,7 @@ func ensureDataset(path string) error {
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "downloading %s\n", evalset.DatasetURL)
@@ -218,12 +218,12 @@ func ensureDataset(path string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download dataset: HTTP %d", resp.StatusCode)
 	}
-	f, err := os.Create(path)
+	f, err := os.Create(filepath.Clean(path))
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	return f.Close()
@@ -284,7 +284,7 @@ type questionReport struct {
 
 func runEval(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	dsn := fs.String("dsn", envOr("KORA_EVAL_DATABASE_URL", defaultDSN), "empty PostgreSQL+AGE+pgvector database")
+	dsn := fs.String("dsn", os.Getenv(dsnEnv), "empty PostgreSQL+AGE+pgvector database (default: $"+dsnEnv+", which scripts/eval_db.sh up prints)")
 	dataDir := fs.String("data", defaultDataDir, "directory holding the dataset and snapshot")
 	fixturesDir := fs.String("fixtures", defaultFixturesDir, "directory of committed fixtures")
 	corpusName := fs.String("corpus", "turns", "turns (verbatim utterances, exact labels) or extracted (snapshot of the 0.690 run)")
@@ -293,7 +293,7 @@ func runEval(args []string) error {
 	passes := fs.Int("passes", 3, "query passes; the first scores, the rest time")
 	graphSignals := fs.String("graph-signals", "on", "on, or off for the FTS+vector ablation")
 	out := fs.String("out", "", "report path (default eval/results/<corpus>-<embedder>.json)")
-	tracePath := fs.String("trace", "", "also write a per-question retrieval trace for failure analysis")
+	traceName := fs.String("trace", "", "also write a per-question retrieval trace, as this file name beside the report")
 	fusionMode := fs.String("fusion", string(retrieval.DefaultFusion().Mode), "linear, minmax or rrf; see retrieval.Fusion")
 	weights := fs.String("weights", "", "keyword,semantic,entity fusion weights (default: the engine's)")
 	rrfK := fs.Float64("rrf-k", 60, "reciprocal rank fusion constant")
@@ -307,6 +307,15 @@ func runEval(args []string) error {
 	if *passes < 1 {
 		return errors.New("-passes must be at least 1")
 	}
+	if *dsn == "" {
+		return errors.New("no database: set " + dsnEnv + " or pass -dsn; scripts/eval_db.sh up starts one and prints its URL")
+	}
+	// top_k is an int32 on the wire; the engine clamps it to 200, and asking
+	// for more here would only be truncated there.
+	if *topK < 1 || *topK > 200 {
+		return fmt.Errorf("-topk must be between 1 and 200, got %d", *topK)
+	}
+	topK32 := int32(*topK)
 	p := newPaths(*dataDir, *fixturesDir)
 	ctx := context.Background()
 
@@ -435,7 +444,7 @@ func runEval(args []string) error {
 	// a cold cache and a cold pool are a property of the run, not the engine.
 	for _, q := range ds.Questions {
 		start := time.Now()
-		hits, trace, err := engine.RetrieveTraced(ctx, q.Question, evalset.ProjectID(q.Conversation), nil, int32(*topK))
+		hits, trace, err := engine.RetrieveTraced(ctx, q.Question, evalset.ProjectID(q.Conversation), nil, topK32)
 		elapsed := time.Since(start)
 		if err != nil {
 			return fmt.Errorf("query %s: %w", q.ID, err)
@@ -443,7 +452,7 @@ func runEval(args []string) error {
 		for name, d := range trace.Stages {
 			stageTotals[name] += d
 		}
-		if *tracePath != "" {
+		if *traceName != "" {
 			traces = append(traces, buildTrace(q, trace, docByID, present))
 		}
 		ids := make([]uuid.UUID, len(hits))
@@ -465,11 +474,11 @@ func runEval(args []string) error {
 	runtime.GC()
 	runtime.ReadMemStats(&before)
 	if *cpuProfile != "" {
-		f, err := os.Create(*cpuProfile)
+		f, err := os.Create(filepath.Clean(*cpuProfile))
 		if err != nil {
 			return err
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if err := pprof.StartCPUProfile(f); err != nil {
 			return fmt.Errorf("cpu profile: %w", err)
 		}
@@ -486,7 +495,7 @@ func runEval(args []string) error {
 	for pass := 2; pass <= *passes; pass++ {
 		for _, q := range ds.Questions {
 			start := time.Now()
-			if _, err := engine.Retrieve(ctx, q.Question, evalset.ProjectID(q.Conversation), nil, int32(*topK)); err != nil {
+			if _, err := engine.Retrieve(ctx, q.Question, evalset.ProjectID(q.Conversation), nil, topK32); err != nil {
 				return fmt.Errorf("query %s (pass %d): %w", q.ID, pass, err)
 			}
 			durations = append(durations, time.Since(start))
@@ -495,12 +504,12 @@ func runEval(args []string) error {
 	}
 	runtime.ReadMemStats(&after)
 	if *memProfile != "" {
-		f, err := os.Create(*memProfile)
+		f, err := os.Create(filepath.Clean(*memProfile))
 		if err != nil {
 			return err
 		}
 		if err := pprof.Lookup("allocs").WriteTo(f, 0); err != nil {
-			f.Close()
+			_ = f.Close()
 			return fmt.Errorf("alloc profile: %w", err)
 		}
 		if err := f.Close(); err != nil {
@@ -576,25 +585,30 @@ func runEval(args []string) error {
 	if *out == "" {
 		*out = filepath.Join("eval", "results", fmt.Sprintf("%s-%s.json", corpus.Name, *embedderName))
 	}
-	if err := os.MkdirAll(filepath.Dir(*out), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(*out), 0o750); err != nil {
 		return err
 	}
 	raw, err := json.MarshalIndent(rep, "", " ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(*out, raw, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Clean(*out), raw, 0o600); err != nil {
 		return err
 	}
 
-	if *tracePath != "" {
+	if *traceName != "" {
 		raw, err := json.MarshalIndent(traces, "", " ")
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(*tracePath, raw, 0o644); err != nil {
+		// Beside the report, by base name only: the trace is an artefact of
+		// this run, and confining it to the report's directory is also what
+		// keeps a path from the command line from being written anywhere.
+		tracePath := filepath.Join(filepath.Dir(*out), filepath.Base(*traceName))
+		if err := os.WriteFile(tracePath, raw, 0o600); err != nil {
 			return err
 		}
+		fmt.Fprintf(os.Stdout, "trace written to %s\n", tracePath)
 	}
 
 	printReport(os.Stdout, rep, ks)
@@ -838,13 +852,6 @@ func gitCommit() string {
 		return "unknown"
 	}
 	return strings.TrimSpace(string(out))
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }
 
 func logf(format string, args ...any) {

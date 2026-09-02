@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -124,7 +125,7 @@ type rawItem struct {
 
 // LoadPinned reads a JSON list of question ids.
 func LoadPinned(path string) ([]string, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, err
 	}
@@ -139,11 +140,11 @@ func LoadPinned(path string) ([]string, error) {
 // are kept, in the pinned order; otherwise every question is kept in dataset
 // order.
 func Load(path string, pinned []string) (*Dataset, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	h := sha256.New()
 	raw, err := io.ReadAll(io.TeeReader(f, h))

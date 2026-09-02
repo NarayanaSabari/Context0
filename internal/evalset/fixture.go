@@ -67,11 +67,11 @@ func (e *Embeddings) Lookup(text string) ([]float32, bool) {
 
 // ReadEmbeddings loads a fixture file.
 func ReadEmbeddings(path string) (*Embeddings, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	r := bufio.NewReaderSize(f, 1<<20)
 
 	var magic [4]byte
@@ -130,7 +130,19 @@ func (e *Embeddings) Write(path string) error {
 	if _, err := w.WriteString(fixtureMagic); err != nil {
 		return err
 	}
-	if err := binary.Write(w, binary.LittleEndian, struct{ Dim, Count uint32 }{uint32(e.dim), uint32(len(keys))}); err != nil {
+	// Both fields are uint32 on disk. The dimension is bounded by the
+	// reader's own check and pgvector's 16,000 cap; the count is bounded
+	// here so a fixture too large for the format fails loudly rather than
+	// wrapping.
+	dim, count := e.dim, len(keys)
+	if dim <= 0 || dim > 16000 {
+		return fmt.Errorf("fixture dimension %d is outside 1..16000", dim)
+	}
+	if count < 0 || count > math.MaxUint32 {
+		return fmt.Errorf("fixture holds %d vectors, more than the format can count", count)
+	}
+	header := struct{ Dim, Count uint32 }{uint32(dim), uint32(count)}
+	if err := binary.Write(w, binary.LittleEndian, header); err != nil {
 		return err
 	}
 	for _, k := range keys {
@@ -147,11 +159,9 @@ func (e *Embeddings) Write(path string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	// CreateTemp makes the file private; the fixture is committed and read
-	// by everyone.
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
-		return err
-	}
+	// CreateTemp already makes the file owner-only, which is what the
+	// security scan expects of written files; git records no mode beyond
+	// the executable bit, so the committed fixture is unaffected.
 	return os.Rename(tmp.Name(), path)
 }
 

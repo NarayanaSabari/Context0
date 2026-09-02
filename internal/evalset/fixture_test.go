@@ -94,8 +94,8 @@ func TestEmbeddings_WriteReadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat written fixture: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o644 {
-		t.Errorf("fixture file mode = %o, want 644 (the fixture is committed and read by everyone)", perm)
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("fixture file mode = %o, want 600 (written owner-only; git keeps no mode beyond the executable bit)", perm)
 	}
 
 	got, err := ReadEmbeddings(path)
