@@ -271,6 +271,10 @@ type Report struct {
 	Stages    map[string]float64 `json:"stage_ms"`
 	Digest    string             `json:"digest"`
 	Questions []questionReport   `json:"questions"`
+	// Trace is present when -trace was set: what each retriever contributed
+	// to every question, for failure analysis. Inside the report rather
+	// than beside it so a run has exactly one output file.
+	Trace []questionTrace `json:"trace,omitempty"`
 }
 
 type questionReport struct {
@@ -293,7 +297,7 @@ func runEval(args []string) error {
 	passes := fs.Int("passes", 3, "query passes; the first scores, the rest time")
 	graphSignals := fs.String("graph-signals", "on", "on, or off for the FTS+vector ablation")
 	out := fs.String("out", "", "report path (default eval/results/<corpus>-<embedder>.json)")
-	withTrace := fs.Bool("trace", false, "also write a per-question retrieval trace beside the report, as <report>-trace.json")
+	withTrace := fs.Bool("trace", false, "also record a per-question retrieval trace in the report, under \"trace\"")
 	fusionMode := fs.String("fusion", string(retrieval.DefaultFusion().Mode), "linear, minmax or rrf; see retrieval.Fusion")
 	weights := fs.String("weights", "", "keyword,semantic,entity fusion weights (default: the engine's)")
 	rrfK := fs.Float64("rrf-k", 60, "reciprocal rank fusion constant")
@@ -582,6 +586,7 @@ func runEval(args []string) error {
 		rep.Questions = append(rep.Questions, qr)
 	}
 
+	rep.Trace = traces
 	if *out == "" {
 		*out = filepath.Join("eval", "results", fmt.Sprintf("%s-%s.json", corpus.Name, *embedderName))
 	}
@@ -594,21 +599,6 @@ func runEval(args []string) error {
 	}
 	if err := os.WriteFile(filepath.Clean(*out), raw, 0o600); err != nil {
 		return err
-	}
-
-	if *withTrace {
-		raw, err := json.MarshalIndent(traces, "", " ")
-		if err != nil {
-			return err
-		}
-		// Named after the report rather than by a second path flag: the
-		// trace is an artefact of this run, and one output location is one
-		// fewer path to reason about.
-		tracePath := strings.TrimSuffix(*out, ".json") + "-trace.json"
-		if err := os.WriteFile(tracePath, raw, 0o600); err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stdout, "trace written to %s\n", tracePath)
 	}
 
 	printReport(os.Stdout, rep, ks)
