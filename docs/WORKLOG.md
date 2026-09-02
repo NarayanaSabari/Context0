@@ -306,3 +306,13 @@ The instruments that can see the difference are the golden suite, which loses a 
 
 **Verdict: 0.25.** The golden suite scores exactly as at 0, the contract holds, and the harness is indifferent.
 The golden floors for overall and subject MRR are raised to what the fusion change earned (0.83 to 0.85, 0.90 to 0.93).
+
+## Closing state, 2026-09-02
+
+Final engine measured against the frozen baseline; the full comparison, ablation table, failure buckets and Kubernetes rationale are in [OPTIMIZATION_REPORT.md](OPTIMIZATION_REPORT.md).
+
+One trade-off recorded rather than fixed: under the install-default bag-of-words embedder, min-max fusion drops LoCoMo hit@10 from 0.639 to 0.570 with MRR flat (0.412 to 0.415), because rescaling amplifies a signal that is token overlap rather than meaning.
+The golden gate on that embedder passes with a higher MRR, so the regression is visible only on LoCoMo.
+The fix is a per-embedder fusion default (linear for hashed vectors), which needs its own gated measurement and is listed under what is left on the table.
+
+Stop rules checked: nothing here changes the storage format; every persisted memory, edge and embedding stays readable by the previous engine.
