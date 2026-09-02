@@ -582,3 +582,69 @@ func TestLinkEntities_UnreachableDatabaseIsAnError(t *testing.T) {
 		t.Errorf("the working repository became unusable: %v", err)
 	}
 }
+
+// CountEntityMatches is what the read path uses instead of GetMemoryEntities
+// plus a count in Go, so the two must agree exactly: distinct names, the
+// query's names only, and nothing for memories that match none.
+func TestCountEntityMatches_AgreesWithGetMemoryEntities(t *testing.T) {
+	repo, ctx := testRepo(t)
+	projectID := newProjectID(t)
+
+	both := storeMemory(t, repo, ctx, newMemory(projectID, "Caroline walked Biscuit to the park"))
+	one := storeMemory(t, repo, ctx, newMemory(projectID, "Biscuit hates thunderstorms"))
+	none := storeMemory(t, repo, ctx, newMemory(projectID, "The weather was fine"))
+	for _, link := range []struct {
+		mem   model.Memory
+		names []string
+	}{
+		{both, []string{"Caroline", "Biscuit", "Biscuit's"}},
+		{one, []string{"Biscuit"}},
+		{none, []string{"Weather"}},
+	} {
+		if _, err := repo.LinkEntities(ctx, link.mem, link.names); err != nil {
+			t.Fatalf("link entities: %v", err)
+		}
+	}
+
+	ids := []uuid.UUID{both.ID, one.ID, none.ID}
+	query := []string{"caroline", "biscuit", "caroline"}
+
+	counts, err := repo.CountEntityMatches(ctx, ids, query)
+	if err != nil {
+		t.Fatalf("CountEntityMatches: %v", err)
+	}
+	if counts[both.ID] != 2 || counts[one.ID] != 1 {
+		t.Errorf("counts = %v, want both=2 one=1", counts)
+	}
+	if _, present := counts[none.ID]; present {
+		t.Errorf("a memory naming none of the query entities should be absent, got %v", counts)
+	}
+
+	// Cross-check against the general lookup.
+	all, err := repo.GetMemoryEntities(ctx, ids)
+	if err != nil {
+		t.Fatalf("GetMemoryEntities: %v", err)
+	}
+	for _, id := range ids {
+		want := 0
+		seen := map[string]bool{}
+		for _, n := range all[id] {
+			if (n == "caroline" || n == "biscuit") && !seen[n] {
+				seen[n] = true
+				want++
+			}
+		}
+		if counts[id] != want {
+			t.Errorf("memory %s: counted %d, GetMemoryEntities implies %d", id, counts[id], want)
+		}
+	}
+
+	empty, err := repo.CountEntityMatches(ctx, nil, query)
+	if err != nil || len(empty) != 0 {
+		t.Errorf("no ids should count nothing, got %v, %v", empty, err)
+	}
+	empty, err = repo.CountEntityMatches(ctx, ids, nil)
+	if err != nil || len(empty) != 0 {
+		t.Errorf("no names should count nothing, got %v, %v", empty, err)
+	}
+}

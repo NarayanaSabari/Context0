@@ -75,3 +75,4 @@ docker-compose.override.yml
 eval/data/
 eval/results/*
 !eval/results/baseline-*.json
+!eval/results/final-*.json

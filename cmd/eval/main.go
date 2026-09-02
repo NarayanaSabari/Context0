@@ -265,9 +265,12 @@ type Report struct {
 		BytesPerQuery   float64 `json:"bytes_per_query"`
 		HeapInuse       uint64  `json:"heap_inuse_bytes"`
 	} `json:"allocs"`
-	Index     map[string]int64 `json:"index_bytes"`
-	Digest    string           `json:"digest"`
-	Questions []questionReport `json:"questions"`
+	Index map[string]int64 `json:"index_bytes"`
+	// Stages is the mean time per query spent in each read-path step during
+	// the scoring pass, in milliseconds.
+	Stages    map[string]float64 `json:"stage_ms"`
+	Digest    string             `json:"digest"`
+	Questions []questionReport   `json:"questions"`
 }
 
 type questionReport struct {
@@ -294,6 +297,7 @@ func runEval(args []string) error {
 	fusionMode := fs.String("fusion", string(retrieval.DefaultFusion().Mode), "linear, minmax or rrf; see retrieval.Fusion")
 	weights := fs.String("weights", "", "keyword,semantic,entity fusion weights (default: the engine's)")
 	rrfK := fs.Float64("rrf-k", 60, "reciprocal rank fusion constant")
+	coverage := fs.Float64("coverage", -1, "keyword coverage exponent in [0,1]; default: the engine's")
 	reuseDB := fs.Bool("reuse-db", false, "reuse a database already holding this corpus instead of demanding an empty one")
 	cpuProfile := fs.String("cpuprofile", "", "write a CPU profile of the timing passes to this file")
 	memProfile := fs.String("memprofile", "", "write an allocation profile taken after the timing passes to this file")
@@ -395,6 +399,9 @@ func runEval(args []string) error {
 	fusion := retrieval.DefaultFusion()
 	fusion.Mode = retrieval.FusionMode(*fusionMode)
 	fusion.RRFK = *rrfK
+	if *coverage >= 0 {
+		fusion.Coverage = *coverage
+	}
 	if *weights != "" {
 		if _, err := fmt.Sscanf(*weights, "%g,%g,%g", &fusion.Keyword, &fusion.Semantic, &fusion.Entity); err != nil {
 			return fmt.Errorf("-weights wants three comma-separated numbers, got %q", *weights)
@@ -422,6 +429,7 @@ func runEval(args []string) error {
 		docByID[d.ID] = d
 	}
 	var traces []questionTrace
+	stageTotals := make(map[string]time.Duration)
 
 	// Pass 1 scores. Its timings count only when it is the only pass, since
 	// a cold cache and a cold pool are a property of the run, not the engine.
@@ -431,6 +439,9 @@ func runEval(args []string) error {
 		elapsed := time.Since(start)
 		if err != nil {
 			return fmt.Errorf("query %s: %w", q.ID, err)
+		}
+		for name, d := range trace.Stages {
+			stageTotals[name] += d
 		}
 		if *tracePath != "" {
 			traces = append(traces, buildTrace(q, trace, docByID, present))
@@ -507,12 +518,16 @@ func runEval(args []string) error {
 		Corpus:       corpus.Name,
 		Embedder:     *embedderName,
 		GraphSignals: *graphSignals,
-		Fusion:       fmt.Sprintf("%s %g/%g/%g k=%g", fusion.Mode, fusion.Keyword, fusion.Semantic, fusion.Entity, fusion.RRFK),
+		Fusion:       fmt.Sprintf("%s %g/%g/%g k=%g c=%g", fusion.Mode, fusion.Keyword, fusion.Semantic, fusion.Entity, fusion.RRFK, fusion.Coverage),
 		TopK:         *topK,
 		Passes:       *passes,
 		Metrics:      make(map[string]evalset.Aggregate),
 		Index:        make(map[string]int64),
+		Stages:       make(map[string]float64),
 		Digest:       hex.EncodeToString(digest.Sum(nil)),
+	}
+	for name, d := range stageTotals {
+		rep.Stages[name] = float64(d.Microseconds()) / 1000 / float64(len(ds.Questions))
 	}
 	rep.Dataset.SHA256 = ds.SHA256
 	rep.Dataset.Turns = len(ds.Turns)
@@ -590,16 +605,17 @@ func runEval(args []string) error {
 // questionTrace is the failure-analysis view of one query: where each piece
 // of evidence stood in every retriever, and what outranked it.
 type questionTrace struct {
-	ID            string          `json:"id"`
-	Category      string          `json:"category"`
-	Question      string          `json:"question"`
-	Answer        string          `json:"answer"`
-	Keywords      []string        `json:"keywords"`
-	Unsearchable  bool            `json:"unsearchable"`
-	QueryEntities []string        `json:"query_entities"`
-	PoolSizes     map[string]int  `json:"pool_sizes"`
-	Evidence      []evidenceTrace `json:"evidence"`
-	Top           []rankedTrace   `json:"top"`
+	ID            string             `json:"id"`
+	Category      string             `json:"category"`
+	Question      string             `json:"question"`
+	Answer        string             `json:"answer"`
+	Keywords      []string           `json:"keywords"`
+	Unsearchable  bool               `json:"unsearchable"`
+	QueryEntities []string           `json:"query_entities"`
+	PoolSizes     map[string]int     `json:"pool_sizes"`
+	StageMs       map[string]float64 `json:"stage_ms"`
+	Evidence      []evidenceTrace    `json:"evidence"`
+	Top           []rankedTrace      `json:"top"`
 }
 
 type evidenceTrace struct {
@@ -642,6 +658,10 @@ func buildTrace(q evalset.Question, tr *retrieval.Trace, docByID map[uuid.UUID]e
 		ID: q.ID, Category: q.Category, Question: q.Question, Answer: q.Answer,
 		Keywords: tr.Keywords, Unsearchable: tr.Unsearchable, QueryEntities: tr.QueryEntities,
 		PoolSizes: map[string]int{"keyword": len(tr.Keyword), "vector": len(tr.Vector), "entity": len(tr.Entity), "ranked": len(tr.Ranked)},
+		StageMs:   make(map[string]float64, len(tr.Stages)),
+	}
+	for name, d := range tr.Stages {
+		qt.StageMs[name] = float64(d.Microseconds()) / 1000
 	}
 	rankIn := func(pool []retrieval.Candidate, id uuid.UUID) (int, retrieval.Candidate) {
 		for i, c := range pool {
@@ -790,6 +810,16 @@ func printReport(w io.Writer, rep Report, ks []int) {
 		rep.Latency.Queries, rep.Latency.P50, rep.Latency.P95, rep.Latency.P99, rep.Latency.Mean, rep.Latency.Max)
 	fmt.Fprintf(w, "allocs per query: %.0f mallocs, %.0f bytes; heap in use %d bytes\n",
 		rep.Allocs.MallocsPerQuery, rep.Allocs.BytesPerQuery, rep.Allocs.HeapInuse)
+	stages := make([]string, 0, len(rep.Stages))
+	for name := range rep.Stages {
+		stages = append(stages, name)
+	}
+	sort.Strings(stages)
+	fmt.Fprintf(w, "stage means (scoring pass):")
+	for _, name := range stages {
+		fmt.Fprintf(w, "  %s %.1fms", name, rep.Stages[name])
+	}
+	fmt.Fprintln(w)
 	fmt.Fprintf(w, "load: %d memories, %d entity links, %dms\n", rep.Load.Memories, rep.Load.Entities, rep.Load.Ms)
 	names := make([]string, 0, len(rep.Index))
 	for n := range rep.Index {

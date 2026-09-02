@@ -17,6 +17,7 @@
 package retrieval
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -40,12 +41,14 @@ import (
 // dozen, so a test can supply a fake without implementing a graph store, and a
 // reader can see the whole surface the read path touches.
 type Repo interface {
-	SearchByText(ctx context.Context, projectID string, keywords []string, limit int) ([]model.MemoryWithContext, error)
+	// SearchByText also reports the sum of the query terms' IDF weights, the
+	// scale a complete lexical match would score on. See ranking.FullMatchScore.
+	SearchByText(ctx context.Context, projectID string, keywords []string, limit int) ([]model.MemoryWithContext, float64, error)
 	KeywordsAreSearchable(ctx context.Context, keywords []string) (bool, error)
 	QueryMemories(ctx context.Context, filter graph.QueryFilter) ([]model.MemoryWithContext, error)
 	SearchByVector(ctx context.Context, embedding []float32, projectID string, topK int) ([]model.MemoryWithContext, error)
 	FindMemoriesByEntities(ctx context.Context, projectID string, names []string, limit int) ([]model.Memory, error)
-	GetMemoryEntities(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID][]string, error)
+	CountEntityMatches(ctx context.Context, ids []uuid.UUID, names []string) (map[uuid.UUID]int, error)
 }
 
 // Engine runs the read path against a repository and an optional embedder.
@@ -101,6 +104,12 @@ type Fusion struct {
 	Keyword, Semantic, Entity float64
 	// RRFK is reciprocal rank fusion's smoothing constant.
 	RRFK float64
+	// Coverage, in [0, 1], is how much the min-max keyword scale leans on
+	// what a complete match would score rather than on the pool's best. At
+	// 0 the pool's best keyword match always grades 1.0, however little of
+	// the query it covers; at 1 it grades by the share of the query's IDF
+	// mass it matches. See mergeResults.
+	Coverage float64
 }
 
 // FusionMode names a fusion strategy.
@@ -115,7 +124,7 @@ const (
 // DefaultFusion is what the engine ships with.
 func DefaultFusion() Fusion {
 	wk, ws, we := ranking.DefaultFusionWeights()
-	return Fusion{Mode: FusionMinMax, Keyword: wk, Semantic: ws, Entity: we, RRFK: 60}
+	return Fusion{Mode: FusionMinMax, Keyword: wk, Semantic: ws, Entity: we, RRFK: 60, Coverage: defaultCoverage}
 }
 
 // New returns an Engine. The embedder may be nil.
@@ -141,9 +150,27 @@ func (e *Engine) SetFusion(f Fusion) error {
 	if f.Mode == FusionRRF && f.RRFK <= 0 {
 		return fmt.Errorf("rrf k must be positive, got %v", f.RRFK)
 	}
+	if f.Coverage < 0 || f.Coverage > 1 {
+		return fmt.Errorf("coverage must be in [0, 1], got %v", f.Coverage)
+	}
 	e.fusion = f
 	return nil
 }
+
+// defaultCoverage is the exponent in the keyword scale
+// poolBest * (fullMatch / poolBest)^coverage.
+//
+// Swept over 0, 0.25, 0.5, 0.75 and 1 on both harness corpora
+// (docs/WORKLOG.md, Track A change 3): every value is inside the noise on
+// LoCoMo, so the choice is made by the two instruments that can see it. At
+// 0 the pool's best lexical match grades 1.0 even when it covers one common
+// word of a four-word question, which breaks
+// TestQuery_OneCommonWordDoesNotOutrankAStrongSemanticMatch. At 0.5 and
+// above the golden suite's paraphrase MRR falls from 0.679 to 0.622 with the
+// bag-of-words embedder, because genuine partial matches are discounted too
+// hard for a weak semantic signal to make up. 0.25 satisfies both: the
+// golden suite scores exactly as at 0, and the one-word decoys grade 0.32.
+const defaultCoverage = 0.25
 
 // SetClock replaces the clock the recency signal is measured against.
 //
@@ -209,6 +236,20 @@ type Trace struct {
 	// Ranked is the final list with the components each score was fused
 	// from.
 	Ranked []Ranked
+	// Stages is how long each step of the read path took, keyed by step
+	// name, so the harness can say where a query's latency went.
+	Stages map[string]time.Duration
+}
+
+// stage records the duration of one step when tracing is on.
+func (t *Trace) stage(name string, start time.Time) {
+	if t == nil {
+		return
+	}
+	if t.Stages == nil {
+		t.Stages = make(map[string]time.Duration, 8)
+	}
+	t.Stages[name] += time.Since(start)
 }
 
 // Candidate is one retriever's view of one memory.
@@ -262,10 +303,13 @@ func (e *Engine) retrieve(
 	//
 	// ts_rank_cd grades the match instead of asserting it, which is what lets
 	// the fusion below be additive rather than tiered.
-	graphResults, err := e.repo.SearchByText(ctx, projectID, filter.Keywords, keywordCandidatePool(filter.TopK))
+	stageStart := time.Now()
+	graphResults, idfSum, err := e.repo.SearchByText(ctx, projectID, filter.Keywords, keywordCandidatePool(filter.TopK))
 	if err != nil {
 		return nil, fmt.Errorf("keyword search: %w", err)
 	}
+	fullMatch := ranking.FullMatchScore(idfSum)
+	trace.stage("keyword", stageStart)
 
 	// Raw ts_rank_cd values arrive in Score. Normalising them is a ranking
 	// decision -- the right curve depends on the query's length -- so it
@@ -330,6 +374,7 @@ func (e *Engine) retrieve(
 		if err != nil {
 			return nil, fmt.Errorf("graph query: %w", err)
 		}
+		fullMatch = 0
 		if trace != nil {
 			trace.Unsearchable = true
 			trace.Keyword = nil
@@ -352,6 +397,7 @@ func (e *Engine) retrieve(
 
 	var vectorResults []model.MemoryWithContext
 	if e.embedder != nil && query != "" {
+		stageStart = time.Now()
 		if queryVec, err := e.embedder.Embed(query); err == nil {
 			var verr error
 			// The vector retriever gets the same candidate pool size as the
@@ -372,6 +418,7 @@ func (e *Engine) retrieve(
 					slog.Any("error", verr))
 			}
 		}
+		trace.stage("vector", stageStart)
 	}
 
 	// --- Entity retrieval: the second hop ---
@@ -401,8 +448,10 @@ func (e *Engine) retrieve(
 	var entityOverlap map[uuid.UUID]float64
 	if !e.graphSignalsOff {
 		var queryEntities []string
+		stageStart = time.Now()
 		entityResults, entityOverlap, queryEntities = e.entityMatches(ctx, projectID, query, filter.TopK,
 			graphResults, vectorResults)
+		trace.stage("entity", stageStart)
 		if trace != nil {
 			trace.QueryEntities = queryEntities
 			for _, m := range entityResults {
@@ -416,11 +465,13 @@ func (e *Engine) retrieve(
 	// lexically matched from one the vector retriever surfaced on similarity
 	// alone; the two scores are otherwise not comparable. See
 	// ranking.RelevanceTier.
-	results := mergeResults(graphResults, vectorResults, entityResults, entityOverlap, e.fusion)
+	stageStart = time.Now()
+	results := mergeResults(graphResults, vectorResults, entityResults, entityOverlap, fullMatch, e.fusion)
 
 	// Rank results using scoring function. This consumes the Relevance set
 	// above, so retrieval quality drives the final order.
 	results = ranking.RankResultsAt(results, int(filter.TopK), e.now())
+	trace.stage("merge+rank", stageStart)
 
 	if trace != nil {
 		keyword := make(map[uuid.UUID]float64, len(graphResults))
@@ -643,6 +694,7 @@ func mergeResults(
 	graph, vector []model.MemoryWithContext,
 	entity []model.Memory,
 	entityOverlap map[uuid.UUID]float64,
+	fullMatch float64,
 	fusion Fusion,
 ) []model.MemoryWithContext {
 	seen := make(map[uuid.UUID]*model.MemoryWithContext, len(graph)+len(vector)+len(entity))
@@ -650,6 +702,11 @@ func mergeResults(
 	// Per-query scales and ranks for the fusion modes that need them. The
 	// keyword retriever returns its pool best-first and the vector retriever
 	// nearest-first, so a position is a rank.
+	//
+	// The keyword scale is what a complete match would score when the
+	// repository could say (ranking.FullMatchScore), and the pool's best
+	// otherwise. The difference is whether a pool whose best candidate
+	// matches one common word grades that candidate as complete or as weak.
 	var maxKeyword float64
 	keywordRank := make(map[uuid.UUID]int, len(graph))
 	for i, r := range graph {
@@ -657,6 +714,14 @@ func mergeResults(
 		if r.Score > maxKeyword {
 			maxKeyword = r.Score
 		}
+	}
+	// The scale is a blend of the two: poolBest^(1-c) * fullMatch^c, so
+	// that c = 0 is plain per-query min-max (Bruch et al.'s TM2C2, where the
+	// lexical maximum is the observed one) and c = 1 grades every candidate
+	// by the share of the query it covers.
+	keywordScale := maxKeyword
+	if fullMatch > 0 && maxKeyword > 0 && fusion.Coverage > 0 {
+		keywordScale = math.Pow(maxKeyword, 1-fusion.Coverage) * math.Pow(fullMatch, fusion.Coverage)
 	}
 	vectorRank := make(map[uuid.UUID]int, len(vector))
 	cosMin, cosMax := math.Inf(1), math.Inf(-1)
@@ -735,8 +800,10 @@ func mergeResults(
 			// candidate the keyword retriever did not return has no lexical
 			// evidence and scores zero, as in the linear mode.
 			var kw float64
-			if _, hit := keywordRank[id]; hit && maxKeyword > 0 {
-				kw = r.Score / maxKeyword
+			if _, hit := keywordRank[id]; hit && keywordScale > 0 {
+				// Clamped by FuseWeighted: a term repeated in one memory can
+				// score above what one occurrence per term would.
+				kw = r.Score / keywordScale
 			}
 			var sem float64
 			if scored {
@@ -757,8 +824,12 @@ func mergeResults(
 		}
 		results = append(results, *r)
 	}
+	// Byte order equals the canonical string order, since each byte maps to
+	// two hex digits monotonically and the dashes sit at fixed positions.
+	// Comparing bytes avoids allocating two strings per comparison, which
+	// was a fifth of the read path's allocations at 500 candidates.
 	sort.Slice(results, func(i, j int) bool {
-		return results[i].Memory.ID.String() < results[j].Memory.ID.String()
+		return bytes.Compare(results[i].Memory.ID[:], results[j].Memory.ID[:]) < 0
 	})
 	return results
 }
@@ -837,7 +908,11 @@ func (e *Engine) entityMatches(
 		}
 	}
 
-	byMemory, err := e.repo.GetMemoryEntities(ctx, ids)
+	// Asked of the database as a count of the query's own entities per
+	// candidate, rather than as every entity of every candidate. The overlap
+	// only ever counted query entities, so the answer is the same and the
+	// rows that carried the other names never leave PostgreSQL.
+	counts, err := e.repo.CountEntityMatches(ctx, ids, queryEntities)
 	if err != nil {
 		log.Warn("loading entities for ranking failed; results are ordered without the entity signal",
 			slog.Int("result_count", len(ids)),
@@ -845,9 +920,9 @@ func (e *Engine) entityMatches(
 		return matches, nil, queryEntities
 	}
 
-	overlap := make(map[uuid.UUID]float64, len(ids))
-	for _, id := range ids {
-		if o := ranking.EntityOverlap(byMemory[id], queryEntities); o > 0 {
+	overlap := make(map[uuid.UUID]float64, len(counts))
+	for id, n := range counts {
+		if o := ranking.EntityOverlapCount(n, queryEntities); o > 0 {
 			overlap[id] = o
 		}
 	}

@@ -195,3 +195,114 @@ That is the guarantee behind `TestExactKeywordMatchOutranksVectorOnlyResult`, a 
 Two other tests pinned the old fusion's arithmetic and were rewritten to state the new contract (`TestMergeResults_CarriesRelevanceForward`, `TestFuseRelevance_AStrongKeywordMatchStillBeatsSemanticSimilarityAlone`); the golden suite passes unchanged (overall recall 0.917, MRR 0.856).
 
 Against the original engine, turns corpus: hit@10 0.722 to 0.778, rec@10 0.590 to 0.653, full@10 0.475 to 0.544, MRR 0.491 to 0.510, nDCG 0.487 to 0.514; extracted: hit@10 0.791 to 0.813, MRR 0.598 to 0.606.
+
+## Track B, step 1: profile before touching anything
+
+`cmd/eval -cpuprofile / -memprofile` over 1,000 timed queries on the loaded turns corpus (5,882 memories, 30 results per query), engine after the fusion change.
+
+**Wall clock: p50 24 ms, and the Go process is busy for 23% of it.** The CPU profile is 44% `syscall.read` inside pgx: the read path is waiting on PostgreSQL round trips.
+What Go does with the rest:
+
+| where (cumulative, of Go CPU) | share |
+|---|---|
+| `entityMatches` (FindMemoriesByEntities + GetMemoryEntities) | 33% |
+| `hydrateKeywordHits` + `hydrate`: JSON-decoding 500 full memory vertices per query | 32% |
+| `SearchByText` (the FTS SQL itself, excluding hydration) | 8% |
+| `SearchByVector` (the exact scoped scan, excluding hydration) | 17% |
+| pgx `deallocateInvalidatedCachedStatements` + `Prepare` | 10% + 4% |
+| `mergeResults` + `RankResultsAt` | 5% |
+
+**Allocations: 36,200 per query, 3.4 MB.** By object count:
+
+| source | share |
+|---|---|
+| `GetMemoryEntities`: one `{memory_id, name}` agtype object JSON-decoded per mentions edge of every candidate (about 1,500 rows per query) | 38% |
+| `uuid.UUID.String` in `mergeResults`' sort comparator and in `uuidLiteralList` | 23% |
+| `scanAgtype[memoryProps]`: 500 full vertices decoded per query, content strings included | 24% |
+| `mergeResults` maps and slices | 2% |
+
+Three things the profile says that the code did not:
+
+1. **Every hydration query is a new prepared statement.** The literal `IN [...]` id lists (chosen so the planner stays on the index when statistics are stale) make each query text unique, and pgx's default exec mode prepares every distinct text. The statement cache churns on every request and pays a Prepare/Describe round trip plus a deallocation.
+2. **The scoped vector search opens a transaction to set two HNSW GUCs it never uses.** `SET LOCAL hnsw.iterative_scan` and `hnsw.max_scan_tuples` only matter to an index scan, and the scoped query is a materialised exact scan; that is BEGIN, two SETs, the query and a ROLLBACK, five round trips where one would do. Only the unscoped path needs the settings.
+3. **The entity signal loads every entity of every candidate to compute an overlap against one or two query entities.** The overlap only counts query entities, so the database can be asked for exactly those rows, aggregated per memory.
+
+Order of work, cheapest first and each measured alone: byte-order UUID sorts (no behaviour change), the vector transaction, statement mode for literal-list queries, the entity overlap query, then lazy hydration if the remaining hydration cost justifies the interface change.
+
+## Track B, changes 1-3: three round-trip and allocation fixes
+
+Each measured alone on the loaded turns corpus (600 timed queries, 4 passes) and checked against the digest of all 200 ranked lists, which must not move: these are meant to change nothing but cost.
+
+| change | p50 ms | mean ms | mallocs/query | vector stage | digest |
+|---|---|---|---|---|---|
+| after fusion (reference) | 22.8 | 24.1 | 36,214 | 4.5 ms | `482054c1` |
+| B1: sort candidates and tie-breaks by UUID bytes, not `String()` | 22.9 | 26.1 | **29,480** | 4.5 ms | `482054c1` |
+| B2: scoped vector search as one statement, no transaction | 22.5 | 23.9 | 29,474 | **4.0 ms** | `482054c1` |
+| B3: simple protocol for literal-list Cypher (no prepare/deallocate churn) | **21.0** | **22.7** | 29,442 | 3.8 ms | `482054c1` |
+
+Extracted corpus after all three: p50 9.3 to 8.0 ms, mallocs 15,583 to 15,544.
+
+B1 removes a fifth of the allocations for no latency: the sort was never on the critical path, the round trips are.
+B2 and B3 each remove round trips (four and one to two per query) and together take 8% off the median.
+The `hnsw.*` settings stay on the unscoped path, which is the only one that uses the index.
+
+Verdict: keep all three.
+
+## Track B, change 4: count the query's entities per candidate in the database
+
+**Hypothesis.** `GetMemoryEntities` returns every entity of every candidate (about 1,500 edge rows per query on the turns corpus) so Go can count how many of the query's one or two entities each names. Asking PostgreSQL for that count directly should remove most of the entity stage.
+
+**Change.** `AGERepository.CountEntityMatches(ids, names)`: one Cypher query restricted to the query's normalised entities, aggregated per memory. `ranking.EntityOverlapCount` gives the same share as `EntityOverlap` from a count, pinned against it in a test. `GetMemoryEntities` stays for `DeleteMemory` and for the integration test that cross-checks the two.
+
+**Measured**, turns corpus, 600 timed queries:
+
+| | before | after |
+|---|---|---|
+| p50 / mean | 21.0 / 22.7 ms | **17.7 / 20.0 ms** |
+| entity stage | 6.7 ms | **4.3 ms** |
+| mallocs per query | 29,442 | **17,905** |
+| bytes per query | 3.07 MB | **2.37 MB** |
+| server time, "entities of candidates" | 4.73 ms | (now the count query) |
+
+Extracted corpus: p50 8.0 to 7.3 ms, mallocs 15,544 to 13,565.
+Ranked lists are unchanged where the keyword scale is unchanged (the digest moved in this run only because the keyword-scale change below landed in the same build; the sweep in Track A change 3 isolates it).
+
+Verdict: keep. Cumulative from the post-fusion reference: p50 22.8 to 17.7 ms (-22%), allocations 36,214 to 17,905 (-51%).
+
+## Correction: LoCoMo's category codes were mislabelled everywhere
+
+The memorybench harness maps LoCoMo's integer `category` as 1 single-hop, 2 multi-hop, 3 temporal, 4 world-knowledge.
+The dataset's own counts contradict that (code 4 has 841 questions and the paper's single-hop count is 841; code 3 has 96, the paper's open-domain count), and snap-research/locomo issue #29 and Mem0's harness agree on the real mapping: **1 multi-hop, 2 temporal, 3 open-domain, 4 single-hop, 5 adversarial**.
+The questions confirm it: "What fields would Caroline be likely to pursue?" (code 3, an inference question) was being reported as temporal, and "When did Melanie paint a sunrise?" (code 2) as multi-hop.
+
+The eval now uses the verified mapping.
+Every per-category figure in `docs/research/` and in this log above this section carries the harness's labels; read them through this table:
+
+| label in earlier docs | actually |
+|---|---|
+| single-hop | multi-hop |
+| multi-hop | temporal |
+| temporal | open-domain |
+| world-knowledge | single-hop |
+
+The pinned set still has 40 questions per true category, so totals and "answerable" rows are unaffected.
+
+## Track A, change 3: what the keyword score is normalised against
+
+**Hypothesis.** Per-query min-max grades the pool's best lexical match 1.0 whatever it covers. `TestQuery_OneCommonWordDoesNotOutrankAStrongSemanticMatch`, an end-to-end contract from the previous fusion, fails under it: twelve memories sharing one common word of a four-word question outrank a near-perfect paraphrase, because they are the best lexical matches there are. Grading by how much of the query's IDF mass a memory matches (the score a complete match would get, `ranking.FullMatchScore`, computed from the sum of term IDFs the FTS query now returns) should fix that without hurting the corpora.
+
+**Change.** `Fusion.Coverage` in [0, 1]: the keyword scale is poolBest^(1-c) times fullMatch^c. 0 is plain min-max (Bruch et al.'s TM2C2, observed maximum); 1 is pure coverage. Swept on both corpora, the golden suite and the service contracts.
+
+| c | turns hit@10 / MRR | extracted hit@10 / MRR | golden paraphrase MRR | one-common-word contract |
+|---|---|---|---|---|
+| 0 | 0.778 / 0.510 | 0.813 / 0.606 | 0.679 | fails |
+| **0.25** | 0.766 / 0.518 | 0.806 / 0.617 | 0.679 | passes |
+| 0.5 | 0.766 / 0.513 | 0.806 / 0.618 | 0.622 | passes |
+| 0.75 | 0.759 / 0.518 | 0.806 / 0.618 | (not run) | passes |
+| 1 | 0.766 / 0.513 | 0.806 / 0.615 | 0.538, below the floor | passes |
+
+On LoCoMo every row is inside the paired CI (hit@10 moves by 2 questions, MRR by under 0.01).
+The instruments that can see the difference are the golden suite, which loses a tenth of its paraphrase MRR at 0.5 and trips its floor at 1, and the service contract, which fails at 0.
+
+**Verdict: 0.25.** The golden suite scores exactly as at 0, the contract holds, and the harness is indifferent.
+The golden floors for overall and subject MRR are raised to what the fusion change earned (0.83 to 0.85, 0.90 to 0.93).

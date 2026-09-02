@@ -44,8 +44,8 @@ type fakeRepo struct {
 	entityCalls         int
 }
 
-func (f *fakeRepo) SearchByText(context.Context, string, []string, int) ([]model.MemoryWithContext, error) {
-	return f.textResults, f.textErr
+func (f *fakeRepo) SearchByText(context.Context, string, []string, int) ([]model.MemoryWithContext, float64, error) {
+	return f.textResults, 0, f.textErr
 }
 
 func (f *fakeRepo) KeywordsAreSearchable(context.Context, []string) (bool, error) {
@@ -67,7 +67,7 @@ func (f *fakeRepo) FindMemoriesByEntities(context.Context, string, []string, int
 	return f.entityResults, f.entityErr
 }
 
-func (f *fakeRepo) GetMemoryEntities(context.Context, []uuid.UUID) (map[uuid.UUID][]string, error) {
+func (f *fakeRepo) CountEntityMatches(context.Context, []uuid.UUID, []string) (map[uuid.UUID]int, error) {
 	return nil, nil
 }
 

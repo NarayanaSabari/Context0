@@ -81,16 +81,26 @@ type Dataset struct {
 	SHA256 string
 }
 
+// categoryNames maps LoCoMo's integer category codes to names.
+//
+// The codes do NOT follow the order the paper lists the categories in, and
+// the memorybench harness had them wrong: it read 1 as single-hop, 2 as
+// multi-hop, 3 as temporal and 4 as world-knowledge. The dataset's own counts
+// settle it (code 4 has 841 questions, and the paper says single-hop is the
+// largest category at 841; code 3 has 96, the paper's open-domain count),
+// and snap-research/locomo issue #29 and Mem0's harness agree. Every
+// per-category number in docs/research/ before 2026-09-02 carries the
+// harness's labels; the correction table is in docs/OPTIMIZATION_REPORT.md.
 var categoryNames = map[int]string{
-	1: "single-hop",
-	2: "multi-hop",
-	3: "temporal",
-	4: "world-knowledge",
+	1: "multi-hop",
+	2: "temporal",
+	3: "open-domain",
+	4: "single-hop",
 	5: "adversarial",
 }
 
 // Categories lists the question categories in reporting order.
-var Categories = []string{"single-hop", "multi-hop", "temporal", "world-knowledge", "adversarial"}
+var Categories = []string{"single-hop", "multi-hop", "temporal", "open-domain", "adversarial"}
 
 type rawMessage struct {
 	Speaker string `json:"speaker"`

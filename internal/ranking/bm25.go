@@ -68,6 +68,26 @@ const bm25MidpointCoverage = 0.4
 // information ts_rank_cd was adopted to provide.
 const bm25SteepnessScale = 2.3
 
+// FullMatchScore is the raw keyword score a memory matching every query term
+// once would receive: bm25RankPerTerm times the sum of the terms' IDF
+// weights, which the repository reports alongside the hits.
+//
+// It is the scale the min-max fusion divides keyword scores by, and the
+// reason is the scenario TestQuery_OneCommonWordDoesNotOutrankAStrongSemanticMatch
+// reproduces end to end: a pool whose best lexical match covers one common
+// word of a four-word question. Dividing by the pool's own best would grade
+// that match 1.0, because it is the best there is; dividing by what a full
+// match would score grades it by how much of the question it answers, which
+// for one low-IDF word of four is close to nothing. A zero sum, meaning the
+// repository could not report one, tells the caller to fall back to the pool
+// maximum.
+func FullMatchScore(idfSum float64) float64 {
+	if math.IsNaN(idfSum) || idfSum <= 0 {
+		return 0
+	}
+	return bm25RankPerTerm * idfSum
+}
+
 // NormalizeBM25 maps a raw ts_rank_cd score onto [0, 1], adapting to the
 // query's length.
 //

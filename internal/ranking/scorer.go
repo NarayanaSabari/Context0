@@ -26,6 +26,7 @@
 package ranking
 
 import (
+	"bytes"
 	"math"
 	"sort"
 	"time"
@@ -128,8 +129,9 @@ func RankResultsAt(results []model.MemoryWithContext, topK int, now time.Time) [
 			return results[i].Score > results[j].Score
 		}
 		// Deterministic tie-break so equal-scoring memories never reorder
-		// between identical queries.
-		return results[i].Memory.ID.String() < results[j].Memory.ID.String()
+		// between identical queries. Byte order is the canonical string
+		// order, without the two allocations.
+		return bytes.Compare(results[i].Memory.ID[:], results[j].Memory.ID[:]) < 0
 	})
 
 	if topK > 0 && len(results) > topK {

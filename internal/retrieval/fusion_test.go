@@ -41,9 +41,9 @@ func TestMergeResults_MinMaxRescalesPerQuery(t *testing.T) {
 
 	f := DefaultFusion()
 	f.Mode = FusionLinear
-	linear := mergeResults(graph, vector, nil, nil, f)
+	linear := mergeResults(graph, vector, nil, nil, 0, f)
 	f.Mode = FusionMinMax
-	minmax := mergeResults(graph, vector, nil, nil, f)
+	minmax := mergeResults(graph, vector, nil, nil, 0, f)
 
 	if relevanceOf(linear, lexical) <= relevanceOf(linear, semantic) {
 		t.Fatalf("precondition: linear fusion should favour the lexical candidate, got %v vs %v",
@@ -75,7 +75,7 @@ func TestMergeResults_MinMaxWithoutVectorPool(t *testing.T) {
 	}
 	f := DefaultFusion()
 	f.Mode = FusionMinMax
-	merged := mergeResults(graph, nil, nil, nil, f)
+	merged := mergeResults(graph, nil, nil, nil, 0, f)
 	if relevanceOf(merged, best) <= relevanceOf(merged, weaker) {
 		t.Errorf("keyword-only min-max should keep the pool's order: %v vs %v",
 			relevanceOf(merged, best), relevanceOf(merged, weaker))
@@ -98,11 +98,11 @@ func TestMergeResults_RRFUsesRanksNotScores(t *testing.T) {
 	close := mergeResults(
 		[]model.MemoryWithContext{{Memory: model.Memory{ID: a}, Score: 0.50}, {Memory: model.Memory{ID: b}, Score: 0.49}},
 		[]model.MemoryWithContext{{Memory: model.Memory{ID: b}, Score: 0.80}, {Memory: model.Memory{ID: a}, Score: 0.79}},
-		nil, nil, f)
+		nil, nil, 0, f)
 	far := mergeResults(
 		[]model.MemoryWithContext{{Memory: model.Memory{ID: a}, Score: 0.90}, {Memory: model.Memory{ID: b}, Score: 0.01}},
 		[]model.MemoryWithContext{{Memory: model.Memory{ID: b}, Score: 0.95}, {Memory: model.Memory{ID: a}, Score: 0.10}},
-		nil, nil, f)
+		nil, nil, 0, f)
 
 	for _, id := range []uuid.UUID{a, b} {
 		if relevanceOf(close, id) != relevanceOf(far, id) {
