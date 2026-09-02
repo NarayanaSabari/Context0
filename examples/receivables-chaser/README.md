@@ -101,12 +101,14 @@ the ladder alone sends 430 messages to do it and the memory-backed run sends
 
 Two details matter if you compare runs yourself:
 
-- **Each run starts from an empty store.** Kora persists, so without this a
-  second run would read the first run's contacts and skip customers it had
-  not actually contacted yet -- two identical commands would print different
-  numbers. Pass `--resume` to deliberately carry history across runs; a
-  second `--resume` run sends far fewer messages, because it already knows
-  who was chased and who promised what.
+- **Each recorded run starts from an empty store.** Kora persists, so without
+  this a second run would read the first run's contacts and skip customers it
+  had not actually contacted yet -- two identical commands would print
+  different numbers. Pass `--resume` to deliberately carry history across
+  runs; a second `--resume` run sends far fewer messages, because it already
+  knows who was chased and who promised what. A `--live` run always keeps its
+  history: it is one day's work in the way a daily cron fires, and a cron that
+  forgot yesterday would re-chase everyone who already promised to pay.
 - **Each customer gets their own project** (`receivables-{merchant}-{id}`).
   Sharing one project across customers means a `top_k` recall for one
   customer comes back mostly about others, and their own promises fall off

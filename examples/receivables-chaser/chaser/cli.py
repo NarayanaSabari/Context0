@@ -69,7 +69,7 @@ def _run(args: argparse.Namespace) -> int:
     # firing daily against the real API would.
     days = 1 if args.live else args.days
 
-    # Each run gets its own memory namespace unless --resume is passed.
+    # A recorded run gets its own memory namespace unless --resume is passed.
     #
     # Kora persists, so without this a second run reads the first run's
     # memories and behaves differently: the agent sees contacts it has not
@@ -83,11 +83,15 @@ def _run(args: argparse.Namespace) -> int:
     # the output, not of the name -- every run starts from an empty store and
     # therefore makes the same decisions.
     #
-    # --resume opts back into carrying history across runs, which is worth
-    # demonstrating deliberately: run once, then run again with --resume and
-    # the agent already knows who promised what.
+    # A --recorded run replays a whole simulated history from day zero, so
+    # starting clean is what makes it a replay rather than a continuation. A
+    # --live run is the opposite: it is one day's work against real invoices,
+    # the way a daily cron fires, and it MUST read what previous days wrote or
+    # the agent re-chases customers who already promised to pay. So live runs
+    # always keep their history, and --resume exists to ask for the same
+    # continuity from a recorded run.
     merchant = args.merchant
-    if not args.resume:
+    if not args.resume and not args.live:
         merchant = f"{args.merchant}-{uuid.uuid4().hex[:8]}"
 
     result = agent.run(razorpay, memory, drafter, days=days, merchant=merchant)

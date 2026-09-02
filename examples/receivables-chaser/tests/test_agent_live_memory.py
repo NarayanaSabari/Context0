@@ -161,3 +161,39 @@ def test_resume_carries_memory_across_runs(
         f"a --resume rerun sent {second} contacts against the first run's "
         f"{first}; it is not reading back the previous run's history"
     )
+
+
+def test_live_runs_keep_their_history(monkeypatch) -> None:
+    """A --live run is one day's work, so it must NOT start from a clean store.
+
+    Recorded runs replay a whole history from day zero and start clean, which
+    is what makes them reproducible. Live runs are the opposite: the CLI
+    documents them as "the way a cron job firing daily against the real API
+    would" work, and a cron that forgets yesterday re-chases every customer
+    who already promised to pay. Namespacing them per run would do exactly
+    that, silently, against real invoices and real people.
+
+    Asserting on the merchant slug the CLI hands the agent is the cheapest
+    way to state that, since it needs no Razorpay credentials.
+    """
+    from chaser import cli
+
+    seen: dict[str, str] = {}
+
+    def capture(razorpay, memory, drafter, *, days, merchant):
+        seen["merchant"] = merchant
+        raise SystemExit(0)  # stop before the run needs a real Razorpay
+
+    monkeypatch.setattr(cli.agent, "run", capture)
+    monkeypatch.setattr(cli, "_build_razorpay", lambda args: object())
+    monkeypatch.setattr(cli, "_build_memory", lambda args: object())
+
+    try:
+        cli.main(["run", "--live", "--merchant", "acme"])
+    except SystemExit:
+        pass
+
+    assert seen["merchant"] == "acme", (
+        f"a live run was namespaced to {seen['merchant']!r}; it would forget "
+        "every previous day and re-chase customers who already promised"
+    )
