@@ -316,3 +316,9 @@ The golden gate on that embedder passes with a higher MRR, so the regression is 
 The fix is a per-embedder fusion default (linear for hashed vectors), which needs its own gated measurement and is listed under what is left on the table.
 
 Stop rules checked: nothing here changes the storage format; every persisted memory, edge and embedding stays readable by the previous engine.
+
+## Track C: the chart
+
+Settings and reasons are in [kubernetes.md](kubernetes.md); verified by `helm lint`, `helm template` under three value sets (GOMEMLIMIT renders as 483183820, 90% of 512Mi; the grace-period invariant fails the render when violated), and a full kind deploy: API, web and Postgres pods Running, all three probes 200, then a scale to three API replicas with the PDB and topology spread live on the objects.
+
+One unrelated finding, not acted on: `networkpolicy.yaml` says kind's default CNI ignores NetworkPolicy. On kind v0.31.0 a pod inside the namespace was blocked from the API exactly as the policy prescribes, so that comment is stale and worth a follow-up.

@@ -8,6 +8,11 @@ metadata:
     app: kora-consolidation
 spec:
   schedule: {{ .Values.consolidation.schedule | quote }}
+  # See the reasoning comment on consolidation in values.yaml: Forbid is what
+  # makes this a singleton (no separate leader election needed), and
+  # startingDeadlineSeconds bounds how late a skipped-and-rescheduled run can
+  # be picked up.
+  startingDeadlineSeconds: {{ .Values.consolidation.startingDeadlineSeconds }}
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
