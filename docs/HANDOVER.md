@@ -6,7 +6,7 @@ Everything below is verifiable from the repository; where something is a belief 
 ## 1. What this is, in one paragraph
 
 Kora is a Go memory engine for AI agents: memories live in PostgreSQL with Apache AGE (graph) and pgvector (vectors), behind a gRPC/REST API, deployed by a Helm chart.
-The branch `perf/memory-optimization` (PR [#100](https://github.com/NarayanaSabari/Kora/pull/100), 13 commits on top of `main`) did four things: built an offline benchmark because the published 69% accuracy could not be reproduced, used that benchmark to fix retrieval, profiled and sped up the read path, and tuned the Kubernetes chart.
+The branch `perf/memory-optimization` (PR [#100](https://github.com/NarayanaSabari/Kora/pull/100), merged into `main` on 2026-09-02) did four things: built an offline benchmark because the published 69% accuracy could not be reproduced, used that benchmark to fix retrieval, profiled and sped up the read path, and tuned the Kubernetes chart.
 On top of that, the repository is being submitted to the [Razorpay AI Buildathon](https://razorpay.com/buildathon/), track "AI Revenue Recovery", with a demo agent in `examples/receivables-chaser/`.
 
 ## 2. Where things are
@@ -35,10 +35,10 @@ Every number in the README and the report was produced by `make eval`. Do not ad
 
 ## 4. Current state, exactly
 
-- Branch `perf/memory-optimization` is pushed; PR #100 is open against `main`, not merged.
-- CI on the head commit `af0ce15`: Go Security (gosec) passes, Unit Tests pass, Retrieval Regression passes, Dependency Review passes; Lint, Build, Integration Tests, Container Scan were still running when this was written. All of them passed on earlier commits of the branch, so a failure would be new.
+- Branch `perf/memory-optimization` was merged into `main` on 2026-09-02 as PR #100, with all 11 CI checks green. The README's numbers are now on `main`.
 - The working tree is clean.
 - Local throwaway databases were torn down. Two Docker containers must stay: `kora-abl-pg` (port 55440) holds the corpus behind the 69% run and is the only source of `eval/data/corpus-extracted.json`; `kora-ollama` (port 11435) serves `nomic-embed-text` for rebuilding the embedding fixture. `kora-abl-api` (port 18092) is the benchmark engine the demo was verified against.
+- Both of those have `restart=no`, so a reboot stops them. Their data survives in Docker volumes, so `docker start kora-abl-pg kora-ollama` brings them back; they are not lost, merely down. The genuinely irreplaceable artefacts are the two files in the gitignored `eval/data/`, which cannot be rebuilt offline: `corpus-extracted.json` and `locomo10.json`. A copy of both sits in `~/kora-eval-data-backup/` as of 2026-09-02, checksums verified against the originals. LoCoMo's CC BY-NC 4.0 licence is why they stay out of the repository.
 - The Trivy container scan reports pre-existing CVEs in the base images; they predate this branch and were not touched.
 
 ## 5. What the person taking over must do
@@ -50,10 +50,10 @@ Every number in the README and the report was produced by `make eval`. Do not ad
 4. Read `docs/PITCH.md` end to end and have the "why not an LLM here" answers ready. `docs/RECORDING.md` is the typing side: exact commands, expected output, and what to do if a beat fails on camera.
 
 **Before submitting:**
-4. Deadline and eligibility were confirmed on the [application form](https://forms.gle/d9r2gvxp8cmoZhon9) on 2026-09-02: applications close **2026-09-05**, and the event is **students only**. This is no longer a belief.
-5. Decide the track: Revenue Recovery (recommended, the demo fits its stated bar) or Open.
-6. Razorpay test-mode keys go in a local `.env` only if you want the live Razorpay path on camera; the recorded fixture is what the demo uses otherwise. Never commit `.env`.
-7. Merge PR #100 when CI is green, or submit the branch URL; the README's numbers are on the branch, not on `main`.
+1. Deadline and eligibility were confirmed on the [application form](https://forms.gle/d9r2gvxp8cmoZhon9) on 2026-09-02: applications close **2026-09-05**, and the event is **students only**. This is no longer a belief.
+2. Decide the track: Revenue Recovery (recommended, the demo fits its stated bar) or Open.
+3. Razorpay test-mode keys go in a local `.env` only if you want the live Razorpay path on camera; the recorded fixture is what the demo uses otherwise. Never commit `.env`.
+4. PR #100 is already merged, so submit the repository URL on `main`; the README's numbers are there. Nothing is waiting on a branch.
 
 ## 6. Decisions already made, so they are not re-litigated
 
