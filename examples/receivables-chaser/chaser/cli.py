@@ -98,7 +98,9 @@ def _run(args: argparse.Namespace) -> int:
 
     start_date = razorpay.today()
     end_date = start_date + timedelta(days=days - 1)
-    data = report.build_report(result, args.merchant, start_date, end_date)
+    data = report.build_report(
+        result, args.merchant, start_date, end_date, memory_status=memory.status(),
+    )
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -41,6 +41,20 @@ export KORA_API_KEY=$(grep '^KORA_API_KEYS' .env | cut -d= -f2 | tr -d '"' | cut
 **3. Rehearse both runs once.** Roughly 6 seconds each, so this is cheap.
 Confirm you get the numbers in the table below before recording, not during.
 
+**4. Check the `Memory:` line.** Every report states which memory it used, in
+its fourth line. Before a take, confirm it says what you expect:
+
+```
+Memory: Kora at localhost:18095                                  <- live, good
+Memory: no memory (KORA_URL / KORA_API_KEY not set)              <- the ladder-alone run
+Memory: Kora at localhost:18095 -- UNREACHABLE, ran without memory   <- BAD, stop
+```
+
+The third one is the trap this line exists to close: losing the engine is
+caught and logged rather than raised, so a degraded run otherwise prints a
+report that looks completely healthy, and the one-line warning has scrolled
+off the top by the time the report finishes.
+
 ## The demo, in two commands
 
 The contrast is the point. Run the same command twice, once with the engine
@@ -100,6 +114,9 @@ make eval
 
 ## If something goes wrong on camera
 
+- **The `Memory:` line says UNREACHABLE.** The run was not backed by memory,
+  whatever the rest of the report says. Stop the take. The engine is down or
+  `KORA_URL` points somewhere wrong; check it is 18095 and not 8080.
 - **Report shows 0 promises and far fewer contacts than the table.** The
   engine is up but the agent is not reaching it. Check `KORA_URL` points at
   18095 and not 8080.

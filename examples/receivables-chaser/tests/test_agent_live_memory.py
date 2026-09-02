@@ -197,3 +197,49 @@ def test_live_runs_keep_their_history(monkeypatch) -> None:
         f"a live run was namespaced to {seen['merchant']!r}; it would forget "
         "every previous day and re-chase customers who already promised"
     )
+
+
+def test_the_report_says_which_memory_it_used(tmp_path, monkeypatch, capsys) -> None:
+    """The report must state whether Kora was actually in the loop.
+
+    Every failure that disconnects the agent from Kora -- engine down, wrong
+    port, expired key -- is caught by SafeMemory and logged as a warning, then
+    the run continues on the escalation ladder and prints a report that looks
+    completely normal. The warning is one line at the top of ~64 lines of
+    output, so on a scrolled terminal the visible end of a degraded run is
+    indistinguishable from a healthy one.
+
+    That is a bad way to find out you recorded the wrong take, so the report
+    states its own memory backend and the number it should be compared
+    against.
+    """
+    from chaser import cli
+
+    argv = [
+        "run", "--recorded", "--days", "21",
+        "--world", str(WORLD), "--out-dir", str(tmp_path),
+    ]
+
+    monkeypatch.delenv("KORA_URL", raising=False)
+    monkeypatch.delenv("KORA_API_KEY", raising=False)
+    assert cli.main(argv) == 0
+    without = capsys.readouterr().out
+
+    assert "Memory" in without, "the report does not say what memory it used"
+    assert "no memory" in without.lower(), (
+        "a run with no Kora configured does not say so in its report"
+    )
+
+    # The dangerous case is not an unconfigured run but a configured one that
+    # cannot reach the engine: it is caught, logged, and then reports normally.
+    from chaser.memory import KoraMemory, SafeMemory
+
+    unreachable = SafeMemory(KoraMemory("http://localhost:1", "irrelevant"))
+    monkeypatch.setattr(cli, "_build_memory", lambda args: unreachable)
+    assert cli.main(argv) == 0
+    degraded = capsys.readouterr().out
+
+    assert "UNREACHABLE" in degraded, (
+        "a run that lost its connection to Kora printed a report that does "
+        "not say so; it is indistinguishable from a healthy run"
+    )
