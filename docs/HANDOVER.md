@@ -6,7 +6,7 @@ Everything below is verifiable from the repository; where something is a belief 
 ## 1. What this is, in one paragraph
 
 Kora is a Go memory engine for AI agents: memories live in PostgreSQL with Apache AGE (graph) and pgvector (vectors), behind a gRPC/REST API, deployed by a Helm chart.
-The branch `perf/memory-optimization` (PR [#100](https://github.com/NarayanaSabari/Kora/pull/100), 11 commits on top of `main`) did four things: built an offline benchmark because the published 69% accuracy could not be reproduced, used that benchmark to fix retrieval, profiled and sped up the read path, and tuned the Kubernetes chart.
+The branch `perf/memory-optimization` (PR [#100](https://github.com/NarayanaSabari/Kora/pull/100), 13 commits on top of `main`) did four things: built an offline benchmark because the published 69% accuracy could not be reproduced, used that benchmark to fix retrieval, profiled and sped up the read path, and tuned the Kubernetes chart.
 On top of that, the repository is being submitted to the [Razorpay AI Buildathon](https://razorpay.com/buildathon/), track "AI Revenue Recovery", with a demo agent in `examples/receivables-chaser/`.
 
 ## 2. Where things are
@@ -68,7 +68,6 @@ Every number in the README and the report was produced by `make eval`. Do not ad
 - Extraction drops every evidence memory for 36 of 200 questions before retrieval sees them. LongMemEval's key merging (verbatim round plus facts indexed as one key) is the measured remedy; it needs a fixture rebuild through Ollama.
 - The FTS statement is 9 ms of the remaining 17 ms per query. A stored tsvector column is the standard fix and is a schema change, which was reserved for the owner's decision.
 - Hydration of 500 candidates per query and the sequential retrievers are the next two latency steps; both are described in the report.
-- `charts/kora/templates/networkpolicy.yaml` says kind's default CNI ignores NetworkPolicy; on kind v0.31.0 it enforces it. Stale comment, not fixed.
 
 ## 8. How to run the things
 

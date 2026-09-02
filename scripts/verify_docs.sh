@@ -51,15 +51,16 @@ while IFS= read -r f; do DOC_FILES+=("$f"); done < <(
 section "1. Every documented KORA_* variable is read by the code"
 
 # The engine reads its settings through internal/config; the CLI reads three of
-# its own directly. The Python packages -- the MCP server, and the benchmark
-# and seeding scripts -- read their own, so they are scanned too: this check
-# was Go-only at first and flagged KORA_HTTP_URL as undocumented-but-unread
-# when the MCP server introduced it, which is the check being wrong rather
-# than the docs.
+# its own directly. The Python packages -- the MCP server, the benchmark and
+# seeding scripts, and the example agents under examples/ -- read their own, so
+# they are scanned too: this check was Go-only at first and flagged
+# KORA_HTTP_URL as undocumented-but-unread when the MCP server introduced it,
+# then flagged KORA_URL the same way when the receivables-chaser example
+# introduced it, which is the check being wrong rather than the docs.
 known=$(
     {
         grep -rhoE 'KORA_[A-Z0-9_]+' internal/ cmd/ --include='*.go'
-        grep -rhoE 'KORA_[A-Z0-9_]+' mcp-server/ scripts/ --include='*.py' 2>/dev/null
+        grep -rhoE 'KORA_[A-Z0-9_]+' mcp-server/ scripts/ examples/ --include='*.py' 2>/dev/null
         grep -rhoE 'KORA_[A-Z0-9_]+' scripts/ --include='*.sh' 2>/dev/null
         # Test-only settings are read by tests, which are code: the E2E
         # endpoint and key, the integration DSN, and the golden suite's
