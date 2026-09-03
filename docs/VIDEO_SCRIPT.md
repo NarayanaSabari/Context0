@@ -71,10 +71,10 @@ you record.
 > "Forty-nine messages instead of two hundred and sixteen.
 >
 > That's the result. The memory engine did not recover more money. It recovered
-> exactly the same money sending 77% fewer messages, because
-> it stopped re-chasing people who had already promised to pay, already
-> disputed, or had already been contacted that morning. If you're a merchant,
-> that difference is your customer relationships."
+> exactly the same money for a quarter of the messages, because it stopped
+> re-chasing people who had already promised to pay, already disputed, or had
+> already been contacted that morning. If you're a merchant, that difference is
+> your customer relationships."
 
 ## 1:50 - 2:40 The audit trail and the stopping rules
 
