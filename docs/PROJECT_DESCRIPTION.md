@@ -10,13 +10,13 @@ than a count, the source is named.
 ## One line
 
 A memory engine for AI agents, and a receivables-recovery agent built on it
-that collects the same money with an order of magnitude fewer messages.
+that collects the same money with 77% fewer messages.
 
 ## Short (fits a 500-character field)
 
 Kora is a memory engine for AI agents, built on PostgreSQL with Apache AGE and
 pgvector. The demo is a B2B receivables chaser working 50 overdue invoices over
-21 days. Both configurations recover Rs 633,300; without memory it sends 430
+21 days. Both configurations recover Rs 633,300; without memory it sends 216
 messages, with Kora it sends 49, because it stops re-chasing customers who
 already promised to pay or disputed. Every decision is a named rule in an audit
 trail, and retrieval quality comes from a deterministic offline benchmark that
@@ -31,7 +31,7 @@ whether that memory was actually worth anything, I built a receivables chaser
 on top of it: an agent that works a batch of 50 overdue invoices across 20
 customers and 21 days, deciding for each one whether to remind, escalate,
 offer a payment link, or hand off to a human. Against a batch that recovers
-₹633,300 either way, the agent without memory sends 430 messages and the agent
+₹633,300 either way, the agent without memory sends 216 messages and the agent
 with Kora sends 49, because it stops re-chasing customers who already promised
 to pay, already disputed the invoice, or were already contacted that morning.
 Every decision is a named rule in an audit trail; a language model only ever
@@ -50,7 +50,7 @@ speaks gRPC and REST, ships as a Helm chart, and has a Python SDK.
 invoices, 20 customers, 21 simulated days. It reads every cross-tick fact back
 out of Kora rather than keeping local state, so its behaviour genuinely depends
 on the memory engine. Both configurations recover ₹633,300 from the batch. The
-escalation ladder alone needs 430 messages; with Kora it needs 49. The memory
+escalation ladder alone needs 216 messages; with Kora it needs 49. The memory
 does not recover more money, it recovers the same money without nagging people
 who had already answered. Escalation is compliant and bounded: a hard stop at
 45 days overdue, an immediate hand-off on any dispute, and one contact per
@@ -138,7 +138,7 @@ Agent, from `make demo` over 50 invoices and 21 days:
 
 | | recovered | messages | promises seen |
 |---|---|---|---|
-| escalation ladder alone | ₹633,300 | 430 | 9 |
+| escalation ladder alone | ₹633,300 | 216 | 9 |
 | with Kora as memory | ₹633,300 | 49 | 11 |
 
 ### Claims worth making, and the honest caveats

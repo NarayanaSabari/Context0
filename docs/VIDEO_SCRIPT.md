@@ -56,7 +56,7 @@ you record.
 
 [Point at the `Recovered` row, then at the contacts table.]
 
-> "It sends four hundred and thirty messages to do it."
+> "It sends two hundred and sixteen messages to do it."
 
 [Terminal A. Run `make demo`.]
 
@@ -68,10 +68,10 @@ you record.
 
 [Point at `Recovered`, then the contacts table.]
 
-> "Forty-nine messages instead of four hundred and thirty.
+> "Forty-nine messages instead of two hundred and sixteen.
 >
 > That's the result. The memory engine did not recover more money. It recovered
-> exactly the same money sending an order of magnitude fewer messages, because
+> exactly the same money sending 77% fewer messages, because
 > it stopped re-chasing people who had already promised to pay, already
 > disputed, or had already been contacted that morning. If you're a merchant,
 > that difference is your customer relationships."

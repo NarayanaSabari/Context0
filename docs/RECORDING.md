@@ -72,11 +72,11 @@ What they print, verified twice from clean on 2026-09-02:
 
 | | recovered | messages sent | promises seen |
 |---|---|---|---|
-| ladder alone | ₹633,300 | 430 | 9 |
+| ladder alone | ₹633,300 | 216 | 9 |
 | with Kora | ₹633,300 | **49** | 11 |
 
 The line to say over it: same rules, same fixture, same money recovered, and
-an order of magnitude fewer messages. The memory engine did not collect more;
+77% fewer messages. The memory engine did not collect more;
 it collected the same amount without re-chasing anyone who had already
 promised to pay, disputed the invoice, or been contacted that day.
 
