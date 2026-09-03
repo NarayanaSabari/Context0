@@ -2,7 +2,7 @@
 
 **The open-source memory engine for AI agents.** Graph-first, Kubernetes-native.
 
-Kora gives any AI agent persistent, intelligent memory. Store conversations, auto-extract facts, query by meaning, and build user profiles -- all through a simple API running in your own cluster.
+Kora gives any AI agent persistent memory. Store conversations, extract facts, query by meaning, and run the whole thing in your own cluster.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg)](https://go.dev)
@@ -10,26 +10,34 @@ Kora gives any AI agent persistent, intelligent memory. Store conversations, aut
 
 ---
 
-## Why Kora?
+## What the memory is worth
 
-Every AI agent framework today has the same problem: **agents are amnesiac**. Sessions start from scratch, context is lost, and agents never learn from past interactions.
+An agent's memory is easy to claim and hard to price. So this repository ships an agent that prices it: a B2B receivables chaser working 50 overdue invoices across 20 customers and 21 simulated days, deciding for each one whether to remind, escalate, offer a payment link, or hand off to a human.
 
-Kora solves this with a **graph-based memory engine** that runs in your Kubernetes cluster:
+Both configurations recover the same money. Only one of them stops nagging.
 
-- **Graph-first retrieval** -- relationships between memories, not flat vector similarity
-- **Hybrid search** -- Apache AGE graph traversal + pgvector similarity in one PostgreSQL instance
-- **Auto extraction** -- feed raw conversations, get structured facts, preferences, and events
-- **User profiles** -- auto-built static + dynamic profiles from stored memories
-- **100% open source** -- Apache 2.0 license, every dependency OSI-approved
-- **Self-hosted** -- your data stays in your cluster, period
+| | recovered | messages sent |
+|---|---|---|
+| escalation ladder alone | ₹633,300 | 430 |
+| **with Kora as memory** | **₹633,300** | **49** |
+
+The engine does not recover more. It recovers the same amount without re-chasing anyone who had already promised to pay, disputed the invoice, or been contacted that day. Every decision is a named rule in an audit trail, and a language model only ever rewords the message text -- it never chooses the action.
+
+```bash
+make demo                                     # no memory: 430 messages
+KORA_URL=http://localhost:8080 \
+KORA_API_KEY=<your key> make demo             # with Kora: 49
+```
+
+Both rows are reproducible from a clean clone. The agent is in [examples/receivables-chaser/](examples/receivables-chaser/).
 
 ## Measured, not claimed
 
-Every retrieval number in this repository comes from `make eval`, an offline benchmark that runs the real engine against the 200-question LoCoMo set and scores it against the dataset's own evidence annotations.
-It makes no network or model call, and two runs produce identical numbers and an identical digest of every ranked list.
-The published 69% accuracy figure that preceded it was an LLM judge's verdict and could not be reproduced without an API; that story, and what replaced it, is in [docs/OPTIMIZATION_REPORT.md](docs/OPTIMIZATION_REPORT.md).
+Every retrieval number here comes from `make eval`, an offline benchmark that runs the real engine against the 200-question LoCoMo set and scores it against the dataset's own evidence annotations. It makes no network or model call, and two runs produce identical numbers and an identical digest of every ranked list.
 
-Engine before and after this branch, verbatim-turns corpus, 158 answerable questions:
+The 69% accuracy figure that preceded it was an LLM judge's verdict on an LLM's answer, and could not be reproduced without an API. That story is in [docs/OPTIMIZATION_REPORT.md](docs/OPTIMIZATION_REPORT.md).
+
+Verbatim-turns corpus, 158 answerable questions:
 
 | metric | before | after |
 |---|---|---|
@@ -39,80 +47,26 @@ Engine before and after this branch, verbatim-turns corpus, 158 answerable quest
 | query latency p50 / p99 | 24.9 / 53.2 ms | **16.7 / 40.4 ms** |
 | allocations per query | 36,215 | **17,905** |
 
-What moved it: 43 of the 44 misses were evidence a retriever had already found and the fusion had buried, because a saturated keyword score outvoted a compressed cosine.
-Normalising both per query fixed most of that.
-The graph's entity signal, the feature the project is named for, measured +0.005 MRR and was left in at its measured weight.
-The full ablation, the failure buckets before and after, the papers used and rejected, and what is left on the table are in the report; the step-by-step log with reverts is [docs/WORKLOG.md](docs/WORKLOG.md).
+What moved it: 43 of the 44 misses were evidence a retriever had already found and the fusion had buried, because a saturated keyword score outvoted a compressed cosine. Normalising both per query fixed most of that.
 
-What the memory is worth to an agent, measured the same way on the receivables-chaser example over 21 days and 50 invoices:
-
-| | recovered | messages sent |
-|---|---|---|
-| escalation ladder alone | ₹633,300 | 430 |
-| with Kora as memory | ₹633,300 | **49** |
-
-The engine does not recover more money. It recovers the same money without re-chasing anyone who had already promised to pay, disputed the invoice, or been contacted that day.
-Reproduce both rows with `make demo`, once with `KORA_URL` unset and once with it pointed at a running engine.
+**The graph's entity signal, the feature this project is named for, measured +0.005 MRR.** It was left in at its measured weight and the report says so plainly. The full ablation, the failure buckets, and the papers used and rejected are in the report; the step-by-step log with every revert is [docs/WORKLOG.md](docs/WORKLOG.md).
 
 ```bash
 make eval            # needs Docker; loads the corpus into a throwaway Postgres and prints the table above
-make demo            # the receivables-chaser agent, offline, with Kora as its memory (see examples/)
 make test            # unit tests, no database
 ```
 
+## Why Kora?
+
+Most agent frameworks are amnesiac: sessions start from scratch, context is lost, and nothing is learned from past interactions. Kora is a memory engine that runs in your own cluster:
+
+- **One store** -- Apache AGE graph traversal and pgvector similarity in a single PostgreSQL instance, so edges and embeddings share one backup and one trust domain
+- **Hybrid retrieval** -- full-text, vector, and entity signals fused per query, with every weight traceable to a measurement
+- **Auto extraction** -- feed raw conversations, get structured facts, preferences, and events
+- **Self-hosted** -- your data stays in your cluster
+- **Apache 2.0** -- every dependency OSI-approved, no SSPL or BSL
+
 ## Quick Start
-
-### Upgrading from Context0
-
-This project was called Context0. If you are running an older deployment, the
-rename is not purely cosmetic and a plain `helm upgrade` is not enough.
-
-Environment variables moved from `CONTEXT0_*` to `KORA_*`. The engine now
-**refuses to start** when it sees an old name rather than falling back to a
-default, because an unset `KORA_API_KEYS` disables authentication entirely - a
-silent fallback would have brought the API up serving every stored memory
-unauthenticated.
-
-The Postgres role and database were also renamed from `context0` to `kora`.
-Those live in your data, not in this repo, so a new image points at names that
-do not exist yet and fails with `role "kora" does not exist`. The Postgres
-StatefulSet's volume survives a `helm upgrade`, so a Kubernetes deployment hits
-this too, not just Docker Compose.
-
-Pick whichever fits. Either point the chart back at the names your database
-already uses, which changes nothing on disk:
-
-```bash
-helm upgrade kora ./charts/kora \
-  --set postgres.user=context0 --set postgres.database=context0
-```
-
-Or rename the role and database to match the new defaults, with the API
-stopped:
-
-```bash
-scripts/migrate_rename.sh
-```
-
-The script renames both (catalog-only, so the cost does not scale with database
-size), reaps any privileged helper role left by an interrupted run, and
-verifies the graph is still readable afterwards. It is idempotent.
-
-### What still says context0, and why
-
-Three names survived the rename on purpose. Each is data-bearing or
-credential-bearing, so renaming it would cost an existing deployment something
-real in exchange for consistency:
-
-| Name | Where | Why it stays |
-|---|---|---|
-| The AGE graph and its schema | `GraphName` in `internal/graph/age.go` | It is the Postgres schema holding every deployment's data. Renaming it is a data migration with no functional benefit, and the SQL in `docs/research/` refers to it. |
-| The `ctx0_` API key prefix | `KeyPrefix` in `internal/auth/keys.go` | It is in every key ever issued. Changing it invalidates all of them to fix an aesthetic problem. |
-| The Cloudflare Pages project | `.github/workflows/site.yaml` | Renaming it changes the deployment target of the docs site. |
-
-Everything else - the module, the binaries, the chart, the environment
-variables, the repository - is Kora. If you see `context0` anywhere other than
-the three rows above, it is a leftover and worth an issue.
 
 ### Prerequisites
 
@@ -210,7 +164,7 @@ curl -X POST http://localhost:8080/v1/memories \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
   -d '{
-    "content": "Project uses PostgreSQL 15 with Apache AGE",
+    "content": "Project uses PostgreSQL 18 with Apache AGE",
     "type": 2,
     "project_id": "my-project",
     "tags": ["database", "postgres"]
@@ -253,8 +207,11 @@ Returns an aggregated profile:
 
 ### Python SDK
 
+The SDK is not published to PyPI yet, and the name `kora` there belongs to an
+unrelated Colab package. Install it from this repository:
+
 ```bash
-pip install kora
+pip install ./sdk/python
 ```
 
 ```python
@@ -267,7 +224,7 @@ client = KoraClient(
 )
 
 # Store
-mem = client.store("Project uses PostgreSQL 15", type="semantic", tags=["database"])
+mem = client.store("Project uses PostgreSQL 18", type="semantic", tags=["database"])
 
 # Query
 results = client.query("what database does this project use?", top_k=3)
@@ -275,8 +232,8 @@ results = client.query("what database does this project use?", top_k=3)
 # Auto-extract from conversation
 client.extract("user: We switched to PostgreSQL\nuser: I prefer vim")
 
-# Get profile
-profile = client.health()
+# Engine health and stats
+status = client.health()
 
 # Session lifecycle
 with client.session() as s:
@@ -333,35 +290,35 @@ Seven tools: `memory_store`, `memory_query`, `memory_extract`,
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    subgraph agents [" "]
+        A["Agent A"]
+        B["Agent B"]
+        C["Agent C"]
+    end
+
+    agents -->|gRPC / REST| API
+
+    subgraph cluster ["Kubernetes cluster"]
+        API["Kora engine"]
+        API --- ING["Ingest + extract"]
+        API --- QRY["Hybrid query"]
+        API --- CON["Consolidation (CronJob)"]
+        ING --> PG
+        QRY --> PG
+        CON --> PG
+        PG[("PostgreSQL<br/>Apache AGE graph + pgvector embeddings")]
+        WEB["React web UI<br/>(graph visualisation)"]
+        PROM["Prometheus<br/>/metrics"]
+        API --- WEB
+        API --- PROM
+    end
 ```
-┌─── Kubernetes Cluster ─────────────────────────────────────────┐
-│                                                                 │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐                     │
-│  │ Agent A  │  │ Agent B  │  │ Agent C  │  (any framework)    │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘                     │
-│       └──────────────┼──────────────┘                           │
-│                      │  gRPC / REST                             │
-│                      v                                          │
-│  ┌──────────────────────────────────────────────┐              │
-│  │            Kora Engine                    │              │
-│  │                                               │              │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │              │
-│  │  │ Ingest + │ │ Hybrid   │ │ Consolidation│ │              │
-│  │  │ Extract  │ │ Query    │ │ (CronJob)    │ │              │
-│  │  └──────────┘ └──────────┘ └──────────────┘ │              │
-│  │                                               │              │
-│  │  ┌──────────────────────────────────────────┐│              │
-│  │  │  PostgreSQL + Apache AGE + pgvector      ││              │
-│  │  │  Graph nodes + Vector embeddings         ││              │
-│  │  └──────────────────────────────────────────┘│              │
-│  └──────────────────────────────────────────────┘              │
-│                                                                 │
-│  ┌─────────────┐  ┌─────────────┐                              │
-│  │ React Web UI│  │ Prometheus  │                              │
-│  │ (graph viz) │  │ /metrics    │                              │
-│  └─────────────┘  └─────────────┘                              │
-└─────────────────────────────────────────────────────────────────┘
-```
+
+Agents talk to one engine over gRPC or REST. The engine writes graph nodes and
+vectors into a single PostgreSQL instance, so a memory and its edges are
+committed together and restored together.
 
 ### How Memory Works
 
@@ -435,11 +392,26 @@ kora/
 │   ├── retrieval/          # Read path: three retrievers, merge, rank
 │   └── service/            # gRPC service handlers
 ├── charts/kora/            # Helm chart (deployment topology)
+├── eval/                   # Offline retrieval benchmark (`make eval`)
+├── examples/
+│   └── receivables-chaser/ # The demo agent behind the table at the top
 ├── web/                    # React web UI
 ├── sdk/python/             # Python SDK
 ├── mcp-server/             # MCP server for Claude Code, Cursor, Windsurf
 └── test/e2e/               # End-to-end tests
 ```
+
+## Documentation
+
+| | |
+|---|---|
+| [docs/OPTIMIZATION_REPORT.md](docs/OPTIMIZATION_REPORT.md) | The full technical report: baseline vs final, ablations, failure analysis, papers used and rejected |
+| [docs/WORKLOG.md](docs/WORKLOG.md) | Every hypothesis, measurement and revert, in order |
+| [eval/README.md](eval/README.md) | The offline benchmark and how to run it |
+| [examples/receivables-chaser/](examples/receivables-chaser/README.md) | The demo agent behind the table at the top |
+| [docs/kubernetes.md](docs/kubernetes.md) | Chart settings and the reason for each |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Workflow, branching, release process |
+| [docs/PROJECT_DESCRIPTION.md](docs/PROJECT_DESCRIPTION.md) | The project at four lengths, plus a counted fact sheet |
 
 ## Development
 
@@ -491,12 +463,64 @@ cluster rather than a mock:
 
 | Script | What it checks |
 |---|---|
-| `scripts/verify_k8s.sh` | Checks a live deployment (80 at present): probes, security contexts, credentials, NetworkPolicy, PDB evictions, metrics, recoverability, session accounting |
+| `scripts/verify_k8s.sh` | Checks a live deployment (95 at present): probes, security contexts, credentials, NetworkPolicy, PDB evictions, metrics, recoverability, session accounting |
 | `scripts/verify_install.sh` | Installs from scratch into a fresh cluster, as a new user would |
 | `scripts/verify_perf.sh` | Each performance claim printed next to its observed value, with the statistics and bloat regime it was measured in |
 | `scripts/backup.sh` | Dump, restore, and verify -- the restore path is the one that silently skipped the HNSW index |
 | `scripts/soak.py` | Long-running invariant checks under continuous load |
 | `scripts/mutate.py` | Whether the tests fail when the code is wrong; see [docs/mutation-testing.md](docs/mutation-testing.md) |
+
+## Migrating from Context0
+
+This project was called Context0. If you are running an older deployment, the
+rename is not purely cosmetic and a plain `helm upgrade` is not enough.
+
+Environment variables moved from `CONTEXT0_*` to `KORA_*`. The engine now
+**refuses to start** when it sees an old name rather than falling back to a
+default, because an unset `KORA_API_KEYS` disables authentication entirely - a
+silent fallback would have brought the API up serving every stored memory
+unauthenticated.
+
+The Postgres role and database were also renamed from `context0` to `kora`.
+Those live in your data, not in this repo, so a new image points at names that
+do not exist yet and fails with `role "kora" does not exist`. The Postgres
+StatefulSet's volume survives a `helm upgrade`, so a Kubernetes deployment hits
+this too, not just Docker Compose.
+
+Pick whichever fits. Either point the chart back at the names your database
+already uses, which changes nothing on disk:
+
+```bash
+helm upgrade kora ./charts/kora \
+  --set postgres.user=context0 --set postgres.database=context0
+```
+
+Or rename the role and database to match the new defaults, with the API
+stopped:
+
+```bash
+scripts/migrate_rename.sh
+```
+
+The script renames both (catalog-only, so the cost does not scale with database
+size), reaps any privileged helper role left by an interrupted run, and
+verifies the graph is still readable afterwards. It is idempotent.
+
+### What still says context0, and why
+
+Three names survived the rename on purpose. Each is data-bearing or
+credential-bearing, so renaming it would cost an existing deployment something
+real in exchange for consistency:
+
+| Name | Where | Why it stays |
+|---|---|---|
+| The AGE graph and its schema | `GraphName` in `internal/graph/age.go` | It is the Postgres schema holding every deployment's data. Renaming it is a data migration with no functional benefit, and the SQL in `docs/research/` refers to it. |
+| The `ctx0_` API key prefix | `KeyPrefix` in `internal/auth/keys.go` | It is in every key ever issued. Changing it invalidates all of them to fix an aesthetic problem. |
+| The Cloudflare Pages project | `.github/workflows/site.yaml` | Renaming it changes the deployment target of the docs site. |
+
+Everything else - the module, the binaries, the chart, the environment
+variables, the repository - is Kora. If you see `context0` anywhere other than
+the three rows above, it is a leftover and worth an issue.
 
 ## Contributing
 
@@ -515,13 +539,33 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 - [x] User profiles
 - [x] React web UI with graph visualization
 - [x] Python SDK + CLI
+- [x] MCP server (Claude Code, Cursor, Windsurf)
 - [x] Helm chart + kind deployment
 - [x] Ollama embedding integration
 - [x] Contradiction detection
+- [x] Deterministic offline retrieval benchmark ([`eval/`](eval/README.md))
+- [ ] Publish the Python SDK to PyPI
+- [ ] Per-embedder fusion defaults, so the zero-dependency install does not lose hit@10
+- [ ] Merge verbatim rounds with extracted facts, which addresses the 36-of-200 extraction loss
 - [ ] Content ingestion (PDF, URLs, code)
-- [ ] Framework SDKs (LangChain, CrewAI, MCP)
+- [ ] Framework SDKs (LangChain, CrewAI)
 - [ ] Connectors (GitHub, Google Drive, Notion)
-- [ ] MemoryBench benchmark results (in progress: see [docs/research/benchmark-harness.md](docs/research/benchmark-harness.md))
+
+## Known limitations
+
+Stated here rather than left to be discovered:
+
+- **Extraction drops evidence.** For 36 of 200 benchmark questions, every
+  supporting memory is lost before retrieval sees it. The remedy is measured in
+  the literature and not yet implemented.
+- **The entity graph contributes +0.005 MRR** on this benchmark. It carries
+  provenance the vector store cannot, but it is not what makes retrieval work.
+- **The zero-dependency defaults are a floor, not a target.** Hashed
+  bag-of-words embeddings score token overlap, not meaning; see above for the
+  quality profile.
+- **The agent result is a synthetic fixture**, not production traffic. Both
+  arms replay the same scripted world, which makes the comparison fair, but it
+  is not a claim about real merchants.
 
 ## License
 
