@@ -405,6 +405,7 @@ kora/
 
 | | |
 |---|---|
+| [docs/ARCHITECTURE_DECISIONS.md](docs/ARCHITECTURE_DECISIONS.md) | Why one Postgres, why Go, why rules over an LLM, why gRPC plus REST, and what breaks at 10M nodes |
 | [docs/OPTIMIZATION_REPORT.md](docs/OPTIMIZATION_REPORT.md) | The full technical report: baseline vs final, ablations, failure analysis, papers used and rejected |
 | [docs/WORKLOG.md](docs/WORKLOG.md) | Every hypothesis, measurement and revert, in order |
 | [eval/README.md](eval/README.md) | The offline benchmark and how to run it |
