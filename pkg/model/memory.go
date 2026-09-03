@@ -85,6 +85,18 @@ type MemoryWithContext struct {
 	// recency, access frequency, and memory type. Higher is more relevant.
 	// Assigned by the ranking layer, which overwrites whatever was here.
 	Score float64 `json:"score"`
+
+	// Superseded reports that a live memory replaces this one: an incoming
+	// supersedes edge exists, written at ingest when a contradiction was
+	// detected or by consolidation when it merged the facts.
+	//
+	// Ranking demotes on it rather than retrieval filtering on it, because
+	// the stale fact is still an answer to some questions -- "where did X
+	// use to live" is answered by exactly the memory this flag marks -- and
+	// a filter would remove the engine's only copy of the history. Set by
+	// the retrieval layer; not serialized, because whether a memory is
+	// current is the engine's ranking concern, not part of the memory.
+	Superseded bool `json:"-"`
 }
 
 // ContextEdge is a simplified edge returned alongside a memory in query

@@ -13,77 +13,353 @@
     "  paraphrase - asks for the same thing in different words",
     "  subject    - names a person or service that several memories mention"
   ],
-
   "corpus": [
-    { "label": "db-migration", "type": "semantic", "content": "The team migrated the primary datastore from MySQL to PostgreSQL 18 because they needed graph traversal support." },
-    { "label": "db-old", "type": "semantic", "content": "Before the migration the primary datastore was MySQL 8." },
-    { "label": "cache", "type": "semantic", "content": "Redis holds session tokens and is treated as a cache, never as a source of truth." },
-    { "label": "deploy-tool", "type": "semantic", "content": "Deployments go out through Helm charts on Kubernetes, never by hand." },
-    { "label": "ci-runner", "type": "semantic", "content": "CI runs on GitHub Actions, with a self-hosted runner for the integration suite." },
-    { "label": "priya-owns-billing", "type": "semantic", "content": "Priya owns the billing service and reviews every change to it." },
-    { "label": "marcus-owns-auth", "type": "semantic", "content": "Marcus owns the auth service and the API key rotation runbook." },
-    { "label": "yuki-oncall", "type": "procedural", "content": "Yuki takes the on-call pager on Wednesdays." },
-    { "label": "elena-timezone", "type": "semantic", "content": "Elena works from Lisbon, so meetings after 16:00 UTC do not suit her." },
-    { "label": "billing-k8s", "type": "semantic", "content": "The billing service runs on Kubernetes with three replicas behind an ingress." },
-    { "label": "billing-outage", "type": "episodic", "content": "On 3 March the billing service went down for 40 minutes after a bad migration locked the invoices table." },
-    { "label": "auth-latency", "type": "episodic", "content": "In February the auth service p99 latency doubled after the token cache was disabled." },
-    { "label": "postmortem-rule", "type": "procedural", "content": "Every incident longer than 30 minutes gets a written postmortem within two working days." },
-    { "label": "test-rule", "type": "procedural", "content": "Run the full test suite before pushing to main; the pre-push hook is not optional." },
-    { "label": "review-rule", "type": "procedural", "content": "Pull requests need one approval, and the author never merges their own work." },
-    { "label": "commit-style", "type": "procedural", "content": "Commit messages follow Conventional Commits, and the body explains why rather than what." },
-    { "label": "secrets-rule", "type": "semantic", "content": "Secrets live in the cluster's Secret objects; nothing sensitive is ever committed to the repository." },
-    { "label": "grafana", "type": "semantic", "content": "Grafana dashboards are provisioned from source, and nobody edits them in the UI." },
-    { "label": "backup-rule", "type": "procedural", "content": "Database backups run nightly, and a restore is rehearsed on the first Monday of each month." },
-    { "label": "chose-go", "type": "semantic", "content": "The team chose Go for the engine because a single static binary keeps container images small." },
-    { "label": "rejected-mongo", "type": "semantic", "content": "MongoDB was rejected during the datastore evaluation because the query patterns are relational." },
-    { "label": "priya-vim", "type": "semantic", "content": "Priya prefers Vim keybindings and short code review comments." },
-    { "label": "marcus-diagrams", "type": "semantic", "content": "Marcus asks for a sequence diagram before any change that crosses service boundaries." },
-    { "label": "standup", "type": "episodic", "content": "The daily standup moved to 09:30 UTC in January so Elena could attend." },
-    { "label": "invoice-schema", "type": "semantic", "content": "The invoices table is partitioned by month and holds nine years of history." },
-    { "label": "rate-limit", "type": "semantic", "content": "The public API is rate limited to 6000 requests per minute per key." },
-    { "label": "quarterly-goal", "type": "episodic", "content": "In April the team committed to cutting p99 query latency below 200 milliseconds." },
-    { "label": "will-ingest", "type": "semantic", "content": "The ingest pipeline and its backfill scripts are maintained by Will." },
-    { "label": "yuki-laptop", "type": "episodic", "content": "Yuki's laptop was replaced in May after the keyboard failed during an incident." }
+    {
+      "label": "db-migration",
+      "type": "semantic",
+      "content": "The team migrated the primary datastore from MySQL to PostgreSQL 18 because they needed graph traversal support."
+    },
+    {
+      "label": "db-old",
+      "type": "semantic",
+      "content": "Before the migration the primary datastore was MySQL 8."
+    },
+    {
+      "label": "cache",
+      "type": "semantic",
+      "content": "Redis holds session tokens and is treated as a cache, never as a source of truth."
+    },
+    {
+      "label": "deploy-tool",
+      "type": "semantic",
+      "content": "Deployments go out through Helm charts on Kubernetes, never by hand."
+    },
+    {
+      "label": "ci-runner",
+      "type": "semantic",
+      "content": "CI runs on GitHub Actions, with a self-hosted runner for the integration suite."
+    },
+    {
+      "label": "priya-owns-billing",
+      "type": "semantic",
+      "content": "Priya owns the billing service and reviews every change to it."
+    },
+    {
+      "label": "marcus-owns-auth",
+      "type": "semantic",
+      "content": "Marcus owns the auth service and the API key rotation runbook."
+    },
+    {
+      "label": "yuki-oncall",
+      "type": "procedural",
+      "content": "Yuki takes the on-call pager on Wednesdays."
+    },
+    {
+      "label": "elena-timezone",
+      "type": "semantic",
+      "content": "Elena works from Lisbon, so meetings after 16:00 UTC do not suit her."
+    },
+    {
+      "label": "billing-k8s",
+      "type": "semantic",
+      "content": "The billing service runs on Kubernetes with three replicas behind an ingress."
+    },
+    {
+      "label": "billing-outage",
+      "type": "episodic",
+      "content": "On 3 March the billing service went down for 40 minutes after a bad migration locked the invoices table."
+    },
+    {
+      "label": "auth-latency",
+      "type": "episodic",
+      "content": "In February the auth service p99 latency doubled after the token cache was disabled."
+    },
+    {
+      "label": "postmortem-rule",
+      "type": "procedural",
+      "content": "Every incident longer than 30 minutes gets a written postmortem within two working days."
+    },
+    {
+      "label": "test-rule",
+      "type": "procedural",
+      "content": "Run the full test suite before pushing to main; the pre-push hook is not optional."
+    },
+    {
+      "label": "review-rule",
+      "type": "procedural",
+      "content": "Pull requests need one approval, and the author never merges their own work."
+    },
+    {
+      "label": "commit-style",
+      "type": "procedural",
+      "content": "Commit messages follow Conventional Commits, and the body explains why rather than what."
+    },
+    {
+      "label": "secrets-rule",
+      "type": "semantic",
+      "content": "Secrets live in the cluster's Secret objects; nothing sensitive is ever committed to the repository."
+    },
+    {
+      "label": "grafana",
+      "type": "semantic",
+      "content": "Grafana dashboards are provisioned from source, and nobody edits them in the UI."
+    },
+    {
+      "label": "backup-rule",
+      "type": "procedural",
+      "content": "Database backups run nightly, and a restore is rehearsed on the first Monday of each month."
+    },
+    {
+      "label": "chose-go",
+      "type": "semantic",
+      "content": "The team chose Go for the engine because a single static binary keeps container images small."
+    },
+    {
+      "label": "rejected-mongo",
+      "type": "semantic",
+      "content": "MongoDB was rejected during the datastore evaluation because the query patterns are relational."
+    },
+    {
+      "label": "priya-vim",
+      "type": "semantic",
+      "content": "Priya prefers Vim keybindings and short code review comments."
+    },
+    {
+      "label": "marcus-diagrams",
+      "type": "semantic",
+      "content": "Marcus asks for a sequence diagram before any change that crosses service boundaries."
+    },
+    {
+      "label": "standup",
+      "type": "episodic",
+      "content": "The daily standup moved to 09:30 UTC in January so Elena could attend."
+    },
+    {
+      "label": "invoice-schema",
+      "type": "semantic",
+      "content": "The invoices table is partitioned by month and holds nine years of history."
+    },
+    {
+      "label": "rate-limit",
+      "type": "semantic",
+      "content": "The public API is rate limited to 6000 requests per minute per key."
+    },
+    {
+      "label": "quarterly-goal",
+      "type": "episodic",
+      "content": "In April the team committed to cutting p99 query latency below 200 milliseconds."
+    },
+    {
+      "label": "will-ingest",
+      "type": "semantic",
+      "content": "The ingest pipeline and its backfill scripts are maintained by Will."
+    },
+    {
+      "label": "yuki-laptop",
+      "type": "episodic",
+      "content": "Yuki's laptop was replaced in May after the keyboard failed during an incident."
+    },
+    {
+      "label": "desk-old",
+      "type": "semantic",
+      "content": "Priya's desk sits on floor 2 of the Berlin office, next to the kitchen."
+    },
+    {
+      "label": "desk-new",
+      "type": "semantic",
+      "content": "Priya's desk moved to floor 3."
+    }
   ],
-
   "cases": [
-    { "group": "lexical", "query": "Which database did the team migrate to?", "expect": "db-migration" },
-    { "group": "lexical", "query": "What was the primary datastore before the migration?", "expect": "db-old" },
-    { "group": "lexical", "query": "What is Redis used for?", "expect": "cache" },
-    { "group": "lexical", "query": "How do deployments go out?", "expect": "deploy-tool" },
-    { "group": "lexical", "query": "Where does CI run?", "expect": "ci-runner" },
-    { "group": "lexical", "query": "What is the rate limit on the public API?", "expect": "rate-limit" },
-    { "group": "lexical", "query": "How is the invoices table organised?", "expect": "invoice-schema" },
-    { "group": "lexical", "query": "Why was MongoDB rejected?", "expect": "rejected-mongo" },
-    { "group": "lexical", "query": "When do database backups run?", "expect": "backup-rule" },
-    { "group": "lexical", "query": "What happened to the billing service on 3 March?", "expect": "billing-outage" },
-    { "group": "lexical", "query": "How are Grafana dashboards managed?", "expect": "grafana" },
-    { "group": "lexical", "query": "Why did the team choose Go for the engine?", "expect": "chose-go" },
-
-    { "group": "paraphrase", "query": "Which storage engine holds our data now?", "expect": "db-migration" },
-    { "group": "paraphrase", "query": "Can I keep the only copy of something in Redis?", "expect": "cache" },
-    { "group": "paraphrase", "query": "Is it acceptable to apply manifests to the cluster by hand?", "expect": "deploy-tool" },
-    { "group": "paraphrase", "query": "Does someone else have to look at my change before it lands?", "expect": "review-rule" },
-    { "group": "paraphrase", "query": "What write-up is required after a long incident?", "expect": "postmortem-rule" },
-    { "group": "paraphrase", "query": "Am I allowed to check an API token into the repository?", "expect": "secrets-rule" },
-    { "group": "paraphrase", "query": "What should I run before pushing to main?", "expect": "test-rule" },
-    { "group": "paraphrase", "query": "How should I word a commit message?", "expect": "commit-style" },
-    { "group": "paraphrase", "query": "Who is allowed to merge a pull request?", "expect": "review-rule" },
-    { "group": "paraphrase", "query": "What time does the team meet each morning?", "expect": "standup" },
-    { "group": "paraphrase", "query": "Who signs off on my work before it ships?", "expect": "review-rule" },
-    { "group": "paraphrase", "query": "Is there a written record after something breaks for a while?", "expect": "postmortem-rule" },
-    { "group": "paraphrase", "query": "How often is disaster recovery rehearsed?", "expect": "backup-rule" },
-
-    { "group": "subject", "query": "What does Priya own?", "expect": "priya-owns-billing" },
-    { "group": "subject", "query": "What are Priya's editor preferences?", "expect": "priya-vim" },
-    { "group": "subject", "query": "Who handles API key rotation?", "expect": "marcus-owns-auth" },
-    { "group": "subject", "query": "What does Marcus ask for before a cross-service change?", "expect": "marcus-diagrams" },
-    { "group": "subject", "query": "When is Yuki on call?", "expect": "yuki-oncall" },
-    { "group": "subject", "query": "Why can Elena not attend late meetings?", "expect": "elena-timezone" },
-    { "group": "subject", "query": "How many replicas does the billing service run?", "expect": "billing-k8s" },
-    { "group": "subject", "query": "What happened to the auth service in February?", "expect": "auth-latency" },
-    { "group": "subject", "query": "Why was Yuki's laptop replaced?", "expect": "yuki-laptop" },
-    { "group": "subject", "query": "What did the team commit to in April?", "expect": "quarterly-goal" },
-    { "group": "subject", "query": "What is Will responsible for?", "expect": "will-ingest" }
+    {
+      "group": "lexical",
+      "query": "Which database did the team migrate to?",
+      "expect": "db-migration"
+    },
+    {
+      "group": "lexical",
+      "query": "What was the primary datastore before the migration?",
+      "expect": "db-old"
+    },
+    {
+      "group": "lexical",
+      "query": "What is Redis used for?",
+      "expect": "cache"
+    },
+    {
+      "group": "lexical",
+      "query": "How do deployments go out?",
+      "expect": "deploy-tool"
+    },
+    {
+      "group": "lexical",
+      "query": "Where does CI run?",
+      "expect": "ci-runner"
+    },
+    {
+      "group": "lexical",
+      "query": "What is the rate limit on the public API?",
+      "expect": "rate-limit"
+    },
+    {
+      "group": "lexical",
+      "query": "How is the invoices table organised?",
+      "expect": "invoice-schema"
+    },
+    {
+      "group": "lexical",
+      "query": "Why was MongoDB rejected?",
+      "expect": "rejected-mongo"
+    },
+    {
+      "group": "lexical",
+      "query": "When do database backups run?",
+      "expect": "backup-rule"
+    },
+    {
+      "group": "lexical",
+      "query": "What happened to the billing service on 3 March?",
+      "expect": "billing-outage"
+    },
+    {
+      "group": "lexical",
+      "query": "How are Grafana dashboards managed?",
+      "expect": "grafana"
+    },
+    {
+      "group": "lexical",
+      "query": "Why did the team choose Go for the engine?",
+      "expect": "chose-go"
+    },
+    {
+      "group": "paraphrase",
+      "query": "Which storage engine holds our data now?",
+      "expect": "db-migration"
+    },
+    {
+      "group": "paraphrase",
+      "query": "Can I keep the only copy of something in Redis?",
+      "expect": "cache"
+    },
+    {
+      "group": "paraphrase",
+      "query": "Is it acceptable to apply manifests to the cluster by hand?",
+      "expect": "deploy-tool"
+    },
+    {
+      "group": "paraphrase",
+      "query": "Does someone else have to look at my change before it lands?",
+      "expect": "review-rule"
+    },
+    {
+      "group": "paraphrase",
+      "query": "What write-up is required after a long incident?",
+      "expect": "postmortem-rule"
+    },
+    {
+      "group": "paraphrase",
+      "query": "Am I allowed to check an API token into the repository?",
+      "expect": "secrets-rule"
+    },
+    {
+      "group": "paraphrase",
+      "query": "What should I run before pushing to main?",
+      "expect": "test-rule"
+    },
+    {
+      "group": "paraphrase",
+      "query": "How should I word a commit message?",
+      "expect": "commit-style"
+    },
+    {
+      "group": "paraphrase",
+      "query": "Who is allowed to merge a pull request?",
+      "expect": "review-rule"
+    },
+    {
+      "group": "paraphrase",
+      "query": "What time does the team meet each morning?",
+      "expect": "standup"
+    },
+    {
+      "group": "paraphrase",
+      "query": "Who signs off on my work before it ships?",
+      "expect": "review-rule"
+    },
+    {
+      "group": "paraphrase",
+      "query": "Is there a written record after something breaks for a while?",
+      "expect": "postmortem-rule"
+    },
+    {
+      "group": "paraphrase",
+      "query": "How often is disaster recovery rehearsed?",
+      "expect": "backup-rule"
+    },
+    {
+      "group": "subject",
+      "query": "What does Priya own?",
+      "expect": "priya-owns-billing"
+    },
+    {
+      "group": "subject",
+      "query": "What are Priya's editor preferences?",
+      "expect": "priya-vim"
+    },
+    {
+      "group": "subject",
+      "query": "Who handles API key rotation?",
+      "expect": "marcus-owns-auth"
+    },
+    {
+      "group": "subject",
+      "query": "What does Marcus ask for before a cross-service change?",
+      "expect": "marcus-diagrams"
+    },
+    {
+      "group": "subject",
+      "query": "When is Yuki on call?",
+      "expect": "yuki-oncall"
+    },
+    {
+      "group": "subject",
+      "query": "Why can Elena not attend late meetings?",
+      "expect": "elena-timezone"
+    },
+    {
+      "group": "subject",
+      "query": "How many replicas does the billing service run?",
+      "expect": "billing-k8s"
+    },
+    {
+      "group": "subject",
+      "query": "What happened to the auth service in February?",
+      "expect": "auth-latency"
+    },
+    {
+      "group": "subject",
+      "query": "Why was Yuki's laptop replaced?",
+      "expect": "yuki-laptop"
+    },
+    {
+      "group": "subject",
+      "query": "What did the team commit to in April?",
+      "expect": "quarterly-goal"
+    },
+    {
+      "group": "subject",
+      "query": "What is Will responsible for?",
+      "expect": "will-ingest"
+    },
+    {
+      "group": "current-truth",
+      "query": "Which floor of the Berlin office is Priya's desk on?",
+      "expect": "desk-new"
+    },
+    {
+      "group": "current-truth",
+      "query": "Which floor was Priya's desk on before it moved?",
+      "expect": "desk-old"
+    }
   ]
 }

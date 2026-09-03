@@ -2119,3 +2119,41 @@ func (p sessionProps) toModel() model.Session {
 
 	return sess
 }
+
+// SupersededCandidates reports which of the given memories have a live
+// successor: an incoming supersedes edge from a memory that still exists.
+//
+// One round trip for a whole candidate set, because this runs on the query
+// path once per search. Only the superseded side is returned; a memory absent
+// from the map has no known successor and ranks normally.
+func (r *AGERepository) SupersededCandidates(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error) {
+	result := make(map[uuid.UUID]bool)
+	if len(ids) == 0 {
+		return result, nil
+	}
+
+	list, err := uuidLiteralList(ids)
+	if err != nil {
+		return nil, err
+	}
+
+	q := fmt.Sprintf(`MATCH (new:Memory)-[:%s]->(old:Memory) WHERE old.id IN %s RETURN {id: old.id}`,
+		string(model.RelSupersedes), list)
+	rows, err := r.cypher(ctx, q, nil)
+	if err != nil {
+		return nil, fmt.Errorf("superseded candidates: %w", err)
+	}
+	type row struct {
+		ID string `json:"id"`
+	}
+	rs, err := scanAgtype[row](rows)
+	if err != nil {
+		return nil, fmt.Errorf("scan superseded candidates: %w", err)
+	}
+	for _, rr := range rs {
+		if id, perr := uuid.Parse(rr.ID); perr == nil {
+			result[id] = true
+		}
+	}
+	return result, nil
+}

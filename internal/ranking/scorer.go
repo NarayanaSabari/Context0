@@ -57,6 +57,20 @@ const (
 	typeWeight      = 0.05
 )
 
+// supersededDemotion multiplies the composite score of a memory whose
+// replacement is live. Sized from measurement, not chosen: on the bench
+// corpus, superseded memories and their successors score near-identically
+// (median successor/stale ratio 0.983), and where both landed in one result
+// list the stale memory won exactly half the time -- the coin flip that "the
+// edge is written and never read" predicts. 0.6 flipped all 60 observed
+// inversions; 0.7 left three. docs/research/supersedes-demotion-sizing.md
+// has the distribution.
+//
+// A demotion rather than a filter: "where did X use to live" is answered by
+// exactly the memory this factor demotes, so the stale fact must stay
+// reachable, just never above its replacement on even evidence.
+const supersededDemotion = 0.6
+
 // frequencySaturation is the access count at which the frequency signal reaches
 // roughly half its maximum. Access counts above this contribute progressively
 // less, so a memory read thousands of times cannot swamp query relevance.
@@ -95,10 +109,14 @@ func Score(mem model.MemoryWithContext, now time.Time) float64 {
 	frequency := frequencyFactor(mem.Memory.AccessCount)
 	typePrio := TypePriority[mem.Memory.Type]
 
-	return relevanceWeight*relevance +
+	score := relevanceWeight*relevance +
 		recencyWeight*recency +
 		frequencyWeight*frequency +
 		typeWeight*typePrio
+	if mem.Superseded {
+		score *= supersededDemotion
+	}
+	return score
 }
 
 // RankResults scores every memory in the result set, sorts them in descending

@@ -131,6 +131,15 @@ var offlineFloors = floors{
 	recall: 0.90, mrr: 0.85,
 	groups: []groupFloor{
 		{"lexical", 1.00, 0.90},
+		// Measured 1.000 / 0.625 on the bag-of-words embedder, stable across
+		// three runs. The MRR is 0.625 rather than 1.0 because only one of the
+		// two cases can rank first: the successor wins the "which floor is it
+		// on" query at rank 1, and the stale fact answers the "before it
+		// moved" query from rank 4, which is the demotion working rather than
+		// a miss. Recall is floored at 1.00 because both memories must stay
+		// reachable -- demotion that buried the superseded fact entirely would
+		// break history questions, and that is the failure this guards.
+		{"current-truth", 1.00, 0.60},
 		// Three of thirteen miss entirely: those queries share almost no words
 		// with their answers, and a hashed bag-of-words embedder scores token
 		// overlap rather than meaning. This floor guards the fallback, not
@@ -151,6 +160,7 @@ var onlineFloors = floors{
 	recall: 0.92, mrr: 0.86,
 	groups: []groupFloor{
 		{"lexical", 1.00, 0.95},
+		{"current-truth", 1.00, 0.55},
 		{"paraphrase", 0.84, 0.68},
 		{"subject", 1.00, 0.90},
 	},
@@ -174,7 +184,9 @@ func activeFloors() (floors, string) {
 //	lexical    - shares distinctive words with its answer
 //	paraphrase - asks for the same thing in different words
 //	subject    - names a person or service several memories mention
-var groupNames = []string{"lexical", "paraphrase", "subject"}
+//	current-truth - a fact and its replacement both stored; the successor
+//	                must win, the stale fact must stay reachable
+var groupNames = []string{"lexical", "paraphrase", "subject", "current-truth"}
 
 type goldenSet struct {
 	Corpus []struct {

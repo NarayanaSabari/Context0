@@ -30,6 +30,7 @@ import (
 	"github.com/NarayanaSabari/Kora/internal/extraction"
 	"github.com/NarayanaSabari/Kora/internal/graph"
 	"github.com/NarayanaSabari/Kora/internal/logging"
+	"github.com/NarayanaSabari/Kora/internal/metrics"
 	"github.com/NarayanaSabari/Kora/internal/ranking"
 	"github.com/NarayanaSabari/Kora/pkg/model"
 	"github.com/google/uuid"
@@ -49,6 +50,7 @@ type Repo interface {
 	SearchByVector(ctx context.Context, embedding []float32, projectID string, topK int) ([]model.MemoryWithContext, error)
 	FindMemoriesByEntities(ctx context.Context, projectID string, names []string, limit int) ([]model.Memory, error)
 	CountEntityMatches(ctx context.Context, ids []uuid.UUID, names []string) (map[uuid.UUID]int, error)
+	SupersededCandidates(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error)
 }
 
 // Engine runs the read path against a repository and an optional embedder.
@@ -468,6 +470,18 @@ func (e *Engine) retrieve(
 	stageStart = time.Now()
 	results := mergeResults(graphResults, vectorResults, entityResults, entityOverlap, fullMatch, e.fusion)
 
+	// --- Supersedes demotion: the graph's opinion on which facts are current ---
+	//
+	// The engine detects contradictions at write time and records a
+	// supersedes edge, and until this step retrieval ignored its own
+	// findings: a superseded fact ranked exactly as high as its replacement,
+	// and on the bench corpus the stale one won half the time the two met in
+	// a result list. Ranking demotes on the flag; the stale memory stays
+	// retrievable for history questions.
+	if !e.graphSignalsOff {
+		e.flagSuperseded(ctx, results)
+	}
+
 	// Rank results using scoring function. This consumes the Relevance set
 	// above, so retrieval quality drives the final order.
 	results = ranking.RankResultsAt(results, int(filter.TopK), e.now())
@@ -494,6 +508,39 @@ func (e *Engine) retrieve(
 		}
 	}
 	return results, nil
+}
+
+// flagSuperseded marks the candidates a live memory replaces, so ranking can
+// demote them. One repository round trip for the whole candidate set.
+//
+// A failure degrades to no demotion: results keep the pre-demotion order,
+// which was the engine's behaviour for its whole life, and the caller gets a
+// quietly staler answer rather than an error.
+func (e *Engine) flagSuperseded(ctx context.Context, results []model.MemoryWithContext) {
+	if len(results) == 0 {
+		return
+	}
+	ids := make([]uuid.UUID, len(results))
+	for i, r := range results {
+		ids[i] = r.Memory.ID
+	}
+	superseded, err := e.repo.SupersededCandidates(ctx, ids)
+	if err != nil {
+		logging.FromContext(ctx).Warn("superseded lookup failed; stale facts rank as if current",
+			slog.Int("candidates", len(ids)),
+			slog.Any("error", err))
+		return
+	}
+	demoted := 0
+	for i := range results {
+		if superseded[results[i].Memory.ID] {
+			results[i].Superseded = true
+			demoted++
+		}
+	}
+	if demoted > 0 {
+		metrics.SupersededDemotions.Add(float64(demoted))
+	}
 }
 
 // entityCandidatePoolFactor and maxEntityCandidatePool size the entity
