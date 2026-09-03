@@ -26,6 +26,7 @@
 package ranking
 
 import (
+	"bytes"
 	"math"
 	"sort"
 	"time"
@@ -126,8 +127,17 @@ func Score(mem model.MemoryWithContext, now time.Time) float64 {
 // ID, so the same candidate set always produces the same page of results even
 // though upstream retrieval merges through a map.
 func RankResults(results []model.MemoryWithContext, topK int) []model.MemoryWithContext {
-	now := time.Now().UTC()
+	return RankResultsAt(results, topK, time.Now().UTC())
+}
 
+// RankResultsAt is RankResults with the clock supplied by the caller.
+//
+// The recency signal makes every score a function of "now", so two identical
+// candidate sets ranked a day apart can order differently when their scores
+// are close. Production wants the wall clock; the evaluation harness wants a
+// fixed one, because a benchmark whose numbers drift with the calendar cannot
+// tell a change to ranking from the passage of time.
+func RankResultsAt(results []model.MemoryWithContext, topK int, now time.Time) []model.MemoryWithContext {
 	for i := range results {
 		results[i].Score = Score(results[i], now)
 	}
@@ -137,8 +147,9 @@ func RankResults(results []model.MemoryWithContext, topK int) []model.MemoryWith
 			return results[i].Score > results[j].Score
 		}
 		// Deterministic tie-break so equal-scoring memories never reorder
-		// between identical queries.
-		return results[i].Memory.ID.String() < results[j].Memory.ID.String()
+		// between identical queries. Byte order is the canonical string
+		// order, without the two allocations.
+		return bytes.Compare(results[i].Memory.ID[:], results[j].Memory.ID[:]) < 0
 	})
 
 	if topK > 0 && len(results) > topK {

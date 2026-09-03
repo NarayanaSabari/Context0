@@ -120,19 +120,32 @@ type groupFloor struct {
 	recall, mrr float64
 }
 
-// Measured with the bag-of-words embedder over 36 cases: overall 0.917 / 0.856,
-// lexical 1.000 / 0.958, paraphrase 0.769 / 0.679, subject 1.000 / 0.955.
+// Measured with the bag-of-words embedder over 36 cases: overall 0.917 / 0.870,
+// lexical 1.000 / 1.000, paraphrase 0.769 / 0.679, subject 1.000 / 0.955.
+//
+// Overall and subject MRR were raised on 2026-09-02 after min-max fusion
+// (retrieval.FusionMinMax) lifted them from 0.856 and 0.909: the two subject
+// cases that ranked second now rank first, and a floor left where it was
+// would let that be given back silently.
 var offlineFloors = floors{
-	recall: 0.90, mrr: 0.83,
+	recall: 0.90, mrr: 0.85,
 	groups: []groupFloor{
 		{"lexical", 1.00, 0.90},
-		{"current-truth", 0.0, 0.0}, // placeholder until measured
+		// Measured 1.000 / 0.625 on the bag-of-words embedder, stable across
+		// three runs. The MRR is 0.625 rather than 1.0 because only one of the
+		// two cases can rank first: the successor wins the "which floor is it
+		// on" query at rank 1, and the stale fact answers the "before it
+		// moved" query from rank 4, which is the demotion working rather than
+		// a miss. Recall is floored at 1.00 because both memories must stay
+		// reachable -- demotion that buried the superseded fact entirely would
+		// break history questions, and that is the failure this guards.
+		{"current-truth", 1.00, 0.60},
 		// Three of thirteen miss entirely: those queries share almost no words
 		// with their answers, and a hashed bag-of-words embedder scores token
 		// overlap rather than meaning. This floor guards the fallback, not
 		// semantic understanding.
 		{"paraphrase", 0.76, 0.62},
-		{"subject", 1.00, 0.90},
+		{"subject", 1.00, 0.93},
 	},
 }
 

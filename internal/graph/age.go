@@ -520,7 +520,15 @@ func (r *AGERepository) cypher(ctx context.Context, query string, p params) (pgx
 		return nil, err
 	}
 	if !ok {
-		return r.pool.Query(ctx, cypherSQL(query, false))
+		// No parameters means the values are in the text, which for the read
+		// path means a literal id list (see uuidLiteralList) that is different
+		// on every call. pgx's default mode prepares each distinct text and
+		// caches the statement, so every such query paid a Parse/Describe
+		// round trip and then evicted an older entry, and the profile showed
+		// 14% of the read path's CPU in that churn. The simple protocol sends
+		// the text once and prepares nothing, which is the right shape for a
+		// statement that will never be seen again.
+		return r.pool.Query(ctx, cypherSQL(query, false), pgx.QueryExecModeSimpleProtocol)
 	}
 	return r.pool.Query(ctx, cypherSQL(query, true), encoded)
 }
@@ -534,7 +542,9 @@ func (r *AGERepository) cypherExec(ctx context.Context, query string, p params) 
 		return err
 	}
 	if !ok {
-		_, err = r.pool.Exec(ctx, cypherSQL(query, false))
+		// Same reasoning as cypher: an unparameterised statement is one-off
+		// text, so preparing it buys nothing.
+		_, err = r.pool.Exec(ctx, cypherSQL(query, false), pgx.QueryExecModeSimpleProtocol)
 		return err
 	}
 	_, err = r.pool.Exec(ctx, cypherSQL(query, true), encoded)
@@ -1746,57 +1756,19 @@ func (r *AGERepository) SearchByVector(ctx context.Context, embedding []float32,
 // hits, holding at most one pool connection and releasing it before returning.
 func (r *AGERepository) nearestNeighbours(ctx context.Context, vecStr, projectID string, topK int) ([]vectorHit, error) {
 	if projectID == "" {
-		const q = `SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
-				   FROM public.memory_embeddings
-				   ORDER BY embedding <=> $1::vector
-				   LIMIT $2`
-		rows, err := r.pool.Query(ctx, q, vecStr, topK)
-		if err != nil {
-			return nil, fmt.Errorf("vector search: %w", err)
-		}
-		return scanVectorHits(rows)
-	}
-
-	// A project filter is applied AFTER the HNSW index has already chosen its
-	// candidates, so a scoped query can silently return far too few rows --
-	// measured 0 of 250 matching memories on a 5k corpus with 20 projects.
-	// hnsw.iterative_scan makes pgvector keep scanning until the limit is
-	// satisfied, and strict_order preserves exact distance ordering so ranking
-	// still receives correctly ordered similarities.
-	//
-	// SET LOCAL needs a transaction, which is also what confines the setting to
-	// this query rather than leaking to the next user of the pooled connection.
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("vector search: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	if _, err := tx.Exec(ctx, `SET LOCAL hnsw.iterative_scan = strict_order`); err != nil {
-		// Older pgvector builds do not know the GUC. Recall degrades rather
-		// than the query failing, so carry on.
-		_ = err
-	}
-
-	// Raise the scan budget above the default 20,000 tuples.
-	//
-	// iterative_scan alone is not enough after churn. HNSW keeps entries for
-	// deleted rows until VACUUM removes them, and the scan gives up once it has
-	// examined max_scan_tuples -- so on a table that has seen many deletes, the
-	// budget can be spent entirely on dead entries and live matches are never
-	// reached. Observed as a query returning 1 of 2 rows that plainly matched,
-	// intermittently (6 failures in 20 runs), and fixed immediately by VACUUM.
-	//
-	// A larger budget bounds how bad that gets between vacuums. It is a ceiling
-	// on work, not a target: a query that finds its matches early still stops
-	// early.
-	if _, err := tx.Exec(ctx, `SET LOCAL hnsw.max_scan_tuples = 200000`); err != nil {
-		_ = err
+		return r.nearestNeighboursUnscoped(ctx, vecStr, topK)
 	}
 
 	// A scoped search filters to the project first, then orders exactly within
 	// it. The CTE is materialised precisely to stop the planner folding it back
 	// into an HNSW scan with the filter applied afterwards.
+	//
+	// Because it never touches the index, it needs none of the HNSW settings
+	// below, and it runs as a single statement. It used to share the
+	// unscoped path's transaction -- BEGIN, two SET LOCALs, the query, and a
+	// ROLLBACK -- which was four round trips per query spent configuring an
+	// index scan that the materialised scan does not perform. Measured on the
+	// offline harness as 4.5 ms of a 23 ms query; see docs/WORKLOG.md.
 	//
 	// The inner LIMIT bounds what that materialisation costs. Without it, a
 	// project holding 5,000 embeddings pulled 5,000 x 384 floats into memory on
@@ -1825,18 +1797,56 @@ func (r *AGERepository) nearestNeighbours(ctx context.Context, vecStr, projectID
 					 ORDER BY embedding <=> $1::vector
 					 LIMIT $3`
 
-	// Unscoped, there is nothing to filter, so the HNSW index is exactly right.
-	const unscopedQ = `SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
-			   FROM public.memory_embeddings
-			   WHERE $2 = ''
-			   ORDER BY embedding <=> $1::vector
-			   LIMIT $3`
-
-	q := scopedQ
-	if projectID == "" {
-		q = unscopedQ
+	rows, err := r.pool.Query(ctx, scopedQ, vecStr, projectID, topK)
+	if err != nil {
+		return nil, fmt.Errorf("vector search: %w", err)
 	}
-	rows, err := tx.Query(ctx, q, vecStr, projectID, topK)
+	return scanVectorHits(rows)
+}
+
+// nearestNeighboursUnscoped is the index-backed search across every project.
+//
+// The HNSW settings are what make a filtered index scan return enough rows:
+// hnsw.iterative_scan makes pgvector keep scanning until the limit is
+// satisfied, with strict_order preserving exact distance ordering so ranking
+// still receives correctly ordered similarities.
+//
+// SET LOCAL needs a transaction, which is also what confines the setting to
+// this query rather than leaking to the next user of the pooled connection.
+func (r *AGERepository) nearestNeighboursUnscoped(ctx context.Context, vecStr string, topK int) ([]vectorHit, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("vector search: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SET LOCAL hnsw.iterative_scan = strict_order`); err != nil {
+		// Older pgvector builds do not know the GUC. Recall degrades rather
+		// than the query failing, so carry on.
+		_ = err
+	}
+
+	// Raise the scan budget above the default 20,000 tuples.
+	//
+	// iterative_scan alone is not enough after churn. HNSW keeps entries for
+	// deleted rows until VACUUM removes them, and the scan gives up once it has
+	// examined max_scan_tuples -- so on a table that has seen many deletes, the
+	// budget can be spent entirely on dead entries and live matches are never
+	// reached. Observed as a query returning 1 of 2 rows that plainly matched,
+	// intermittently (6 failures in 20 runs), and fixed immediately by VACUUM.
+	//
+	// A larger budget bounds how bad that gets between vacuums. It is a ceiling
+	// on work, not a target: a query that finds its matches early still stops
+	// early.
+	if _, err := tx.Exec(ctx, `SET LOCAL hnsw.max_scan_tuples = 200000`); err != nil {
+		_ = err
+	}
+
+	const q = `SELECT memory_id, 1 - (embedding <=> $1::vector) AS similarity
+			   FROM public.memory_embeddings
+			   ORDER BY embedding <=> $1::vector
+			   LIMIT $2`
+	rows, err := tx.Query(ctx, q, vecStr, topK)
 	if err != nil {
 		return nil, fmt.Errorf("vector search: %w", err)
 	}

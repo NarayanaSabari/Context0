@@ -50,10 +50,22 @@ api:
   httpPort: 8080
   # Must exceed the process's own 15s drain plus preStopSleepSeconds, or
   # Kubernetes SIGKILLs mid-drain and the connection pool is never closed.
+  # The template fails the render if this invariant is violated.
   terminationGracePeriodSeconds: 30
   # Covers the gap between kubelet sending SIGTERM and kube-proxy finishing
   # endpoint removal. Without it, rollouts drop connections.
   preStopSleepSeconds: 5
+  # The native `sleep` lifecycle action (spec.containers[].lifecycle.preStop.sleep)
+  # reached GA in Kubernetes 1.34, having been beta and default-on since 1.30.
+  # It needs no `sleep` binary in the image, unlike the exec form below.
+  #
+  # Default false, keeping the exec form: it is unconditionally correct on
+  # every supported version (1.34-1.37) and on anything older too, whereas the
+  # native action's guarantee only starts at 1.34 GA -- a 1.30-1.33 control
+  # plane with the beta feature gate turned off would silently fall back to no
+  # preStop delay at all, which is a worse failure than the extra fork/exec of
+  # `sleep` costs. Set true once the target cluster is known to be 1.34+.
+  preStopSleepAction: false
   # Per-key request budget, enforced independently by each replica (the token
   # buckets are in process memory). The effective cluster limit is this times
   # replicas; use an ingress or service mesh if you need a true global budget.
@@ -71,13 +83,71 @@ api:
     # node would exhaust Postgres's max_connections (100).
     maxConns: 10
     minConns: 2
+  # CPU is sized from the read-path profile (docs/WORKLOG.md, Track B), not a
+  # round number, and CPU and memory are sized by two different rules because
+  # they fail differently.
+  #
+  # CPU: a query is ~22ms wall clock, of which ~21ms is waiting on PostgreSQL
+  # and ~5ms is this process's own CPU -- it is idle 77% of the time even
+  # under a loaded single-threaded query stream, and the write path (extract)
+  # is bound on the embedding/LLM network call, not CPU. Postgres is the
+  # bottleneck (postgres.resources below runs uncapped for exactly this
+  # reason), so unlike Postgres the API keeps a CPU limit: with none, Go >=1.25
+  # sets GOMAXPROCS from the cgroup limit automatically (this repo's go.mod
+  # requires 1.26.1, so it applies) and an uncapped limit on a large node would
+  # spread GOMAXPROCS -- and with it GC worker goroutines -- across every core
+  # the node has, for a process that is CPU-idle most of the time.
+  #
+  # 2000m is not "4x the old 500m limit" picked by feel: Go's GOMAXPROCS
+  # derivation rounds a fractional limit up with a floor of 2 (500m, 1500m and
+  # 2000m all resolve to 2; only above 2000m does it become 3), so 2000m is
+  # the largest limit that still pins GOMAXPROCS at 2 -- the same value the
+  # previous 500m limit produced. Raising the limit here buys throttling
+  # headroom for concurrent bursts without changing the runtime's own
+  # parallelism at all. The 200m request is a scheduling guarantee, not a cap;
+  # it only needs to clear the ~23%-busy baseline measured under one query
+  # stream with margin for more than one in flight at once.
+  #
+  # uber-go/automaxprocs is deliberately not vendored: on Go >=1.25 it is
+  # redundant with the stdlib behaviour above and slightly worse (it rounds
+  # down instead of up, floors at 1 instead of 2, sets GOMAXPROCS once at
+  # startup instead of re-checking the cgroup limit every second, and running
+  # it disables the stdlib's own automatic behaviour).
+  #
+  # Memory: the memprofile under Track B's load (5.9k memories loaded) showed
+  # ~60-85MB of heap in use, so 512Mi is 6-8x that, not a tight fit -- the
+  # headroom covers corpora far larger than what was profiled plus whatever
+  # goroutine stacks and off-heap memory GOMEMLIMIT (below) does not bound.
   resources:
     requests:
       memory: "128Mi"
-      cpu: "100m"
+      cpu: "200m"
     limits:
       memory: "512Mi"
-      cpu: "500m"
+      cpu: "2000m"
+  # Disabled by default: scaling the API on CPU or request count is close to
+  # meaningless here, since a query is 77% idle waiting on Postgres and more
+  # API replicas cannot make Postgres answer faster -- see the CPU comment
+  # above and postgres.resources below. This exists for the case where the
+  # bottleneck genuinely is API-side (e.g. extraction load, or a self-hosted
+  # embedding provider colocated with the API, which this chart does not do).
+  hpa:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    # Target average value of the kora_requests_per_second Pods metric per
+    # pod, sourced via prometheus-adapter from the engine's existing
+    # kora_requests_total counter (internal/metrics/metrics.go) -- see
+    # docs/kubernetes.md for the adapter rule. This is a starting point for
+    # operators to tune against their own traffic, not a measurement: the
+    # Track B profile timed isolated queries, not sustained per-pod throughput
+    # at varying replica counts, and no soak test in this repo produced one.
+    targetRequestsPerSecond: 50
+    # 0 disables the fallback. Set only with clear evidence the workload is
+    # CPU-heavier than the profiled read path above; when set, it becomes a
+    # second HPA metric alongside the requests metric (an HPA scales on
+    # whichever metric fires first).
+    targetCPUUtilizationPercentage: 0
 
 # Prometheus scraping. Requires the Prometheus Operator CRDs
 # (kube-prometheus-stack); left off so a plain install does not fail on a
@@ -165,9 +235,25 @@ postgres:
       memory: "2Gi"
 
 # Consolidation CronJob
+#
+# A singleton by design: concurrencyPolicy Forbid (below, in the template)
+# means Kubernetes itself refuses to start a second run while one is still
+# going, which is the entire mechanism -- there is no always-on replica doing
+# this work between runs, so a coordination.k8s.io/v1 Lease and client-go
+# leaderelection would be solving a problem that does not exist here. Each run
+# must still be idempotent (safe to run twice back to back), because Forbid
+# only prevents overlap, not a retry after a crash mid-run leaving partial
+# decay/prune state.
 consolidation:
   enabled: true
   schedule: "0 */6 * * *"  # every 6 hours
+  # If the CronJob controller is down or backlogged past this many seconds
+  # past the scheduled time, the run is skipped rather than started late.
+  # 600s: comfortably above any control-plane hiccup, while still bounding how
+  # stale the skipped run's decay/prune math could get before the next
+  # scheduled attempt picks it up. Values under ~10s risk the run never firing
+  # at all, since that is close to typical controller reconciliation latency.
+  startingDeadlineSeconds: 600
   decayHalfLifeDays: "30"
   staleThreshold: "0.1"
   pruneAgeDays: "30"

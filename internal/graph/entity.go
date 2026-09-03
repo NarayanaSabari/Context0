@@ -354,6 +354,85 @@ func (r *AGERepository) FindMemoriesByEntities(ctx context.Context, projectID st
 	return out, nil
 }
 
+// CountEntityMatches reports, for each of the given memories, how many of
+// the given normalized entity names it mentions.
+//
+// This is the ranking path's question -- "how much of the query's entity set
+// does this candidate name?" -- asked of the database directly. It replaces
+// loading every entity of every candidate (GetMemoryEntities) and counting
+// the overlap in Go, which the read-path profile put at 38% of all
+// allocations and 4.7 ms of server time per query: with the speaker's name
+// in most memories, a 500-candidate pool carried about 1,500 mentions edges,
+// each decoded from an agtype object, to answer a question about one or two
+// names.
+//
+// The count is over distinct names, so a memory mentioning the same entity
+// twice counts it once, matching ranking.EntityOverlap. Memories that match
+// nothing are absent from the map, which reads as zero.
+func (r *AGERepository) CountEntityMatches(ctx context.Context, ids []uuid.UUID, names []string) (map[uuid.UUID]int, error) {
+	result := make(map[uuid.UUID]int)
+	if len(ids) == 0 || len(names) == 0 {
+		return result, nil
+	}
+
+	list, err := uuidLiteralList(ids)
+	if err != nil {
+		return nil, err
+	}
+
+	p := params{}
+	placeholders := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, n := range names {
+		key := model.NormalizeEntity(n)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		name := fmt.Sprintf("en%d", len(placeholders))
+		placeholders = append(placeholders, "$"+name)
+		p[name] = key
+	}
+	if len(placeholders) == 0 {
+		return result, nil
+	}
+
+	// The ids are a literal list for the planner's sake (see uuidLiteralList)
+	// and the names are parameters; the two mix freely because the list
+	// contains nothing caller-supplied beyond validated UUIDs. The WITH
+	// carries the aggregate into a single-column map, which is the shape the
+	// cypher() wrapper returns.
+	q := fmt.Sprintf(
+		`MATCH (m:Memory)-[:%s]->(e:Entity) WHERE m.id IN %s `+
+			`AND e.normalized_name IN [%s] `+
+			`WITH m.id AS memory_id, count(DISTINCT e.normalized_name) AS n `+
+			`RETURN {memory_id: memory_id, n: n}`,
+		string(model.RelMentions), list, strings.Join(placeholders, ","),
+	)
+
+	rows, err := r.cypher(ctx, q, p)
+	if err != nil {
+		return nil, fmt.Errorf("count entity matches: %w", err)
+	}
+
+	type row struct {
+		MemoryID string `json:"memory_id"`
+		N        int    `json:"n"`
+	}
+	rs, err := scanAgtype[row](rows)
+	if err != nil {
+		return nil, fmt.Errorf("scan entity match counts: %w", err)
+	}
+	for _, rr := range rs {
+		id, perr := uuid.Parse(rr.MemoryID)
+		if perr != nil || rr.N <= 0 {
+			continue
+		}
+		result[id] = rr.N
+	}
+	return result, nil
+}
+
 // GetMemoryEntities returns the normalized entity names each of the given
 // memories mentions.
 //

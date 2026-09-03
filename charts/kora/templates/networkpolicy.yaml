@@ -8,11 +8,12 @@ authentication, and its rate limiting entirely. The engine's own security model
 assumes traffic arrives through its front door; nothing was enforcing that.
 
 IMPORTANT: NetworkPolicy is enforced by the CNI plugin, not by Kubernetes. On a
-cluster whose CNI does not implement it -- notably kind's default kindnet, which
-is why this cannot be verified in the local dev cluster -- these objects are
-accepted by the API server and silently do nothing. Verify enforcement on the
-target cluster rather than assuming the resource existing means it is applied.
-Calico, Cilium, and the major managed CNIs all enforce it.
+cluster whose CNI does not implement it, these objects are accepted by the API
+server and silently do nothing. Verify enforcement on the target cluster rather
+than assuming the resource existing means it is applied. Calico, Cilium, and
+the major managed CNIs all enforce it; kindnet, kind's default CNI, gained
+NetworkPolicy support in kind v0.31.0, so a local kind cluster at or above that
+version does enforce these rules while older ones silently ignore them.
 
 Egress is restricted as well as ingress. Egress rules are what turn a
 compromised pod from a foothold into a dead end: an attacker with code execution

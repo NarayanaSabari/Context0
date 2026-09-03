@@ -151,17 +151,33 @@ func TestFuseRelevance_AWeakKeywordMatchDoesNotBeatAStrongSemanticMatch(t *testi
 	}
 }
 
-// The other direction, which is what the tier was protecting and must survive:
-// a memory genuinely matching the query's terms beats one the embedder merely
-// places nearby.
+// The other direction, which is what the tier was protecting: a memory
+// genuinely matching the query's terms beats one the embedder places merely
+// nearby.
+//
+// Both signals now arrive min-max normalised per query (see
+// retrieval.FusionMinMax), so 1.0 here means "the best in its pool" rather
+// than a raw cosine. The claim is therefore about the weights: the keyword
+// weight is at least the semantic one, so the pool's best lexical match beats
+// the pool's best semantic match when the latter has no lexical evidence,
+// and a half-strength lexical match does not. The first direction is the
+// soak-run guarantee TestExactKeywordMatchOutranksVectorOnlyResult reproduces
+// end to end; the second is what min-max fusion was adopted for.
 func TestFuseRelevance_AStrongKeywordMatchStillBeatsSemanticSimilarityAlone(t *testing.T) {
-	strongKeyword := FuseRelevance(NormalizeBM25(bm25RankPerTerm*3, 3), 0, 0)
-	semanticOnly := FuseRelevance(0, 0.92, 0)
+	strongKeyword := FuseRelevance(1.0, 0, 0)
+	halfKeyword := FuseRelevance(0.5, 0, 0)
+	topSemantic := FuseRelevance(0, 1.0, 0)
 
-	if strongKeyword <= semanticOnly {
-		t.Errorf("a memory matching every query term scored %v against %v for a "+
-			"0.92 semantic match; lexical evidence is a statement about what the "+
-			"memory says, cosine similarity is not", strongKeyword, semanticOnly)
+	if strongKeyword <= topSemantic {
+		t.Errorf("the pool's best lexical match scored %v against %v for its best "+
+			"semantic match with no lexical evidence; the keyword weight must stay "+
+			"at or above the semantic weight for a rare-token query to return the "+
+			"memory that contains the token", strongKeyword, topSemantic)
+	}
+	if halfKeyword >= topSemantic {
+		t.Errorf("a half-strength lexical match scored %v against %v for the pool's "+
+			"best semantic match; that is the saturated-keyword behaviour min-max "+
+			"fusion replaces", halfKeyword, topSemantic)
 	}
 }
 

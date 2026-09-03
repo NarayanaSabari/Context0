@@ -64,6 +64,8 @@ Prometheus metrics are on `/metrics`, on the HTTP port, requiring no API key. Na
 | `kora_active_sessions` | gauge | Sessions currently open |
 | `kora_pool_connections` | gauge | Connection pool state |
 | `kora_pool_acquire_wait_seconds_total` | counter | Time spent waiting for a connection |
+| `kora_memories_consolidated_total` | counter | Extracted memories folded into an existing memory rather than stored, labelled by subsumption verdict |
+| `kora_extraction_fallbacks_total` | counter | Conversations the rule-based extractor answered because the LLM extractor failed or missed content, labelled by reason |
 
 The histogram buckets are custom rather than `prometheus.DefBuckets`, which starts at 5ms and jumps 0.1 to 0.25 to 0.5 to 1s. A store costs about 4ms here, so the default buckets put nearly every observation in the first one and make percentiles meaningless.
 
