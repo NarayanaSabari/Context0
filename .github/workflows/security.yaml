@@ -42,7 +42,7 @@ jobs:
       # here with no review. The comment records which release the SHA is, so
       # the pin can be read and bumped without resolving it by hand.
       - name: gosec
-        uses: securego/gosec@9e75c0576c9878035d4221392108d458abe10fc3 # v2.28.0
+        uses: securego/gosec@deb54465fea23d19a77f037e11e6589021f8501d # v2.29.0
         with:
           args: "-exclude-dir=api/gen -fmt sarif -out gosec.sarif ./..."
 
