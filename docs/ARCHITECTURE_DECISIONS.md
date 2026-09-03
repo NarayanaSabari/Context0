@@ -12,7 +12,7 @@ repeated.
 
 | Decision | The short answer |
 |---|---|
-| One PostgreSQL, not a graph DB plus a vector DB | One backup, one trust domain, and a keyword query that joins graph data to a text index in one planner: 489ms to 9.9ms |
+| One PostgreSQL, not a graph DB plus a vector DB | Keyword search is only indexable because the graph shares a database with SQL full-text: AGE refuses an index for its own `CONTAINS` even under `enable_seqscan=off` |
 | Go | 95% of a query is spent waiting on PostgreSQL, so the job is to wait cheaply and predictably, not to compute fast |
 | Rules decide, the LLM only rewords | Every action is a named rule in an audit trail; the policy is a pure function with 13 tests and no model in the loop |
 | gRPC with a REST gateway | One protobuf definition generates both, so curl works and the API cannot drift from its documentation |
@@ -58,13 +58,24 @@ so the deployment could not come up on its own recovered data. One store made
 that a single script to fix and a single check to assert. Two stores make it two
 backup schedules whose restore points must agree.
 
-*Retrieval joins across both.* Keyword search runs as PostgreSQL full-text
-search over the vertex table and joins back to the graph by id. The measurement
-that made this concrete: materialising two scalar CTEs took a three-term query
-on 4,000 memories from 489ms to 9.9ms, and to 2.9ms once the project filter had
-its index (`internal/graph/fts.go`). That query is a join between graph data and
-a text index in one planner. Across a network boundary it is two round trips and
-a merge in application code, and the planner can no longer help.
+*Retrieval joins across both.* This is the argument that actually decided it,
+and it was settled by a failure rather than a preference. Keyword search
+originally ran in Cypher with `CONTAINS`: substring matching with no term
+weighting, so `the` counted exactly as much as `zqxjklmw` and `go` matched
+`mango`. Worse, it could not be indexed. A GIN trigram index over the same
+expression is sound and helps when queried through SQL, and **AGE refuses it
+even under `enable_seqscan=off`**, because the match function has no operator
+class binding it to any index. Refusing under `enable_seqscan=off` is not a
+costing decision; it means no index can serve that predicate at all. Keyword
+search was a sequential scan whose cost grew with the whole graph: 44,809 rows
+scanned and 38,876 discarded for a single term
+(`docs/research/keyword-search-indexing.md`).
+
+The fix was to run keyword retrieval as PostgreSQL full-text search over the
+same table the graph vertices live in, and join back to the graph by id. That
+fix only exists because the graph is *in* PostgreSQL. With a separate graph
+database there is no `to_tsvector` to reach for, no shared planner to do the
+join, and the answer would have been a third store for the text index.
 
 *One trust domain.* Credentials, network policy, and audit surface are declared
 once. See [ADR 0002](adr/0002-one-deployment-is-one-trust-domain.md).
@@ -90,14 +101,16 @@ graph reads are shallow, so it does not.
 **The decision.** The engine is Go 1.26. Not Python, which the ML tooling would
 have favoured; not Rust, which would be faster still.
 
-**Why.** The profile settles it. Before any optimisation, the process was
-CPU-busy 23% of wall time, and 44% of Go CPU was `syscall.read` inside pgx
-(`docs/OPTIMIZATION_REPORT.md`). Server-side statement logging put 20.8 of 21.9
-ms per query inside PostgreSQL. **This is not a compute-bound workload.** It is
-a service that waits on a database, and the language's job is to wait cheaply,
-concurrently, and predictably.
+**Why.** The profile sets the terms of the argument. Before any optimisation,
+the process was CPU-busy 23% of wall time, and 44% of Go CPU was `syscall.read`
+inside pgx (`docs/OPTIMIZATION_REPORT.md`). Server-side statement logging put
+20.8 of 21.9 ms per query inside PostgreSQL. **This is not a compute-bound
+workload.** It is a service that waits on a database.
 
-Go is a good fit for exactly that shape:
+That measurement does not by itself prove Go was right, since it was taken from
+a Go program. What it establishes is which properties matter: raw execution
+speed is nearly irrelevant here, so a language earns its place on how cheaply
+and predictably it waits, and on what it costs to operate. On those:
 
 - Goroutines make per-request concurrency cheap without an async runtime split
   into coloured functions.
@@ -116,10 +129,11 @@ database wait, and would trade a single static binary for a dependency tree.
 Where Python genuinely fits (the SDK, the MCP server, the demo agent) it is
 used.
 
-**Why not Rust.** It would win on the 5%, and lose more than it wins: this
-service's cost is I/O, and the borrow checker buys little against a workload
-where the interesting failures are query plans and index recall rather than
-memory safety.
+**Why not Rust.** It would win on the 5% and cost more to write, and neither
+matters much at 17ms per query dominated by database wait. The honest version
+is that Rust was not ruled out by measurement: it would work, the team knows
+Go, and nothing in the profile suggests the difference would show up in a
+user-visible number.
 
 ---
 
@@ -198,29 +212,33 @@ every client living up to it today.
 
 The engine is measured at roughly 5,900 memories with 19,670 entity links, and
 the demo instance runs a few thousand. Three orders of magnitude up, four things
-break in a known order. The order matters: they are listed by when they bite,
-not by how interesting they are.
+break. They are listed in the order they would bite, though the exact corpus
+size at which each does is not something this repository has measured: the
+benchmark tops out near 6,000 memories, so treating any threshold below as
+precise would be inventing a number.
 
-**First: full-text search, at roughly 100k memories.** The FTS statement is
-already 9 of the remaining 17 ms per query, because `ts_rank_cd` recomputes
-`to_tsvector` for every matching row for every term. The fix is standard and
-uncontroversial: a stored, indexed `tsvector` column maintained by a trigger.
-It is not done because it is a schema migration, and the stop rule for that
-optimisation pass reserved schema changes for the owner's decision, not because
-anything about it is hard.
+**First: full-text search.** The FTS statement is already 9 of the remaining 17
+ms per query, because `ts_rank_cd` recomputes `to_tsvector` for every matching
+row for every term. That cost scales with how many rows match, so it degrades
+as the corpus grows rather than at a specific threshold. The fix is standard
+and uncontroversial: a stored, indexed `tsvector` column maintained by a
+trigger. It is not done because it is a schema migration, and the stop rule for
+that optimisation pass reserved schema changes for the owner's decision, not
+because anything about it is hard.
 
-**Second: scoped vector search, at roughly 500 projects.** This one has already
-been reproduced deterministically at small scale. With 40,000 embeddings across
-500 projects, the planner drove a scoped query from the HNSW index and applied
-the project filter afterwards, so the scan budget was spent on other projects'
-vectors: a two-row project returned one row. Raising `hnsw.ef_search` to 1000
-and `max_scan_tuples` tenfold did not fix it. A sequential scan returned both
-rows, which is what proved the loss was the index rather than the data. The
-current answer is an index on `project_id` so the planner filters first, plus an
-eager `ANALYZE` because with no statistics it estimates one row and reverts to
-the failing plan. At 10M nodes that stops being enough and the real answer is
-partitioning by project, so each project's vectors are physically separate and
-"filter first" is structural rather than a plan the optimiser might abandon.
+**Second: scoped vector search, once many projects share the table.** This one
+has already been reproduced deterministically, and it is a correctness failure
+rather than a slow query. With 40,000 embeddings across 500 projects, the
+planner drove a scoped query from the HNSW index and applied the project filter
+afterwards, so the scan budget was spent on other projects' vectors: a two-row
+project returned one row. Raising `hnsw.ef_search` to 1000 and
+`max_scan_tuples` tenfold did not fix it. A sequential scan returned both rows,
+which is what proved the loss was the index rather than the data. The current
+answer is an index on `project_id` so the planner filters first, plus an eager
+`ANALYZE`, because with no statistics it estimates one row and reverts to the
+failing plan. At 10M nodes that stops being enough and the real answer is
+partitioning by project, so "filter first" is structural rather than a plan the
+optimiser might abandon.
 
 **Third: hydration, on every query regardless of size.** 500 full memory
 vertices are JSON-decoded per query, which is 24% of remaining allocations,
