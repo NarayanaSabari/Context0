@@ -18,13 +18,13 @@ Both configurations recover the same money. Only one of them stops nagging.
 
 | | recovered | messages sent |
 |---|---|---|
-| escalation ladder alone | ₹633,300 | 430 |
+| escalation ladder alone | ₹633,300 | 216 |
 | **with Kora as memory** | **₹633,300** | **49** |
 
 The engine does not recover more. It recovers the same amount without re-chasing anyone who had already promised to pay, disputed the invoice, or been contacted that day. Every decision is a named rule in an audit trail, and a language model only ever rewords the message text -- it never chooses the action.
 
 ```bash
-make demo                                     # no memory: 430 messages
+make demo                                     # no memory: 216 messages
 KORA_URL=http://localhost:8080 \
 KORA_API_KEY=<your key> make demo             # with Kora: 49
 ```
