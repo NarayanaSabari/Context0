@@ -63,6 +63,9 @@ Everything in the README is a number the eval produced."
 
 ## Architecture walkthrough: the questions to expect
 
+Short answers for the panel. The long form, with the measurement behind each
+decision, is [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md).
+
 **Why not an LLM at query time?** The query path is full-text search, vector search and an entity match fused by a weighted sum. An LLM there would add a second of latency and non-determinism to a path we can now measure exactly, and the benchmark shows the misses are a fusion problem, not a comprehension problem.
 
 **Why PostgreSQL with Apache AGE and pgvector rather than a vector database?** One store, one backup, one trust domain, and graph edges beside vectors. The cost is that AGE cannot index Cypher `CONTAINS`, which is why keyword search is SQL full-text over the vertex table, joined back to the graph by id.

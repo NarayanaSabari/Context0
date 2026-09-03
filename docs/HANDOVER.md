@@ -13,6 +13,7 @@ On top of that, the repository is being submitted to the [Razorpay AI Buildathon
 
 | what | where |
 |---|---|
+| why the major design decisions were made, for the panel | `docs/ARCHITECTURE_DECISIONS.md` |
 | the full technical report (baseline vs final, ablation table, failure analysis, papers, K8s rationale) | `docs/OPTIMIZATION_REPORT.md` |
 | the step-by-step log with every hypothesis, measurement and revert | `docs/WORKLOG.md` |
 | the offline benchmark and how to run it | `eval/README.md`, `make eval` |
