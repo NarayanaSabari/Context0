@@ -70,7 +70,7 @@ def test_the_fixture_is_the_one_the_numbers_were_measured_on() -> None:
     """
     digest = hashlib.sha256(WORLD.read_bytes()).hexdigest()
     assert digest == WORLD_SHA256, (
-        f"fixtures/world.json changed (now {digest}). The published 430 and 49 "
+        f"fixtures/world.json changed (now {digest}). The published 216 and 49 "
         "were measured on the old one; re-measure before updating this hash."
     )
 
