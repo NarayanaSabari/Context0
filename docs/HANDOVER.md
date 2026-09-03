@@ -21,6 +21,7 @@ On top of that, the repository is being submitted to the [Razorpay AI Buildathon
 | the 5-minute pitch script and the panel questions | `docs/PITCH.md` |
 | the exact commands to type while recording, and what they print | `docs/RECORDING.md` |
 | the word-for-word 5-minute video script with screen cues | `docs/VIDEO_SCRIPT.md` |
+| the project described at four lengths, plus a counted fact sheet | `docs/PROJECT_DESCRIPTION.md` |
 | the judge-facing summary | top of `README.md`, section "Measured, not claimed" |
 | frozen benchmark reports | `eval/results/baseline-*.json` (engine before), `eval/results/final-*.json` (engine after) |
 
@@ -53,6 +54,7 @@ Every number in the README and the report was produced by `make eval`. Do not ad
 **Before submitting:**
 1. Deadline and eligibility were confirmed on the [application form](https://forms.gle/d9r2gvxp8cmoZhon9) on 2026-09-02: applications close **2026-09-05**, and the event is **students only**. This is no longer a belief.
 2. Decide the track: Revenue Recovery (recommended, the demo fits its stated bar) or Open.
+   `docs/PROJECT_DESCRIPTION.md` has the description at one line, 500 characters, one paragraph and three, so the form fields can be filled without rewriting anything.
 3. Razorpay test-mode keys go in a local `.env` only if you want the live Razorpay path on camera; the recorded fixture is what the demo uses otherwise. Never commit `.env`.
 4. PR #100 is already merged, so submit the repository URL on `main`; the README's numbers are there. Nothing is waiting on a branch.
 
