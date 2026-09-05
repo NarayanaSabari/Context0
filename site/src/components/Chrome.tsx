@@ -115,9 +115,6 @@ export function Footer() {
           <a href="/docs/" className="inline-flex min-h-11 items-center transition-colors hover:text-heading">
             Docs
           </a>
-          <a href="/blog/" className="inline-flex min-h-11 items-center transition-colors hover:text-heading">
-            Blog
-          </a>
           <a
             href="/releases/"
             className="inline-flex min-h-11 items-center transition-colors hover:text-heading"

@@ -25,7 +25,7 @@ if (!existsSync(dist)) {
 // The docs are Markdown rather than HTML, and their outbound links are the
 // most likely on the site to rot: they point at specific files and directories
 // in the repository, which move.
-const PAGES = ['index.html', 'releases/index.html', 'blog/index.html', '404.html']
+const PAGES = ['index.html', 'releases/index.html', '404.html']
 const DOC_PAGES = existsSync(join(dist, 'docs'))
   ? readdirSync(join(dist, 'docs'))
       .filter((f) => f.endsWith('.md'))

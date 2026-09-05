@@ -80,7 +80,7 @@ const headersFor = (url) => {
 }
 
 // Serve dist/ the way GitHub Pages does, including directory index resolution,
-// so /blog/ has to genuinely work rather than only /blog/index.html.
+// so /releases/ has to genuinely work rather than only /releases/index.html.
 const server = createServer(async (req, res) => {
   const url = (req.url ?? '/').split('?')[0]
   const candidates = url.endsWith('/')
@@ -116,7 +116,6 @@ const base = `http://localhost:${server.address().port}`
 const PAGES = [
   { url: '/', name: 'home', heading: /forgets/i },
   { url: '/releases/', name: 'releases', heading: /v0\.1\.1/i },
-  { url: '/blog/', name: 'blog', heading: /kora/i },
 ]
 const WIDTHS = [
   { name: 'desktop', width: 1440, height: 900 },
@@ -287,7 +286,7 @@ for (const page of PAGES) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
   const tab = await context.newPage()
   await tab.goto(`${base}/`, { waitUntil: 'networkidle' })
-  for (const label of ['Docs', 'Blog', 'Releases']) {
+  for (const label of ['Docs', 'Releases']) {
     await tab.goto(`${base}/`, { waitUntil: 'networkidle' })
     const link = tab.locator(`nav a:has-text("${label}")`).first()
     await link.click()
@@ -568,17 +567,6 @@ for (const page of PAGES) {
     note(
       /not open yet|on the list|did not go through/i.test(feedback),
       'submitting the waitlist produced no visible response',
-    )
-  }
-
-  // The blog still offers release updates while it has no posts. The release
-  // page now has a direct download instead; asking both pages for a waitlist
-  // would preserve an empty-state requirement after the empty state is gone.
-  for (const path of ['/blog/']) {
-    await tab.goto(`${base}${path}`, { waitUntil: 'networkidle' })
-    note(
-      (await tab.locator('input[type="email"]').count()) > 0,
-      `${path} has no waitlist signup`,
     )
   }
 

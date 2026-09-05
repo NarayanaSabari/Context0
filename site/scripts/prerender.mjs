@@ -29,7 +29,6 @@ const dist = process.env.PRERENDER_DIST ?? join(root, 'dist')
 const TARGETS = {
   main: 'index.html',
   releases: 'releases/index.html',
-  blog: 'blog/index.html',
   '404': '404.html',
 }
 

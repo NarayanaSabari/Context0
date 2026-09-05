@@ -11,14 +11,13 @@ product.
 
 | URL | Purpose |
 |---|---|
-| `/` | Overview and waitlist signup. Deliberately not a product tour: Kora is pre-release, so the page explains the idea and asks for an email. |
+| `/` | Overview, release status, and release-update signup. |
 | `/docs/` | The documentation, built with [docsify](https://docsify.js.org/). Markdown in `public/docs/`, rendered in the browser. See [DOCS.md](DOCS.md) before editing it. |
-| `/blog/` | Empty until the first post. Add entries to `POSTS` in `src/pages/Blog.tsx` and the empty state disappears. |
-| `/releases/` | Empty until the first release, with the versioning policy written down. |
+| `/releases/` | The current release, its changelog, download link, and versioning policy. |
 | `404.html` | Served by Pages for any unmatched path, so a mistyped URL keeps the site's design and offers a way back. |
 
-These are real HTML entry points, not client-side routes. `/blog/` works on
-first byte, survives a hard refresh, and needs no 404 redirect hack.
+These are real HTML entry points, not client-side routes. `/releases/` works
+on first byte, survives a hard refresh, and needs no 404 redirect hack.
 
 Every React page is **prerendered** at build time by `scripts/prerender.mjs`:
 the same components are rendered to static HTML and baked into each file, and

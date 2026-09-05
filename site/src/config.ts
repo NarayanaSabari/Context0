@@ -42,6 +42,5 @@ export const WAITLIST_FIELD = 'email'
 
 export const nav = [
   { label: 'Docs', href: '/docs/' },
-  { label: 'Blog', href: '/blog/' },
   { label: 'Releases', href: '/releases/' },
 ] as const

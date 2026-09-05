@@ -50,7 +50,6 @@ const ORIGIN = `https://${DOMAIN}`
 const PAGES = [
   { path: 'index.html', url: '/', title: /kora/ },
   { path: 'releases/index.html', url: '/releases/', title: /Releases/ },
-  { path: 'blog/index.html', url: '/blog/', title: /Blog/ },
 ]
 
 // The 404 is checked separately: Pages serves it for unmatched paths, so it
