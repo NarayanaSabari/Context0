@@ -9,6 +9,8 @@
 
 - **Using kora**
 - [Concepts](concepts.md)
+- [Agent integration](agent-integration.md)
+- [Razorpay agent](razorpay-agent.md)
 - [API reference](api.md)
 - [SDKs and CLI](clients.md)
 

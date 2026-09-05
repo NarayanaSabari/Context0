@@ -5,8 +5,10 @@ Two clients ship with kora: a Python SDK and a Go CLI. Both are thin wrappers ov
 ## Python SDK
 
 ```bash
-pip install kora
+pip install ./sdk/python
 ```
+
+The package is currently installed from a Kora clone because it has not been published to PyPI.
 
 ```python
 from kora import KoraClient
@@ -147,5 +149,7 @@ There is no JavaScript or Go client library yet. The REST API is plain JSON over
 
 ## Next
 
+- [Agent integration](agent-integration.md) - where to call these clients in an agent lifecycle
+- [Razorpay agent](razorpay-agent.md) - a complete application using the Python client
 - [API reference](api.md) - the endpoints underneath these clients
 - [Configuration](configuration.md) - what the server reads from the environment

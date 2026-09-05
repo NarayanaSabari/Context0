@@ -23,6 +23,8 @@ Most memory layers are a vector database with a system prompt in front. That get
 | See it working in about five minutes | [Quick start](quickstart.md) |
 | Run it properly, on Kubernetes | [Installation](installation.md) |
 | Understand memories, edges, and superseding | [Concepts](concepts.md) |
+| Add long-term memory to an agent | [Agent integration](agent-integration.md) |
+| Study a complete Razorpay agent | [Razorpay agent](razorpay-agent.md) |
 | Call it from your own code | [API reference](api.md), [SDKs and CLI](clients.md) |
 | Know how it works inside | [Architecture](architecture.md) |
 | Operate it: tuning, metrics, backups | [Configuration](configuration.md), [Operations](operations.md) |

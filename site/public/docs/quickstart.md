@@ -106,6 +106,8 @@ A profile is the aggregate view: the static half is stable facts and preferences
 
 ## Next
 
+- [Agent integration](agent-integration.md) - where recall and store belong in an agent loop
+- [Razorpay agent](razorpay-agent.md) - a complete, measurable agent built on Kora
 - [Concepts](concepts.md) - what the types and edges mean, and why superseding matters
 - [Clients](clients.md) - the Python SDK and the CLI, instead of curl
 - [Installation](installation.md) - Helm, kind, and a deployment that survives a restart
