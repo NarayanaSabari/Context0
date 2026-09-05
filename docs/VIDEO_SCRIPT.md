@@ -128,18 +128,23 @@ you record.
 >
 > The graph added only 0.005 MRR. The useful benchmark showed me what to fix."
 
-## 4:10 - 4:35 One engine, more agents
+## 4:10 - 4:40 Kubernetes-native, reusable memory
 
 [Open `ARCHITECTURE.md` at "System Overview".]
 
 > "This agent uses Kora through Python, while other agents can use REST, gRPC,
 > or MCP.
 >
+> Kora is an enterprise-grade, Kubernetes-native memory engine, not an embedded
+> library. I built it for Kubernetes from the start, with Helm deployment,
+> authentication, health probes, Prometheus metrics, network policies, and
+> tested backup and restore.
+>
 > The loop stays the same: recall history, decide, act, and remember the outcome.
 > It can support customer service, coding, research, sales, or any long-running
 > agent."
 
-## 4:35 - 4:55 Close
+## 4:40 - 5:00 Close
 
 > "Kora is open source and self-hosted, but the result I care about is the agent:
 > the same money recovered with one hundred and sixty-seven fewer customer
@@ -160,10 +165,10 @@ you record.
 | How Kora helps | 38 s | 50 s | 2:55 |
 | Safety and audit | 24 s | 30 s | 3:25 |
 | MemoryBench | 45 s | 45 s | 4:10 |
-| More agents | 18 s | 25 s | 4:35 |
-| Close | 20 s | 20 s | 4:55 |
+| Kubernetes and more agents | 30 s | 30 s | 4:40 |
+| Close | 20 s | 20 s | 5:00 |
 
-Spoken word count is about 570, which is 4:13 at 135 words per minute.
+Spoken word count is about 605, which is 4:29 at 135 words per minute.
 The remaining time covers the two `make demo` runs, screen changes, and pauses.
 
 The Razorpay workflow, the 216-to-49 proof, and the promise-to-pay example are
