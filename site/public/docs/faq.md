@@ -2,7 +2,7 @@
 
 ## Is kora ready to use?
 
-It runs, and everything documented here works. It is pre-1.0 and the API may still change, so pin a version and read release notes before upgrading. [Join the waitlist](/) to be told when the first release lands.
+Release v0.1.1 is available, and everything documented here works. It is pre-1.0 and the API may still change, so pin the version and read release notes before upgrading.
 
 ## How is this different from a vector database?
 

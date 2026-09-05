@@ -9,10 +9,9 @@ import { site } from '../config'
  * The home page.
  *
  * Deliberately an overview, not a product tour. No API reference, no install
- * commands, no architecture diagram, no endpoint tables. kora is not
- * released yet, so the job of this page is to explain the idea clearly enough
- * that the right person joins the waitlist. Depth belongs in the docs once
- * there is something to document.
+ * commands, no architecture diagram, no endpoint tables. The job of this page
+ * is to explain the idea clearly enough that the right person tries the
+ * release. Depth belongs in the docs.
  *
  * The order is an argument, not a list of features:
  *
@@ -67,7 +66,7 @@ export function Home() {
           <div className="min-w-0">
             <p className="t-label mb-7 inline-flex items-center gap-2.5 text-heading">
               <span className="h-1.5 w-1.5 rounded-full bg-emphasis" aria-hidden="true" />
-              In development - Apache 2.0
+              v0.1.1 available - Apache 2.0
             </p>
 
             <h1 className="t-display optical-left">
@@ -187,11 +186,11 @@ export function Home() {
           <div className="on-emphasis reveal relative overflow-hidden rounded-3xl bg-emphasis px-7 py-16 sm:px-14">
             <div className="relative">
               <h2 className="t-title optical-left max-w-xl text-on-emphasis">
-                Be there when it ships.
+                Follow what ships next.
               </h2>
               <p className="mt-5 max-w-lg text-[length:var(--text-lead)] leading-relaxed text-on-emphasis/75">
-                kora is being built in the open. Join the waitlist for one email when the
-                first release lands, or follow along on{' '}
+                kora is built in the open. Join the list for release updates, or follow
+                development on{' '}
                 <a
                   href={site.github}
                   target="_blank"

@@ -12,7 +12,7 @@ export const site = {
   url: 'https://kora.sabarinarayana.com',
   tagline: 'Memory for AI agents',
   description:
-    'kora is an open-source memory engine for AI agents. Graph-first, self-hosted, Apache 2.0. Join the waitlist.',
+    'kora is an open-source memory engine for AI agents. Graph-first, self-hosted, Apache 2.0. v0.1.1 is available.',
   // The repository was renamed to Kora alongside the product. GitHub keeps
   // redirecting the old Context0 URL, but a redirect breaks the moment someone
   // else claims that name, so this points at the real current location.

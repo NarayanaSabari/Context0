@@ -39,7 +39,7 @@ export function Waitlist({ id = 'waitlist', onDark = false }: { id?: string; onD
         '[kora] WAITLIST_ENDPOINT is not set in src/config.ts, so this signup was not stored anywhere.',
       )
       setStatus('error')
-      setMessage('Signups are not open yet. Watch the repository and you will not miss the release.')
+      setMessage('Signups are not open yet. Watch the repository for release updates.')
       return
     }
 
@@ -74,7 +74,7 @@ export function Waitlist({ id = 'waitlist', onDark = false }: { id?: string; onD
           You are on the list.
         </p>
         <p className={`mt-1.5 text-sm ${onDark ? 'text-on-emphasis/75' : 'text-muted'}`}>
-          One email when kora ships. Nothing else, ever.
+          You will hear about kora releases. Nothing else, ever.
         </p>
       </div>
     )
@@ -147,7 +147,7 @@ export function Waitlist({ id = 'waitlist', onDark = false }: { id?: string; onD
             </a>
           </>
         ) : (
-          'One email when it ships. No newsletter, no sharing your address.'
+          'Release updates only. No newsletter, no sharing your address.'
         )}
       </p>
     </div>

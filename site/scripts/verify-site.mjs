@@ -115,7 +115,7 @@ const base = `http://localhost:${server.address().port}`
 // this loop would assert things that are true of every page except that one.
 const PAGES = [
   { url: '/', name: 'home', heading: /forgets/i },
-  { url: '/releases/', name: 'releases', heading: /releases/i },
+  { url: '/releases/', name: 'releases', heading: /v0\.1\.1/i },
   { url: '/blog/', name: 'blog', heading: /kora/i },
 ]
 const WIDTHS = [
@@ -571,15 +571,22 @@ for (const page of PAGES) {
     )
   }
 
-  // Every React page must offer the waitlist, since that is the site's one
-  // goal. /docs/ is excluded: it is docsify, and its job is documentation.
-  for (const path of ['/releases/', '/blog/']) {
+  // The blog still offers release updates while it has no posts. The release
+  // page now has a direct download instead; asking both pages for a waitlist
+  // would preserve an empty-state requirement after the empty state is gone.
+  for (const path of ['/blog/']) {
     await tab.goto(`${base}${path}`, { waitUntil: 'networkidle' })
     note(
       (await tab.locator('input[type="email"]').count()) > 0,
       `${path} has no waitlist signup`,
     )
   }
+
+  await tab.goto(`${base}/releases/`, { waitUntil: 'networkidle' })
+  note(
+    (await tab.locator('a[href$="/releases/tag/v0.1.1"]').count()) > 0,
+    '/releases/ has no v0.1.1 download link',
+  )
 
   // The hero demo toggle must actually change what is on screen.
   await tab.goto(`${base}/`, { waitUntil: 'networkidle' })
