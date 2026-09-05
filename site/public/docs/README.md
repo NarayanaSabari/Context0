@@ -6,7 +6,7 @@ Every agent framework has the same hole in it: agents are amnesiac. A session en
 
 kora is a memory engine that closes that hole. Feed it conversations, and it extracts what is worth keeping, stores it as a graph of typed memories, and gives it back when it is relevant. It runs in your own cluster, on PostgreSQL, and every dependency is OSI-approved open source.
 
-> **kora is pre-release.** The engine, the API, the Helm chart, and the Python SDK all work today, and the pages here describe what actually ships. The API is not frozen: it may change before 1.0. [Join the waitlist](/) to be told when it does.
+> **kora is pre-1.0.** Release v0.1.1 is available, and these pages describe what ships in it. The API is not frozen and may change before 1.0, so pin the version and read the release notes before upgrading.
 
 ## What makes it different
 
