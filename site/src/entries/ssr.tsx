@@ -1,6 +1,5 @@
 import { Home } from '../pages/Home'
 import { Releases } from '../pages/Releases'
-import { Blog } from '../pages/Blog'
 import { NotFound } from '../pages/NotFound'
 
 /**
@@ -18,7 +17,6 @@ import { NotFound } from '../pages/NotFound'
 export const pages = {
   main: Home,
   releases: Releases,
-  blog: Blog,
   '404': NotFound,
 } as const
 

@@ -55,7 +55,7 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, r))
 const base = `http://localhost:${server.address().port}`
 
-const PAGES = ['/', '/releases/', '/blog/', '/docs/']
+const PAGES = ['/', '/releases/', '/docs/']
 const failures = []
 const note = (ok, message) => {
   if (!ok) failures.push(message)

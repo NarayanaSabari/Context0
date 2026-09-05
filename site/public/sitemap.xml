@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Four pages, listed by hand.
+  Three pages, listed by hand.
 
   Generating this from the Rollup inputs would be clever and would also drift
-  the moment a page is added without touching the generator. Four entries are
+  the moment a page is added without touching the generator. Three entries are
   cheap to keep correct, and scripts/check-build.mjs fails the build if this
   file and the built pages disagree.
 -->
@@ -17,11 +17,6 @@
     <loc>https://kora.sabarinarayana.com/docs/</loc>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://kora.sabarinarayana.com/blog/</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.6</priority>
   </url>
   <url>
     <loc>https://kora.sabarinarayana.com/releases/</loc>

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Eyebrow } from './Chrome'
 
 /**
- * Header used by every secondary page, so releases, blog, and docs share one
+ * Header used by every secondary page, so releases and docs share one
  * rhythm instead of drifting apart.
  */
 export function PageHeader({

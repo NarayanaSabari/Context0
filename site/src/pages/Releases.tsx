@@ -2,6 +2,33 @@ import { Page } from '../components/Chrome'
 import { PageHeader, ButtonLink } from '../components/PageParts'
 import { site } from '../config'
 
+const HIGHLIGHTS = [
+  {
+    title: 'Agent integrations',
+    body: 'A seven-tool MCP server, Python SDK, REST API guide, and the measured Razorpay receivables agent.',
+  },
+  {
+    title: 'Retrieval quality',
+    body: 'Full-text, vector, and graph signals are fused per query, with superseded memories demoted from current answers.',
+  },
+  {
+    title: 'Production operations',
+    body: 'A hardened Helm chart, backup and restore, structured logs, Prometheus metrics, and split health probes.',
+  },
+  {
+    title: 'Security',
+    body: 'Hashed API keys, deny-by-default authorization, secret-free chart defaults, and safer web UI credential handling.',
+  },
+]
+
+const FIXES = [
+  'Hybrid retrieval now changes result order instead of only reporting scores.',
+  'Scoped vector queries return the requested result window without silently dropping matches.',
+  'Write-time folding stops repeated conversations from filling the graph with restatements.',
+  'Invalid consolidation settings fail validation instead of deleting memories with fallback values.',
+  'Session accounting, database outage behavior, and REST rate limiting are covered end to end.',
+]
+
 /**
  * Releases.
  *
@@ -85,6 +112,67 @@ export function Releases() {
               </ButtonLink>
             </div>
           </article>
+
+          <div className="mt-16 border-t border-line pt-12">
+            <p className="t-label text-dim">Changelog</p>
+            <h2 className="mt-3 text-2xl font-semibold tracking-[var(--tracking-tight)]">
+              What changed in v0.1.1
+            </h2>
+
+            <div className="mt-8 rounded-xl border border-line-bright bg-surface-2/60 p-6">
+              <h3 className="text-base font-semibold tracking-[var(--tracking-tight)]">
+                Breaking: Context0 is now Kora
+              </h3>
+              <p className="mt-3 max-w-3xl text-[14px] leading-relaxed text-muted">
+                Environment variables moved from <code>CONTEXT0_*</code> to{' '}
+                <code>KORA_*</code>, the Go module and gRPC package were renamed, and the
+                default PostgreSQL role and database are now <code>kora</code>. The AGE
+                graph schema remains <code>context0</code> so an upgrade does not require
+                a graph migration.
+              </p>
+              <p className="mt-3 text-[14px] leading-relaxed text-muted">
+                Existing deployments should run the{' '}
+                <a
+                  href={`${site.github}/blob/main/scripts/migrate_rename.sh`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex min-h-6 items-center text-heading underline decoration-heading/40 underline-offset-4 hover:decoration-heading"
+                >
+                  rename migration script
+                </a>{' '}
+                or keep the previous PostgreSQL user and database through Helm values.
+              </p>
+            </div>
+
+            <div className="mt-8 grid gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-2">
+              {HIGHLIGHTS.map((item) => (
+                <article key={item.title} className="bg-surface p-6">
+                  <h3 className="text-[15px] font-semibold tracking-[var(--tracking-tight)]">
+                    {item.title}
+                  </h3>
+                  <p className="mt-2.5 text-[14px] leading-relaxed text-muted">{item.body}</p>
+                </article>
+              ))}
+            </div>
+
+            <h3 className="mt-10 text-base font-semibold tracking-[var(--tracking-tight)]">
+              Selected fixes
+            </h3>
+            <ul className="mt-4 space-y-3 text-[14px] leading-relaxed text-muted">
+              {FIXES.map((item) => (
+                <li key={item} className="flex gap-3">
+                  <span className="mt-[0.65em] h-1 w-1 shrink-0 rounded-full bg-heading" aria-hidden="true" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+
+            <div className="mt-8">
+              <ButtonLink href={`${site.github}/compare/v0.1.0...v0.1.1`} external variant="secondary">
+                Complete commit history
+              </ButtonLink>
+            </div>
+          </div>
 
           <div className="mt-16 border-t border-line pt-12">
             <h2 className="text-lg font-semibold tracking-[var(--tracking-tight)]">How versions will work</h2>

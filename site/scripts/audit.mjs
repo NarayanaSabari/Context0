@@ -48,7 +48,7 @@ const base = `http://localhost:${server.address().port}`
 // Every page the site publishes. /docs/ is included deliberately: it is
 // docsify rather than React, which makes the no-JavaScript check below more
 // important there, not less.
-const PAGES = ['/', '/releases/', '/blog/', '/docs/']
+const PAGES = ['/', '/releases/', '/docs/']
 const findings = []
 const report = (severity, message) => findings.push({ severity, message })
 

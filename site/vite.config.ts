@@ -9,10 +9,10 @@ const here = dirname(fileURLToPath(import.meta.url))
 // Multi-page rather than a single-page app with a router.
 //
 // GitHub Pages serves static files: a client-side router would need the
-// 404.html redirect hack to survive a hard refresh on /blog, and a visitor
-// landing there would get a flash of the wrong page. Real HTML entry points
-// mean /blog/ and /releases/ are genuine URLs that work on first byte, respond
-// correctly to a crawler, and never depend on JavaScript to route.
+// 404.html redirect hack to survive a hard refresh on /releases/, and a
+// visitor landing there would get a flash of the wrong page. Real HTML entry
+// points work on first byte, respond correctly to a crawler, and never depend
+// on JavaScript to route.
 //
 // Each page still shares components and CSS through the normal import graph,
 // so this costs nothing in duplication.
@@ -30,7 +30,6 @@ export default defineConfig({
       input: {
         main: resolve(here, 'index.html'),
         releases: resolve(here, 'releases/index.html'),
-        blog: resolve(here, 'blog/index.html'),
         // GitHub Pages serves dist/404.html for any unmatched path.
         404: resolve(here, '404.html'),
       },
