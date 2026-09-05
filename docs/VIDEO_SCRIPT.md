@@ -29,30 +29,29 @@ you record.
 
 ---
 
-## 0:00 - 0:40 Where the idea came from
+## 0:00 - 0:35 Where the idea became real
 
-> "The idea for Kora came from a contradiction I kept seeing in AI agents.
-> An agent can reason, learn what a user wants, and make a useful decision.
-> Then the session ends, and the next one starts as if none of it happened.
+> "I started Kora because agents can reason through one conversation, then
+> begin the next one as if nothing happened.
 >
-> At first this looks like a context-window problem. It isn't. A longer prompt
-> still does not know which facts matter, which fact replaced an older one, or
-> when something should be forgotten.
+> That became concrete in revenue recovery. A forgetful receivables agent can
+> chase someone who promised to pay, contact a disputed invoice, or send two
+> reminders on the same day. Kora became the memory this agent was missing."
+
+## 0:35 - 1:15 What the Razorpay agent does
+
+> "Each day, the agent reads open and partially paid invoices from Razorpay,
+> which remains the source of truth for amounts, due dates, and payments.
+> The demo replays that behavior from a fixed fixture so the comparison is
+> repeatable, and the agent also includes a Razorpay test-mode adapter.
 >
-> I wanted memory to be infrastructure: one engine any agent could call, with
-> data the user could inspect, measure, and self-host. That became Kora."
-
-## 0:40 - 1:10 Why a receivables agent
-
-> "Once memory is separate from the agent, the use cases multiply. Support can
-> remember resolutions, coding agents can remember design decisions, and sales
-> agents can remember objections and commitments.
+> A deterministic policy chooses whether to wait, remind, offer a payment link,
+> or hand the case to a human. Customer history comes from Kora.
 >
-> But possible use cases prove nothing. I needed one where forgetting has a
-> visible cost. In receivables, forgetting a promise or dispute means contacting
-> the wrong customer again. So I built a Razorpay agent on Kora."
+> Kora never invents payment state, and a language model never decides who gets
+> chased."
 
-## 1:10 - 2:05 The proof
+## 1:15 - 2:05 The measured result
 
 [Terminal B. Run `make demo`.]
 
@@ -65,20 +64,33 @@ you record.
 
 [Terminal A. Run `make demo`.]
 
-> "Now the same fixture and rules, with Kora as memory. The report identifies
-> the live connection so a degraded run cannot look healthy.
+> "Now the same fixture and rules, with Kora as memory.
 >
 > It recovers exactly the same six lakh thirty-three thousand three hundred
 > rupees, with forty-nine messages instead of two hundred and sixteen."
 
 [Point at `Recovered`, then the contacts table.]
 
-> "Kora did not create more payments in this fixture. It removed one hundred
-> and sixty-seven unnecessary contacts, a seventy-seven percent reduction,
-> by remembering promises, disputes, and same-day contact. That gives memory a
-> measurable value."
+> "Kora removed one hundred and sixty-seven unnecessary contacts, a
+> seventy-seven percent reduction, by remembering promises, disputes, and
+> same-day contact. That gives memory a measurable value."
 
-## 2:05 - 2:40 The decisions behind the number
+## 2:05 - 2:55 How Kora changes the agent
+
+[Open `site/public/docs/razorpay-agent.md` at "How Kora changes a decision".]
+
+> "Before deciding, the agent asks Kora for that customer's contacts, promises,
+> disputes, payments, and escalations.
+>
+> If a customer promises to pay on Friday, the agent writes that event to Kora.
+> Tomorrow, Razorpay still shows an unpaid invoice, but Kora remembers the
+> promise, so the agent waits. Without Kora, tomorrow looks like day one again.
+>
+> My first version stored all customers together. Forty-four of the top fifty
+> results could be about somebody else, hiding the right promise. Giving each
+> customer a separate memory scope fixed that."
+
+## 2:55 - 3:25 Safety and auditability
 
 [Open `examples/receivables-chaser/audit.jsonl`.]
 
@@ -90,60 +102,51 @@ you record.
 
 [Find a `skip_dispute` row.]
 
-> "This invoice is disputed, so the agent stops and hands it to a human. There
-> is also a forty-five-day hard stop.
+> "This invoice is disputed, so the agent stops and hands it to a human.
 >
-> These decisions are deterministic. An optional language model can rewrite a
-> message, but it never chooses the action. The merchant can audit every step."
+> These decisions are deterministic. An optional model can rewrite a message,
+> but the merchant can audit every action and reason."
 
-## 2:40 - 3:40 MemoryBench and the measurement problem
+## 3:25 - 4:10 MemoryBench and the problems it revealed
 
 [Browser, README "Measured, not claimed".]
 
-> "To prove the engine worked, I integrated Kora with Supermemory's open-source
-> MemoryBench and ran its two-hundred-question LoCoMo evaluation. The end-to-end
-> run reported sixty-nine percent.
+> "The agent measured the business effect. To test retrieval, I integrated Kora
+> with Supermemory's MemoryBench and its two-hundred-question LoCoMo evaluation.
+> It reported sixty-nine percent.
 >
-> But I could not reproduce it offline. Extraction, answering, judging, and the
-> retrieval verdict depended on language models over an API. MemoryBench tested
-> the full system, but I needed a stable retrieval instrument.
+> But extraction, answering, judging, and the retrieval verdict depended on
+> language models over an API. It tested the system, but could not reliably
+> diagnose it.
 >
-> I built a deterministic companion around the same questions: five thousand
-> eight hundred and eighty-two memories, one hundred and fifty-eight answerable
-> questions, evidence-based scoring, and no model calls.
+> I built a deterministic companion using LoCoMo's evidence annotations and no
+> model calls.
 >
-> Forty-three of forty-four misses already had the correct evidence. Fusion was
-> burying it. Normalising keyword and vector scores moved hit-at-ten from 0.72
-> to 0.77.
+> Forty-three of forty-four misses already contained the right evidence. Kora's
+> fusion layer buried it. Normalising the scores moved hit-at-ten from 0.72 to
+> 0.77.
 >
-> The graph added only 0.005 MRR. I published that too. The benchmark mattered
-> because it showed me what was actually broken."
+> The graph added only 0.005 MRR. The useful benchmark showed me what to fix."
 
-## 3:40 - 4:25 The engine and the problems behind it
+## 4:10 - 4:35 One engine, more agents
 
 [Open `ARCHITECTURE.md` at "System Overview".]
 
-> "Agents reach Kora through REST, gRPC, Python, or MCP. Writes create memories,
-> embeddings, and entity links. Queries fuse full-text, vector, and graph
-> signals, all stored in PostgreSQL with Apache AGE and pgvector.
+> "This agent uses Kora through Python, while other agents can use REST, gRPC,
+> or MCP.
 >
-> Building it exposed repeated memories, contradictions, extraction loss, and
-> database bottlenecks. Ninety-five percent of query time was PostgreSQL round
-> trips. Reducing them took median latency from twenty-five milliseconds to
-> seventeen without changing a ranked list."
+> The loop stays the same: recall history, decide, act, and remember the outcome.
+> It can support customer service, coding, research, sales, or any long-running
+> agent."
 
-## 4:25 - 4:55 What Kora became
+## 4:35 - 4:55 Close
 
-> "The Razorpay agent is one proof, not Kora's limit. The same memory loop can
-> support customer service, coding, research, sales, or any workflow that must
-> remember what happened and what changed.
+> "Kora is open source and self-hosted, but the result I care about is the agent:
+> the same money recovered with one hundred and sixty-seven fewer customer
+> contacts.
 >
-> Kora is open source and self-hosted. The agent comparison, MemoryBench
-> integration, deterministic benchmark, performance profile, and unresolved
-> failures are all in the repository.
->
-> I started with a question about why agents forget. I ended with an engine
-> that can make remembering measurable. Thank you."
+> I started with an agent that forgot. I ended with one that knows when not to
+> act. Thank you."
 
 ---
 
@@ -151,20 +154,22 @@ you record.
 
 | section | spoken | budget | cumulative |
 |---|---|---|---|
-| Origin | 40 s | 40 s | 0:40 |
-| Use cases | 26 s | 30 s | 1:10 |
-| Proof | 50 s | 55 s | 2:05 |
-| Decisions | 26 s | 35 s | 2:40 |
-| MemoryBench | 53 s | 60 s | 3:40 |
-| Architecture and problems | 27 s | 45 s | 4:25 |
-| Close | 30 s | 30 s | 4:55 |
+| Origin | 25 s | 35 s | 0:35 |
+| Razorpay agent | 37 s | 40 s | 1:15 |
+| Measured result | 45 s | 50 s | 2:05 |
+| How Kora helps | 38 s | 50 s | 2:55 |
+| Safety and audit | 24 s | 30 s | 3:25 |
+| MemoryBench | 45 s | 45 s | 4:10 |
+| More agents | 18 s | 25 s | 4:35 |
+| Close | 20 s | 20 s | 4:55 |
 
-Spoken word count is 628, which is 4:11 at 150 words per minute and 4:29 at 140.
+Spoken word count is about 570, which is 4:13 at 135 words per minute.
 The remaining time covers the two `make demo` runs, screen changes, and pauses.
 
-The origin, the 216-to-49 proof, and the MemoryBench lesson are the three beats
-a judge should remember. Both `make demo` runs finish in about six seconds, so
-let each report sit on screen while the number lands.
+The Razorpay workflow, the 216-to-49 proof, and the promise-to-pay example are
+the three beats a judge should remember. MemoryBench supports that story by
+showing how the engine was measured and improved. Both `make demo` runs finish
+in about six seconds, so let each report sit on screen while the number lands.
 
 ## If you fluff a line
 
@@ -177,9 +182,10 @@ Track 03's stated bar, and where the video satisfies it:
 
 | the bar | where |
 |---|---|
-| measured money recovered across a batch | 1:10, both runs, 50 invoices |
-| compliant escalation | 2:05, the 45-day human hand-off |
-| stopping rules | 2:05, promise-pending and dispute skips |
-| an audit trail | 2:05, `audit.jsonl` with named reasons |
-| working architecture | 3:40, the shipped system overview |
-| repository and reproducibility | 4:25, the benchmark and agent commands |
+| Razorpay integration | 0:35, invoice source of truth and the test-mode adapter |
+| measured money recovered across a batch | 1:15, both runs, 50 invoices |
+| Kora's effect on the agent | 2:05, the promise-to-pay memory loop |
+| compliant escalation and stopping rules | 2:55, promise and dispute skips |
+| an audit trail | 2:55, `audit.jsonl` with named reasons |
+| reproducible benchmark | 3:25, MemoryBench and the deterministic companion |
+| reusable architecture | 4:10, Python, REST, gRPC, and MCP |
