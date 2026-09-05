@@ -29,72 +29,73 @@ you record.
 
 ---
 
-## 0:00 - 0:35 Where the idea became real
+## 0:00 - 0:35 Where the idea came from
 
-> "I started Kora because agents can reason through one conversation, then
-> begin the next one as if nothing happened.
+> "I got the idea for Kora from a simple problem. An AI agent can learn during
+> one chat, then forget everything when the next chat starts.
 >
-> That became concrete in revenue recovery. A forgetful receivables agent can
-> chase someone who promised to pay, contact a disputed invoice, or send two
-> reminders on the same day. Kora became the memory this agent was missing."
+> This is serious when an agent asks customers to pay. It may message someone
+> who already promised to pay or question a bill that is already under dispute.
+>
+> I wanted one memory system that many agents could use. That became Kora."
 
 ## 0:35 - 1:15 What the Razorpay agent does
 
-> "Each day, the agent reads open and partially paid invoices from Razorpay,
-> which remains the source of truth for amounts, due dates, and payments.
-> The demo replays that behavior from a fixed fixture so the comparison is
-> repeatable, and the agent also includes a Razorpay test-mode adapter.
+> "I built a Razorpay agent to test this idea. It follows up on unpaid invoices.
 >
-> A deterministic policy chooses whether to wait, remind, offer a payment link,
-> or hand the case to a human. Customer history comes from Kora.
+> Each day, it reads invoices from Razorpay. Razorpay is trusted for the amount,
+> due date, and payment status.
 >
-> Kora never invents payment state, and a language model never decides who gets
-> chased."
+> Simple rules tell the agent to wait, send a reminder, share a payment link,
+> or ask a person for help. Kora gives it the customer's past history.
+>
+> The demo uses fixed data, and the project also supports Razorpay test mode."
 
-## 1:15 - 2:05 The measured result
+## 1:15 - 2:05 The result
 
 [Terminal B. Run `make demo`.]
 
-> "This is fifty overdue invoices, twenty customers, and twenty-one days.
-> Without memory, the agent follows its escalation ladder: gentle reminder,
-> firm reminder, payment link, then human hand-off.
+> "This demo has fifty unpaid invoices, twenty customers, and twenty-one days.
+> First, I run it without memory.
 >
 > It recovers six lakh thirty-three thousand three hundred rupees, but sends
 > two hundred and sixteen messages to do it."
 
 [Terminal A. Run `make demo`.]
 
-> "Now the same fixture and rules, with Kora as memory.
+> "Now I run the same test with Kora. Nothing else changes.
 >
 > It recovers exactly the same six lakh thirty-three thousand three hundred
 > rupees, with forty-nine messages instead of two hundred and sixteen."
 
 [Point at `Recovered`, then the contacts table.]
 
-> "Kora removed one hundred and sixty-seven unnecessary contacts, a
-> seventy-seven percent reduction, by remembering promises, disputes, and
-> same-day contact. That gives memory a measurable value."
+> "That is one hundred and sixty-seven fewer messages, a seventy-seven percent
+> drop. The agent gets the same money without messages that are not needed."
 
-## 2:05 - 2:55 How Kora changes the agent
+## 2:05 - 2:55 How Kora helps the agent
 
 [Open `site/public/docs/razorpay-agent.md` at "How Kora changes a decision".]
 
-> "Before deciding, the agent asks Kora for that customer's contacts, promises,
-> disputes, payments, and escalations.
+> "Before sending anything, the agent asks Kora: what happened with this
+> customer before?
 >
-> If a customer promises to pay on Friday, the agent writes that event to Kora.
-> Tomorrow, Razorpay still shows an unpaid invoice, but Kora remembers the
-> promise, so the agent waits. Without Kora, tomorrow looks like day one again.
+> Kora remembers past messages, no replies, promises, disputes, payments, and
+> cases already given to a person.
 >
-> My first version stored all customers together. Forty-four of the top fifty
-> results could be about somebody else, hiding the right promise. Giving each
-> customer a separate memory scope fixed that."
+> A customer promises to pay on Friday. On Thursday, Razorpay still shows an
+> unpaid invoice. But Kora remembers the promise, so the agent waits. Without
+> Kora, it sends another message.
+>
+> I also found a bug. I stored all customers together, so the right promise
+> could be hidden by another customer's history. Giving each customer their own
+> memory space fixed it."
 
-## 2:55 - 3:25 Safety and auditability
+## 2:55 - 3:25 Safe choices and clear reasons
 
 [Open `examples/receivables-chaser/audit.jsonl`.]
 
-> "Every decision has a name and a reason."
+> "Every choice has a name and a clear reason."
 
 [Find a `skip_promise_pending` row.]
 
@@ -102,56 +103,53 @@ you record.
 
 [Find a `skip_dispute` row.]
 
-> "This invoice is disputed, so the agent stops and hands it to a human.
+> "This customer says the invoice is wrong, so the agent stops and asks a
+> person for help.
 >
-> These decisions are deterministic. An optional model can rewrite a message,
-> but the merchant can audit every action and reason."
+> Fixed rules make these choices. An AI model may write the message, but it
+> cannot choose the action. Every step can be checked later."
 
-## 3:25 - 4:10 MemoryBench and the problems it revealed
+## 3:25 - 4:15 Testing Kora with MemoryBench
 
 [Browser, README "Measured, not claimed".]
 
-> "The agent measured the business effect. To test retrieval, I integrated Kora
-> with Supermemory's MemoryBench and its two-hundred-question LoCoMo evaluation.
-> It reported sixty-nine percent.
+> "The demo showed how memory helped the agent. I also needed to test how well
+> Kora finds old memories.
 >
-> But extraction, answering, judging, and the retrieval verdict depended on
-> language models over an API. It tested the system, but could not reliably
-> diagnose it.
+> I connected Kora to Supermemory's open-source MemoryBench. Its LoCoMo test
+> asks two hundred questions about old chats. Kora scored sixty-nine percent.
 >
-> I built a deterministic companion using LoCoMo's evidence annotations and no
-> model calls.
+> But AI models created the memories, answered the questions, and checked the
+> answers. This made the number hard to repeat and the problem hard to find.
 >
-> Forty-three of forty-four misses already contained the right evidence. Kora's
-> fusion layer buried it. Normalising the scores moved hit-at-ten from 0.72 to
-> 0.77.
+> I built a second test with fixed answers and no AI calls. In forty-three out
+> of forty-four misses, Kora found the right memory but placed it too low.
 >
-> The graph added only 0.005 MRR. The useful benchmark showed me what to fix."
+> I fixed how Kora mixes text and vector search. Hit at ten went from 0.72 to
+> 0.77. The test showed me what to fix."
 
-## 4:10 - 4:40 Kubernetes-native, reusable memory
+## 4:15 - 4:43 Built for Kubernetes
 
 [Open `ARCHITECTURE.md` at "System Overview".]
 
-> "This agent uses Kora through Python, while other agents can use REST, gRPC,
-> or MCP.
+> "The Razorpay agent uses Python to talk to Kora. Other agents can use REST,
+> gRPC, or MCP.
 >
 > Kora is an enterprise-grade, Kubernetes-native memory engine, not an embedded
-> library. I built it for Kubernetes from the start, with Helm deployment,
-> authentication, health probes, Prometheus metrics, network policies, and
-> tested backup and restore.
+> library inside one agent. I built it for Kubernetes from the start. It has a
+> Helm chart, access control, health checks, metrics, network rules, backup, and
+> restore.
 >
-> The loop stays the same: recall history, decide, act, and remember the outcome.
-> It can support customer service, coding, research, sales, or any long-running
-> agent."
+> The same flow can help support, coding, research, sales, and many other
+> agents: remember, choose, act, and save what happened."
 
-## 4:40 - 5:00 Close
+## 4:43 - 5:00 Close
 
-> "Kora is open source and self-hosted, but the result I care about is the agent:
-> the same money recovered with one hundred and sixty-seven fewer customer
-> contacts.
+> "Kora is open source and runs in your Kubernetes cluster. The result is
+> simple: the same money with one hundred and sixty-seven fewer messages.
 >
-> I started with an agent that forgot. I ended with one that knows when not to
-> act. Thank you."
+> I started with an agent that forgot. I ended with one that knows when to act,
+> wait, or ask a person for help. Thank you."
 
 ---
 
@@ -159,16 +157,16 @@ you record.
 
 | section | spoken | budget | cumulative |
 |---|---|---|---|
-| Origin | 25 s | 35 s | 0:35 |
-| Razorpay agent | 37 s | 40 s | 1:15 |
-| Measured result | 45 s | 50 s | 2:05 |
-| How Kora helps | 38 s | 50 s | 2:55 |
-| Safety and audit | 24 s | 30 s | 3:25 |
-| MemoryBench | 45 s | 45 s | 4:10 |
-| Kubernetes and more agents | 30 s | 30 s | 4:40 |
-| Close | 20 s | 20 s | 5:00 |
+| Origin | 27 s | 35 s | 0:35 |
+| Razorpay agent | 29 s | 40 s | 1:15 |
+| Measured result | 37 s | 50 s | 2:05 |
+| How Kora helps | 36 s | 50 s | 2:55 |
+| Safe choices | 25 s | 30 s | 3:25 |
+| MemoryBench | 48 s | 50 s | 4:15 |
+| Kubernetes and more agents | 30 s | 28 s | 4:43 |
+| Close | 17 s | 17 s | 5:00 |
 
-Spoken word count is about 605, which is 4:29 at 135 words per minute.
+Spoken word count is about 620, which is 4:36 at 135 words per minute.
 The remaining time covers the two `make demo` runs, screen changes, and pauses.
 
 The Razorpay workflow, the 216-to-49 proof, and the promise-to-pay example are
@@ -193,4 +191,4 @@ Track 03's stated bar, and where the video satisfies it:
 | compliant escalation and stopping rules | 2:55, promise and dispute skips |
 | an audit trail | 2:55, `audit.jsonl` with named reasons |
 | reproducible benchmark | 3:25, MemoryBench and the deterministic companion |
-| reusable architecture | 4:10, Python, REST, gRPC, and MCP |
+| reusable architecture | 4:15, Python, REST, gRPC, MCP, and Kubernetes |
