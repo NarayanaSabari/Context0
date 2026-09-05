@@ -1,0 +1,3 @@
+# The Blog has been removed.
+# Keep old bookmarks and cached links away from the deleted page.
+/blog/* /releases/ 301

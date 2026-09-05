@@ -52,6 +52,16 @@ const PAGES = [
   { path: 'releases/index.html', url: '/releases/', title: /Releases/ },
 ]
 
+const redirectsPath = join(dist, '_redirects')
+check(existsSync(redirectsPath), 'dist/_redirects is missing')
+if (existsSync(redirectsPath)) {
+  const redirects = readFileSync(redirectsPath, 'utf8')
+  check(
+    redirects.includes('/blog/* /releases/ 301'),
+    '_redirects must permanently redirect the removed Blog to Releases',
+  )
+}
+
 // The 404 is checked separately: Pages serves it for unmatched paths, so it
 // has no canonical URL of its own and must not be indexed.
 const NOT_FOUND = '404.html'
