@@ -1,0 +1,28 @@
+# Local development values for a kind cluster.
+#
+# The goal is quick, predictable setup for new contributors.
+# This is intentionally conservative on local resources, while preserving the
+# same security posture as production.
+
+postgres:
+  # Keep local state small during repeated setup and teardown cycles.
+  storage: 1Gi
+
+web:
+  enabled: true
+  resources:
+    requests:
+      memory: "32Mi"
+      cpu: "10m"
+    limits:
+      memory: "64Mi"
+      cpu: "100m"
+
+metrics:
+  serviceMonitor:
+    # Keep this off for local clusters.
+    enabled: false
+
+service:
+  # ClusterIP is enough for local scripts and keeps policy checks stable.
+  type: ClusterIP

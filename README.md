@@ -149,11 +149,15 @@ echo "WEB_PORT=13000"      >> .env   # default 3000
 ### Try it on kind
 
 ```bash
-make kind-up
-make deploy
+make k8s-setup
 ```
 
-This creates a local kind cluster and installs the Helm chart into it.
+This creates a local kind cluster, labels the namespace for pod security, and installs the Helm chart into it.
+Use `make k8s-setup` for the fastest local start.
+Use `make k8s-teardown` when you want to remove the local environment.
+Use `make k8s-status` to inspect pods/services quickly.
+Use `make k8s-smoke-check` for a quick end to end setup + write-path check.
+Use `make k8s-verify` for a full in-cluster verification.
 
 ## Usage
 
@@ -438,12 +442,9 @@ make docker-build
 ### Run on kind cluster
 
 ```bash
-# Create cluster + deploy.
-# `make deploy` generates a password and API key into .dev-credentials
-# (gitignored) on first run and reuses them afterwards. The chart ships no
-# default credentials, because a default in a public chart is a published one.
-make kind-up
-make deploy
+# `make k8s-setup` creates a local kind cluster, generates local credentials, and
+# deploys the chart in one command.
+make k8s-setup
 
 # Run E2E tests against the deployed cluster
 . ./.dev-credentials
@@ -452,7 +453,7 @@ KORA_E2E_API_KEY="$DEV_API_KEY" \
 go test ./test/e2e/... -v -tags=e2e
 
 # Teardown
-make kind-down
+make k8s-teardown
 ```
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full development workflow, branching strategy, and release process.

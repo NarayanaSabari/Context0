@@ -61,11 +61,14 @@ If the API needs to reach something outside the cluster - a hosted embedding pro
 ## Local cluster with kind
 
 ```bash
-make kind-up
-make deploy
+make k8s-setup
 ```
 
-`make deploy` generates a password and API key into `.dev-credentials` (gitignored) on first run, and reuses them afterwards.
+`make k8s-setup` generates a password and API key into `.dev-credentials` (gitignored) on first run, and reuses them afterwards.
+The same command applies pod security hardening to the `kora` namespace and deploys with `charts/kora/values-kind.yaml`.
+You can override files and flags with env vars such as `K8S_SETUP_HELM_VALUES_FILE` and `K8S_SETUP_HELM_EXTRA_FLAGS` when needed.
+Use `make k8s-smoke-check` if you want a quick setup+write-path smoke check.
+For quick checks: `make k8s-status`, `make k8s-verify`, and if needed `make k8s-logs`.
 
 Run the end-to-end tests against it:
 
@@ -76,7 +79,7 @@ KORA_E2E_API_KEY="$DEV_API_KEY" \
 go test ./test/e2e/... -v -tags=e2e
 ```
 
-Tear it down with `make kind-down`.
+Tear it down with `make k8s-teardown`.
 
 ## Exposure
 

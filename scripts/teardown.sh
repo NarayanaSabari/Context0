@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Tear down Kora demo environment.
 
-CLUSTER_NAME="kora-dev"
+CLUSTER_NAME="${KIND_CLUSTER:-kora-dev}"
 
 echo "Deleting kind cluster '$CLUSTER_NAME'..."
 kind delete cluster --name "$CLUSTER_NAME" 2>/dev/null || true

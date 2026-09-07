@@ -336,6 +336,14 @@ jobs:
           kind load docker-image kora/kora:ci --name kora-e2e
           kind load docker-image kora/postgres-age-vector:ci --name kora-e2e
 
+      # The documented one-command local setup path now has its own smoke test.
+      # This runs `scripts/setup-k8s.sh`, which was previously covered only by
+      # manual runs and can fail independently from the broader install checks.
+      - name: Verify local setup script path
+        env:
+          DOCKER_TAG: ci
+        run: make k8s-smoke-check
+
       # Runs the install paths the README and Makefile document, from scratch,
       # rather than the bespoke one below. Removing the chart's default
       # credentials broke every documented path and nothing noticed for several

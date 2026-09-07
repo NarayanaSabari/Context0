@@ -1,4 +1,4 @@
-.PHONY: build test test-integration test-golden test-golden-quality postgres-up lint clean docker-build proto-gen run kind-up kind-down deploy eval eval-db-up eval-db-down eval-fixtures demo demo-test
+.PHONY: build test test-integration test-golden test-golden-quality postgres-up lint clean docker-build proto-gen run kind-up kind-down deploy k8s-setup k8s-smoke-check k8s-teardown k8s-verify k8s-logs k8s-status eval eval-db-up eval-db-down eval-fixtures demo demo-test
 
 # Compose refuses to start without credentials, so .env always holds a
 # generated password. The integration targets below have to use that same
@@ -13,7 +13,13 @@ BINARY_CONSOLIDATE = bin/kora-consolidate
 BINARY_CLI = bin/kora
 DOCKER_IMAGE = kora/kora
 DOCKER_TAG = dev
+POSTGRES_DOCKER_IMAGE = kora/postgres-age-vector
+POSTGRES_DOCKER_TAG = dev
 KIND_CLUSTER = kora-dev
+HELM_NAMESPACE = kora
+HELM_RELEASE_NAME = kora
+HELM_EXTRA_FLAGS =
+K8S_LOG_LINES = 200
 
 # Build
 build:
@@ -167,14 +173,103 @@ dev-credentials: $(DEV_CREDS)
 # Deploy to kind cluster
 deploy: kind-load $(DEV_CREDS)
 	@. ./$(DEV_CREDS) && \
-	helm upgrade --install kora ./charts/kora -n kora --create-namespace \
+	helm upgrade --install $(HELM_RELEASE_NAME) ./charts/kora -n $(HELM_NAMESPACE) --create-namespace \
+	  $(HELM_EXTRA_FLAGS) \
 	  --set postgres.password="$$DEV_PG_PASSWORD" \
+	  --set api.image.repository="$(DOCKER_IMAGE)" \
+	  --set api.image.tag="$(DOCKER_TAG)" \
+	  --set postgres.image.repository="$(POSTGRES_DOCKER_IMAGE)" \
+	  --set postgres.image.tag="$(POSTGRES_DOCKER_TAG)" \
 	  --set auth.apiKeys="$$DEV_API_KEY"
 	@echo "Kora deployed to kind cluster"
 	@echo "API key: $$(. ./$(DEV_CREDS) && echo $$DEV_API_KEY)"
 
+k8s-setup:
+	@KIND_CLUSTER="$(KIND_CLUSTER)" \
+	  HELM_NAMESPACE="$(HELM_NAMESPACE)" \
+	  HELM_RELEASE_NAME="$(HELM_RELEASE_NAME)" \
+	  K8S_SETUP_DOCKER_IMAGE="$(DOCKER_IMAGE)" \
+	  K8S_SETUP_DOCKER_TAG="$(DOCKER_TAG)" \
+	  K8S_SETUP_POSTGRES_DOCKER_IMAGE="$(POSTGRES_DOCKER_IMAGE)" \
+	  K8S_SETUP_POSTGRES_DOCKER_TAG="$(POSTGRES_DOCKER_TAG)" \
+	  bash scripts/setup-k8s.sh
+
+k8s-smoke-check:
+	@K8S_SETUP_VERIFY_API_IMAGE_REPO="$(DOCKER_IMAGE)" \
+	  K8S_SETUP_VERIFY_API_IMAGE_TAG="$(DOCKER_TAG)" \
+	  K8S_SETUP_VERIFY_PG_IMAGE_REPO="$(POSTGRES_DOCKER_IMAGE)" \
+	  K8S_SETUP_VERIFY_PG_IMAGE_TAG="$(POSTGRES_DOCKER_TAG)" \
+	  bash scripts/verify_k8s_setup.sh
+
+k8s-teardown:
+	@KIND_CLUSTER="$(KIND_CLUSTER)" bash scripts/teardown.sh
+	@rm -f .dev-credentials
+	@echo "Removed local kind cluster and .dev-credentials."
+
+k8s-verify:
+	@kind get clusters | grep -q "^$(KIND_CLUSTER)$$" || { \
+	  echo "kind cluster '$(KIND_CLUSTER)' not found. Run: make k8s-setup"; \
+	  exit 1; \
+	}
+	@kubectl get namespace "$(HELM_NAMESPACE)" >/dev/null || { \
+	  echo "namespace '$(HELM_NAMESPACE)' not found. Run: make k8s-setup"; \
+	  exit 1; \
+	}
+	@echo "Running Kubernetes verification for namespace '$(HELM_NAMESPACE)'."
+	@./scripts/verify_k8s.sh "$(HELM_NAMESPACE)"
+
+k8s-logs:
+	@kubectl get namespace "$(HELM_NAMESPACE)" >/dev/null || \
+	  { echo "namespace '$(HELM_NAMESPACE)' not found. Run: make k8s-setup"; exit 1; }
+	@echo "Streaming Kora API and Postgres logs from namespace '$(HELM_NAMESPACE)' (Ctrl+C to stop)."
+	@if ! kubectl get pod -n "$(HELM_NAMESPACE)" -l app=kora-api >/dev/null 2>&1; then \
+	  echo "no api pod found in namespace '$(HELM_NAMESPACE)'"; \
+	  echo "deploy first with: make k8s-setup"; \
+	  exit 1; \
+	fi
+	@if ! kubectl get pod -n "$(HELM_NAMESPACE)" -l app=postgres-age >/dev/null 2>&1; then \
+	  echo "no postgres pod found in namespace '$(HELM_NAMESPACE)'"; \
+	  echo "deploy first with: make k8s-setup"; \
+	  exit 1; \
+	fi
+	@( \
+	  kubectl logs \
+	    -n "$(HELM_NAMESPACE)" \
+	    -l app=kora-api \
+	    --all-containers \
+	    --tail=$(K8S_LOG_LINES) \
+	    -f | sed -u 's/^/[api] /' \
+	) & \
+	API_LOGS=$$! ; \
+	kubectl logs \
+	  -n "$(HELM_NAMESPACE)" \
+	  -l app=postgres-age \
+	  --all-containers \
+	  --tail=$(K8S_LOG_LINES) \
+	  -f | sed -u 's/^/[postgres] /' ; \
+	wait "$$API_LOGS"
+
+k8s-status:
+	@echo "Namespace: $(HELM_NAMESPACE)"
+	@kubectl get namespace "$(HELM_NAMESPACE)" --show-labels
+	@echo
+	@echo "Pods:"
+	@kubectl get pods -n "$(HELM_NAMESPACE)" -o wide
+	@echo
+	@echo "Services:"
+	@kubectl get svc -n "$(HELM_NAMESPACE)"
+	@echo
+	@echo "Service endpoints:"
+	@kubectl get endpoints -n "$(HELM_NAMESPACE)"
+	@echo
+	@echo "Workloads:"
+	@kubectl get deploy,sts -n "$(HELM_NAMESPACE)"
+	@echo
+	@echo "Helm release:"
+	@helm list -n "$(HELM_NAMESPACE)"
+
 undeploy:
-	helm uninstall kora -n kora
+	helm uninstall $(HELM_RELEASE_NAME) -n $(HELM_NAMESPACE)
 
 # Clean
 clean:
@@ -191,6 +286,12 @@ help:
 	@echo "  run            - Run server locally"
 	@echo "  kind-up        - Create kind cluster"
 	@echo "  kind-down      - Delete kind cluster"
+	@echo "  k8s-setup      - Bootstrap local kind environment end to end"
+	@echo "  k8s-smoke-check - Run the setup flow and verify one write path"
+	@echo "  k8s-teardown   - Delete local kind cluster and temporary credentials"
+	@echo "  k8s-verify     - Run Kubernetes verification checks against local deployment"
+	@echo "  k8s-logs       - Stream API and Postgres logs from local namespace"
+	@echo "  k8s-status     - Show namespace labels, pods, services, endpoints, and workloads"
 	@echo "  deploy         - Deploy to kind cluster"
 	@echo "  eval           - Offline retrieval evaluation (see eval/README.md)"
 	@echo "  demo           - Run the receivables-chaser example (see examples/receivables-chaser)"

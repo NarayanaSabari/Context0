@@ -142,9 +142,10 @@ auth:
 
 **Install:**
 ```bash
-# `make deploy` is the shortcut: it generates a password and API key into
-# .dev-credentials (gitignored) on first run and reuses them afterwards.
-make kind-up && make deploy
+# `make k8s-setup` is the shortcut:
+# it creates a local kind cluster, applies namespace hardening labels, and
+# generates a password and API key into .dev-credentials (gitignored) on first run.
+make k8s-setup
 
 # Or explicitly:
 helm install kora ./charts/kora -n kora --create-namespace \
@@ -480,17 +481,18 @@ whether a pod starts, whether `readOnlyRootFilesystem` breaks the container, or
 whether a probe path exists. Deploy and check the running cluster:
 
 ```bash
-make kind-up
-for img in kora/kora:dev kora/postgres-age-vector:dev kora/web:dev; do
-  kind load docker-image "$img" --name kora-dev
-done
-helm install kora ./charts/kora -n kora --create-namespace \
-  --set postgres.password="$(openssl rand -hex 16)" \
-  --set auth.apiKeys="$(go run ./cmd/cli keys generate)"
-KORA_API_KEY=<the key above> scripts/verify_k8s.sh
+make k8s-setup
+make k8s-status
+make k8s-verify
+# Optional for a live log view:
+# make k8s-logs
+make k8s-teardown
 ```
 
-The script maps each requirement to a check against the live cluster: probe
+If you want the full manual sequence, replace `make k8s-setup` with `make kind-up`,
+`helm install ...`, and `make k8s-teardown`.
+
+The command maps each requirement to a check against the live cluster: probe
 wiring and responses, the security context enforced at runtime, `GOMEMLIMIT`
 and pool sizing reaching the process, Postgres tuning, the property indexes,
 the public API round-trip, and the database-outage failure mode. It exits

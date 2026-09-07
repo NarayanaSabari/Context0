@@ -14,7 +14,8 @@ make lint
 go vet ./...
 ```
 
-Running the engine locally needs PostgreSQL with Apache AGE. `make run` expects one; `docker compose up` provides one, as does `make kind-up && make deploy` for a real cluster.
+Running the engine locally needs PostgreSQL with Apache AGE.
+`make run` expects one; `docker compose up` provides one, and `make k8s-setup` does a full local cluster flow.
 
 ## Branching
 
@@ -38,13 +39,13 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org/). PRs
 End-to-end, against a real deployment:
 
 ```bash
-make kind-up
-make deploy
+make k8s-setup
 
 . ./.dev-credentials
 KORA_E2E_HTTP=http://localhost:8080 \
 KORA_E2E_API_KEY="$DEV_API_KEY" \
 go test ./test/e2e/... -v -tags=e2e
+make k8s-teardown
 ```
 
 There are also soak and mutation testing setups documented in [docs/soak-testing.md](https://github.com/NarayanaSabari/Kora/blob/main/docs/soak-testing.md) and [docs/mutation-testing.md](https://github.com/NarayanaSabari/Kora/blob/main/docs/mutation-testing.md).
